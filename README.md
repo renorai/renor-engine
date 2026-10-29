@@ -9,7 +9,7 @@
 
 **Renor is memory for coding agents: it keeps what you tell Claude Code, Codex or Cursor in a folder of Markdown files on your machine, and serves it back to any of them over MCP.**
 
-Every new agent session starts from zero: you re-explain the project, last week's decision and why, the thing you corrected twice. With Renor, one agent saves it and the next one finds it. The memory is plain files you own. It runs locally, needs no account or API key, and sends nothing off your machine unless you configure a model or opt in to sharing (off by default; the signals level sends anonymous usage numbers, the data level also sends your searches and memory text with keys and passwords filtered out; `renor-engine telemetry off` stops it). A hosted version with no install is at <https://renor.cloud>.
+Every new agent session starts from zero: you re-explain the project, last week's decision and why, the thing you corrected twice. With Renor, one agent saves it and the next one finds it. The memory is plain files you own. It runs locally, needs no account or API key, and sends nothing off your machine unless you configure a model or send anonymous usage numbers (on by default, with a first-run notice; `renor-engine telemetry off` or `DO_NOT_TRACK=1` turns them off). Your memory text is shared only if you say yes to that separately. A hosted version with no install is at <https://renor.cloud>.
 
 ## Quickstart
 

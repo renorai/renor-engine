@@ -163,12 +163,68 @@ def relevant_from_conversations(
     return relevant
 
 
-def write_case(out_dir: str, split: str, category: str, item: dict, index: int) -> tuple[dict, dict]:
+def conv_key(conv) -> str:
+    """Identity of a conversation: its id, else a hash of its messages."""
+    if isinstance(conv, dict) and conv.get('id') is not None:
+        return f"id:{conv['id']}"
+    messages = conv.get('messages') if isinstance(conv, dict) else conv
+    return 'sha:' + sha256_bytes(json.dumps(messages, sort_keys=True, ensure_ascii=False).encode('utf-8'))
+
+
+def _rank(seed: int, *parts: str) -> str:
+    return sha256_bytes(':'.join([str(seed), *parts]).encode('utf-8'))
+
+
+def build_haystack(item: dict, items: list[dict], size: int, seed: int, case_id: str) -> tuple[list, list[bool]]:
+    """Return the case's conversations (evidence + filler) in timeline order and a
+    parallel is-evidence list.
+
+    Filler is whole conversations of OTHER items of the same persona file, never one
+    the question's own evidence uses (by id or by messages). It is ranked by
+    sha256(seed, case, conversation), so a run is reproducible and independent of
+    input order. The evidence conversations keep their relative order but land at
+    hash-chosen positions, so evidence is not always the newest. When the pool is
+    smaller than size - evidence, all of it is used (the caller records the shortfall).
+    """
+    own = item.get('conversations') or []
+    own_keys = {conv_key(c) for c in own}
+    own_texts = {conv_key({'messages': c.get('messages') if isinstance(c, dict) else c}) for c in own}
+    pool: dict[str, object] = {}
+    for other in items:
+        for c in other.get('conversations') or []:
+            k = conv_key(c)
+            if k in own_keys or conv_key({'messages': c.get('messages') if isinstance(c, dict) else c}) in own_texts:
+                continue
+            pool.setdefault(k, c)
+    want = max(0, size - len(own))
+    filler = [pool[k] for k in sorted(pool, key=lambda k: _rank(seed, case_id, 'f', k))[:want]]
+    total = len(filler) + len(own)
+    slots = sorted(sorted(range(total), key=lambda i: _rank(seed, case_id, 's', str(i)))[:len(own)])
+    timeline: list = []
+    is_evidence: list[bool] = []
+    f_iter = iter(filler)
+    o_iter = iter(own)
+    slot_set = set(slots)
+    for pos in range(total):
+        if pos in slot_set:
+            timeline.append(next(o_iter))
+            is_evidence.append(True)
+        else:
+            timeline.append(next(f_iter))
+            is_evidence.append(False)
+    return timeline, is_evidence
+
+
+def write_case(out_dir: str, split: str, category: str, item: dict, index: int,
+               haystack: int = 0, haystack_seed: int = 0, pool_items: list[dict] | None = None) -> tuple[dict, dict]:
     case_id = f'convomem-{split}-{category}-{index:02d}-{item_key(item)[:12]}'
     conv_dir = os.path.join(out_dir, 'corpus', case_id, 'Sessions')
     os.makedirs(conv_dir, exist_ok=True)
 
     conversations = item.get('conversations') or []
+    is_evidence = [True] * len(conversations)
+    if haystack:
+        conversations, is_evidence = build_haystack(item, pool_items or [], haystack, haystack_seed, case_id)
     haystack_ids = []
     haystack_dates = []
     filenames = []
@@ -180,7 +236,9 @@ def write_case(out_dir: str, split: str, category: str, item: dict, index: int) 
         date_str = lme_date(dt)
         sid = conv.get('id') if isinstance(conv, dict) else f'{case_id}-s{c_i}'
         sid = str(sid or f'{case_id}-s{c_i}')
-        session_id = f'{case_id}-{sid}'
+        # filler carries no case id, so its chunks are the same text in every vault and the
+        # content-addressed embedding cache embeds each conversation once
+        session_id = f'{case_id}-{sid}' if is_evidence[c_i] else f'convomem-filler-{sid}'
         filename = f'{safe_segment(session_id)}.md'
         path = os.path.join(conv_dir, filename)
         with open(path, 'w', encoding='utf-8') as fh:
@@ -189,7 +247,12 @@ def write_case(out_dir: str, split: str, category: str, item: dict, index: int) 
         haystack_ids.append(session_id)
         haystack_dates.append(date_str)
         filenames.append(filename)
-    relevant = relevant_from_conversations(conversations, filenames, haystack_ids)
+    if haystack:
+        # gold stays the question's own evidence conversations; filler is never gold
+        ev = [i for i, flag in enumerate(is_evidence) if flag]
+        relevant = relevant_from_conversations([conversations[i] for i in ev], [filenames[i] for i in ev], [haystack_ids[i] for i in ev])
+    else:
+        relevant = relevant_from_conversations(conversations, filenames, haystack_ids)
 
     question = (item.get('question') or '').strip()
     expected = '' if item.get('answer') is None else str(item.get('answer'))
@@ -208,6 +271,8 @@ def write_case(out_dir: str, split: str, category: str, item: dict, index: int) 
         'personId': item.get('personId'),
         'itemKey': item_key(item),
     }
+    if haystack:
+        case['haystackConversations'] = len(conversations)
     dataset_row = {
         'question_id': case_id,
         'question_date': last_date,
@@ -226,6 +291,9 @@ def main() -> None:
     ap.add_argument('--raw-dir', default=os.path.expanduser('~/bench-data/convomem/raw'))
     ap.add_argument('--n-champion', type=int, default=8)
     ap.add_argument('--n-holdout', type=int, default=8)
+    ap.add_argument('--haystack', type=int, default=0,
+                    help='conversations per case vault (evidence + filler from other items of the same file); 0 = evidence only')
+    ap.add_argument('--haystack-seed', type=int, default=1)
     ap.add_argument('--local-files', nargs='*', help='skip download; pass category=path pairs')
     args = ap.parse_args()
 
@@ -256,10 +324,11 @@ def main() -> None:
                 file_hashes[category] = sha256_bytes(fh.read())
         items = data.get('evidence_items') or []
         champion, holdout = select_slices(items, args.n_champion, args.n_holdout)
+        pool_items = unique_items(items)
         counts[category] = {'sourceItems': len(items), 'champion': len(champion), 'holdout': len(holdout)}
         for split, slice_items in (('champion', champion), ('holdout', holdout)):
             for i, item in enumerate(slice_items):
-                case, ds = write_case(out_dir, split, category, item, i)
+                case, ds = write_case(out_dir, split, category, item, i, args.haystack, args.haystack_seed, pool_items)
                 cases.append(case)
                 dataset_rows.append(ds)
 
@@ -295,6 +364,18 @@ def main() -> None:
         'holdout': len(holdout_ids),
         'adapterOutput': out_dir,
     }
+    if args.haystack:
+        meta['haystack'] = {
+            'conversationsPerCase': args.haystack,
+            'seed': args.haystack_seed,
+            'filler': 'whole conversations of other unique items of the same persona file, ranked by sha256(seed, case, conversation); never the question\'s own evidence; never gold',
+            'datePosition': 'evidence at hash-chosen timeline slots (relative order kept); question date = last conversation',
+            'actualByCategory': {
+                cat: {'min': min(sizes), 'max': max(sizes), 'cappedByPool': min(sizes) < args.haystack}
+                for cat, sizes in ((cat, [c['haystackConversations'] for c in cases if c['category'] == cat]) for cat in counts)
+                if sizes
+            },
+        }
     with open(os.path.join(out_dir, 'adapter-meta.json'), 'w', encoding='utf-8') as fh:
         json.dump(meta, fh, indent=2)
         fh.write('\n')
