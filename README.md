@@ -1,3 +1,5 @@
+[Português (Brasil) → README.pt-BR.md](README.pt-BR.md)
+
 # Renor
 
 ![Claude Code saves a decision to Renor; a fresh Codex session recalls it](docs/assets/renor-readme-demo.gif)\
@@ -91,10 +93,10 @@ Then ask your agent to remember something, and ask about it in a new session. Wh
 
 One container serves your memory over HTTP to every agent, from any machine, with OAuth sign-in for you alone. It needs no model or key; the memory stays on a volume you own.
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/patrickpassosb/renor-engine)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/renorai/renor-engine)
 
 ```bash
-docker build -t renor-engine https://github.com/patrickpassosb/renor-engine.git
+docker build -t renor-engine https://github.com/renorai/renor-engine.git
 docker run -d --name renor -p 127.0.0.1:3471:3471 -v renor-data:/data \
   -e MVP_OWNER_EMAIL=you@example.com -e MVP_OWNER_PASSWORD="$(openssl rand -base64 18)" \
   -e MVP_ALLOWED_CALLBACK_URIS=http://localhost:39472/callback renor-engine

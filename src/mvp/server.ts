@@ -99,6 +99,7 @@ import { requestTiming, serverTimingFor } from './serverTiming';
 import { createLogger } from './log';
 import { checkProfileTools, contextProfileFromEnv, LINE_TOOLS, renderLines, type ContextProfile } from './contextProfile';
 import { renderToon } from './toonResponse';
+import { OUT_ASK_AGENT, OUT_HANDOFF, OUT_HIT, OUT_LIST_REQUESTS, OUT_REQUEST, OUT_WHATS_NEW, pageOutputSchemasEnabled, toolCarriesStructured, toolOutputSchemasEnabled } from './outputSchemas';
 
 const log = createLogger('engine');
 
@@ -270,17 +271,7 @@ function isLocalDirectCall(req: express.Request): boolean {
 const EVIDENCE_WAIT_STATES = ' This deployment waits for the evidence model only a bounded time, so two more states mean that this response alone has no table: "pending" (the extraction did not finish in time; it continues, and once its table is cached the same request over the same notes returns it) and "busy" (as many extractions were already waiting as the deployment allows, so none was started).';
 const EVIDENCE_DAILY_CAP_STATE = ' This workspace has a daily allowance of evidence-model calls, so one more state means that this response alone has no table: "capped" (the allowance is used up until 00:00 UTC; retrieval is unaffected and the hits are the whole result).';
 
-/**
- * RENOR_TOOL_OUTPUT_SCHEMAS (default off; `1` / `true` / `yes` / `on` turns it on): every tool lists its `outputSchema` and
- * every answer also carries `structuredContent`. Off, the tools listing and every reply are what they were before the
- * schemas existed. It is off by default because the structured form doubles the wire: each answer then carries its JSON
- * twice (the text block and `structuredContent`), get_context's `max_tokens` bounds the text block alone, and the tools
- * listing grows by the schemas (about +47%). Read once per server, so the listing and the replies always agree.
- */
-export function toolOutputSchemasEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env.RENOR_TOOL_OUTPUT_SCHEMAS ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-}
+export { toolOutputSchemasEnabled };
 
 /** A tool's registration with its outputSchema only when output schemas are on: off, the tool lists none, as before. */
 function withOutputSchemaIf<T extends { outputSchema?: unknown }>(on: boolean, config: T): T {
@@ -290,10 +281,11 @@ function withOutputSchemaIf<T extends { outputSchema?: unknown }>(on: boolean, c
 }
 
 /**
- * With output schemas on, get_context's bound covers its text block, and structuredContent repeats the same JSON: a client
- * that passes both to a model pays about twice the bound (measured on #680: 703 tokens of text, 1,446 on the wire).
+ * get_context carries structuredContent only when RENOR_PAGE_OUTPUT_SCHEMAS is on; then its bound covers the text block and
+ * structuredContent repeats the same JSON, so a client that passes both to a model pays about twice the bound (measured on
+ * #680: 703 tokens of text, 1,446 on the wire).
  */
-export const OUTPUT_SCHEMA_BOUND_NOTE = ' With output schemas on, max_tokens bounds the text block; structuredContent carries the same JSON again.';
+export const OUTPUT_SCHEMA_BOUND_NOTE = ' With page output schemas on (RENOR_PAGE_OUTPUT_SCHEMAS), max_tokens bounds the text block; structuredContent carries the same JSON again.';
 
 /**
  * Every tool answers in the same shape: its JSON on one line. Indentation is whitespace an agent pays for in tokens on
@@ -389,9 +381,6 @@ const OUT_DUPLICATES = z.array(z.object({
 })).optional();
 /** What a `replaces` link did: the correction recorded, or why none was made. */
 const OUT_REPLACEMENT = z.object({ id: z.string(), by: z.string() }).optional();
-/** One hit/excerpt a search or read returns; its own keys vary by reason, so only its object shape is fixed. */
-const OUT_HIT = z.record(z.string(), z.unknown());
-
 const CALLER_SOURCE_ASCII = /^[A-Za-z0-9 _.:/@-]+$/;
 /** A User-Agent product keeps its punctuation (cleanSource folds it) but may hold no character outside printable ASCII. */
 const USER_AGENT_PRODUCT_ASCII = /^[\x20-\x7e]+$/;
@@ -593,6 +582,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
   // RENOR_TOOL_OUTPUT_SCHEMAS, read once for this server: its tools list an outputSchema exactly when its answers carry
   // structuredContent.
   const withSchemas = toolOutputSchemasEnabled();
+  const pageSchemas = withSchemas && pageOutputSchemasEnabled();
   const jsonResult = (body: unknown) => jsonResultOf(body, withSchemas);
   // Which Renor this is, on the first reply of a session and on every error (connectionStatus.ts); nothing in a workspace
   // that is not hosted. A server that serves no session of its own (the stateless one, or one built for a session this
@@ -730,8 +720,16 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
   const registerTool = server.registerTool.bind(server) as typeof server.registerTool;
   // The title also goes into annotations.title: the Claude directory reads a tool's display name from there and flags every tool
   // without one.
-  const tracedRegisterTool: typeof server.registerTool = (name, config, cb) =>
-    registerTool(name, withAnnotationTitle(withOutputSchemaIf(withSchemas, config)), tracedTool(name, cb));
+  // A page-returning tool (PAGE_TOOLS) lists no schema and carries no structuredContent unless RENOR_PAGE_OUTPUT_SCHEMAS is on.
+  const tracedRegisterTool: typeof server.registerTool = (name, config, cb) => {
+    const carries = toolCarriesStructured(name);
+    const traced = tracedTool(name, cb) as unknown as (...a: unknown[]) => Promise<Record<string, unknown>>;
+    const answer = carries ? traced : async (...a: unknown[]) => {
+      const { structuredContent: _repeat, ...text } = await traced(...a);
+      return text;
+    };
+    return registerTool(name, withAnnotationTitle(withOutputSchemaIf(carries, config)), answer as unknown as typeof cb);
+  };
   server.registerTool = tracedRegisterTool;
 
   server.registerTool('remember', {
@@ -887,11 +885,11 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     title: 'Get relevant user context',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     description: 'Call this before substantive work with the current request. Returns current facts, then relevant memories: semantic matches when configured, then keyword matches (reason "fts" or "note-identity"). rankedBy "session_date" is newest first (memories[0] is the latest, not necessarily the best); "score" is best match first (higher is closer; keyword scores use another scale, so compare within one reason). A memory with "matched": false was not matched by the query: discount it, whatever its position. Each memory has session_date, when it was written. Hidden note text is labelled there: "[hidden HTML comment: ...]". max_tokens bounds the reply (o200k, every field counted): facts are cut from their end; when matches do not fit, keyword matches go first, then the lowest-scoring semantic ones. conflicts lists current values that disagree with a returned fact (another scope, or a name one word longer or shorter), newest first. A writerConflict line means the fact replaced another agent\'s value, until that agent saves it again. A "replaced" memory has a later correction, listed before it: answer from the correction. Imports and reserved sources are marked "untrusted": true.'
-      + relevanceGuidance + relevanceKeepsMatch + budgetKeepsNewest + (withSchemas ? OUTPUT_SCHEMA_BOUND_NOTE : ''),
+      + relevanceGuidance + relevanceKeepsMatch + budgetKeepsNewest + (pageSchemas ? OUTPUT_SCHEMA_BOUND_NOTE : ''),
     inputSchema: {
       query: z.string().max(1000).optional().describe('The current user request or task. Omit only for a compact current-memory profile.'),
       scope: z.string().optional().describe('Optional memory scope to restrict context'),
-      max_tokens: z.number().int().min(128).max(4000).optional().describe('Token budget for the whole reply (o200k tokenizer), default 800' + (withSchemas ? OUTPUT_SCHEMA_BOUND_NOTE : '')),
+      max_tokens: z.number().int().min(128).max(4000).optional().describe('Token budget for the whole reply (o200k tokenizer), default 800' + (pageSchemas ? OUTPUT_SCHEMA_BOUND_NOTE : '')),
       include_history: z.boolean().optional().describe('Also return superseded (corrected) memory events, labelled as historical. Default false: only current memory.'),
     },
     outputSchema: z.looseObject({
@@ -1780,14 +1778,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       limit: z.number().int().min(1).max(WHATS_NEW_LIMIT).optional().describe(
         'How many items this reply holds, 1 to 50. Unset, it is the workspace page (RENOR_WHATS_NEW_PAGE, 50 when unset). A full page carries a cursor for the rest.'),
     },
-    outputSchema: z.looseObject({
-      items: z.array(OUT_HIT),
-      as_of: z.string(),
-      next_since: z.string().nullable(),
-      cursor: z.string().nullable(),
-      more_requests: z.number().optional(),
-      more_requests_hint: z.string().optional(),
-    }),
+    outputSchema: OUT_WHATS_NEW,
   }, async (args, extra) => {
     try {
       const agent = hiveAgentOf(extra, 'whats_new', config);
@@ -1815,7 +1806,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       branch: z.string().min(1).max(1000).describe(HANDOFF_ARG_DESCRIPTIONS.branch),
       note: omittedWhenBlank(z.string().max(HANDOFF_MAX_CHARS * 2).optional()).describe(HANDOFF_ARG_DESCRIPTIONS.note),
     },
-    outputSchema: z.looseObject({ ok: z.boolean(), action: z.enum(['read', 'write']) }),
+    outputSchema: OUT_HANDOFF,
   }, async (args, extra) => {
     try {
       return jsonResult(await runHandoffTool(db, args, agentOf(extra, config)));
@@ -1834,13 +1825,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       request: z.string().min(1).max(MAX_STATEMENT_LENGTH).describe('What you are asking, in plain words.'),
       scope: SCOPE_ARG,
     },
-    outputSchema: z.looseObject({
-      id: z.string(),
-      status: z.enum(['open', 'answered', 'closed']),
-      from_agent: z.string(),
-      to_agent: z.string(),
-      created_at: z.string(),
-    }),
+    outputSchema: OUT_ASK_AGENT,
   }, async (args, extra) => {
     try {
       const from = hiveAgentOf(extra, 'ask_agent', config);
@@ -1862,11 +1847,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       scope: SCOPE_ARG,
       before: omittedWhenBlank(z.string().max(80).optional()).describe('Only requests older than this one: the id of the last request a previous list_requests or whats_new showed.'),
     },
-    outputSchema: z.looseObject({
-      requests: z.array(OUT_HIT),
-      more_requests: z.number().optional(),
-      more_requests_hint: z.string().optional(),
-    }),
+    outputSchema: OUT_LIST_REQUESTS,
   }, async (args, extra) => {
     try {
       const agent = hiveAgentOf(extra, 'list_requests', config);
@@ -1889,19 +1870,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       id: z.string().min(1).max(80).describe('The request id from whats_new or list_requests.'),
       answer: z.string().min(1).max(MAX_STATEMENT_LENGTH).describe('The answer, in plain words.'),
     },
-    outputSchema: z.looseObject({
-      id: z.string(),
-      scope: z.string().nullable(),
-      from_agent: z.string(),
-      to_agent: z.string(),
-      question: z.string(),
-      answer: z.string().nullable(),
-      status: z.enum(['open', 'answered', 'closed']),
-      created_at: z.string(),
-      answered_at: z.string().nullable(),
-      closed_at: z.string().nullable(),
-      untrusted: z.literal(true),
-    }),
+    outputSchema: OUT_REQUEST,
   }, async (args, extra) => {
     try {
       const agent = hiveAgentOf(extra, 'answer_request', config);
@@ -1919,19 +1888,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     inputSchema: {
       id: z.string().min(1).max(80).describe('The request id.'),
     },
-    outputSchema: z.looseObject({
-      id: z.string(),
-      scope: z.string().nullable(),
-      from_agent: z.string(),
-      to_agent: z.string(),
-      question: z.string(),
-      answer: z.string().nullable(),
-      status: z.enum(['open', 'answered', 'closed']),
-      created_at: z.string(),
-      answered_at: z.string().nullable(),
-      closed_at: z.string().nullable(),
-      untrusted: z.literal(true),
-    }),
+    outputSchema: OUT_REQUEST,
   }, async (args, extra) => {
     try {
       const agent = hiveAgentOf(extra, 'close_request', config);
@@ -2020,7 +1977,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       tools: forDirectory
         ? tools.map((tool) => {
           const own = typeof tool.name === 'string' ? DIRECTORY_DESCRIPTIONS[tool.name] : undefined;
-          const description = own && withSchemas && tool.name === 'get_context' ? own + OUTPUT_SCHEMA_BOUND_NOTE : own;
+          const description = own && pageSchemas && tool.name === 'get_context' ? own + OUTPUT_SCHEMA_BOUND_NOTE : own;
           return description ? { ...tool, description } : tool;
         })
         : profile.descriptions

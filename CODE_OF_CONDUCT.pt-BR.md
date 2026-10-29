@@ -17,7 +17,7 @@ Este código se aplica a issues, pull requests, revisões, discussões e qualque
 
 Relate preocupações relacionadas à conduta de forma privada pelo formulário de avisos privados do GitHub: <https://github.com/renorai/renor-engine/security/advisories/new>. Não publique o relato como uma issue pública. Inclua o que aconteceu e onde. Os relatos são analisados pelo mantenedor, e os nomes de quem os enviou não serão divulgados em nenhum registro público sem consentimento.
 
-Vulnerabilidades de segurança devem ser relatadas conforme as instruções de [SECURITY.md](SECURITY.pt-BR.md.md), e não por este processo.
+Vulnerabilidades de segurança devem ser relatadas conforme as instruções de [SECURITY.md](SECURITY.pt-BR.md), e não por este processo.
 
 ## Aplicação
 

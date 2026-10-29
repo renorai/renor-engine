@@ -1,5 +1,5 @@
 # Render Blueprint: Renor's HTTP server, built from ./Dockerfile, with the memory on a persistent disk.
-# Deploy: https://render.com/deploy?repo=https://github.com/patrickpassosb/renor-engine
+# Deploy: https://render.com/deploy?repo=https://github.com/renorai/renor-engine
 # A disk needs a paid instance type (Render's free instances have no disk). Every setting: docs/self-hosting.md.
 services:
   - type: web

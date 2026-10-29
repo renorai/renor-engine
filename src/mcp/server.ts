@@ -27,6 +27,8 @@ import { escapeInvisibleControls } from '../mvp/sanitize';
 import { matchingCurrentFactHits } from '../retrieval/factsFirst';
 import { HANDOFF_ARG_DESCRIPTIONS, HANDOFF_TOOL_DESCRIPTION, HANDOFF_TOOL_NAME, handoffNoteEnabled, runHandoffTool, startHandoffSweep } from '../memory/handoff';
 import { ENGINE_VERSION } from '../buildIdentity';
+import { z } from 'zod';
+import { OUT_ASK_AGENT, OUT_HANDOFF, OUT_HIT, OUT_LIST_REQUESTS, OUT_REQUEST, OUT_WHATS_NEW, toolCarriesStructured } from '../mvp/outputSchemas';
 
 export function createMcpTools(
   db: Database.Database,
@@ -319,6 +321,53 @@ export const TOOLS = [
   },
 ];
 
+/**
+ * The declared output schema of each tool this server lists (MCP `outputSchema`), used when RENOR_TOOL_OUTPUT_SCHEMAS is on.
+ * The five hive tools and the handoff note declare the hosted server's schemas, since both return the same objects from the
+ * same functions. The eight tools above have no hosted counterpart, so their schemas describe what each one returns here.
+ * Structured content must be an object: a reply that is an array or null is wrapped as { result } (see structuredOf).
+ */
+const OUTPUT_SCHEMAS: Record<string, z.ZodType> = {
+  search: z.looseObject({ result: z.array(OUT_HIT).optional(), hits: z.array(OUT_HIT).optional(), composedContext: z.unknown().optional() }),
+  evidence: z.looseObject({ query: z.string(), hits: z.array(OUT_HIT), evidence: z.unknown() }),
+  keyword: z.looseObject({
+    result: z.array(OUT_HIT).optional(), ok: z.boolean().optional(), error: z.string().optional(),
+    detail: z.string().optional(), results: z.array(OUT_HIT).optional(),
+  }),
+  entity: z.looseObject({
+    result: z.looseObject({
+      id: z.number(), type: z.string(), canonicalName: z.string(), aliases: z.array(z.string()), sourceNote: z.string(), confidence: z.number(),
+    }).nullable().optional(),
+  }),
+  facts: z.looseObject({ result: z.array(OUT_HIT) }),
+  remember_fact: z.looseObject({ action: z.enum(['supersede', 'store', 'nochange']) }),
+  status: z.looseObject({ notes: z.number(), chunks: z.number(), entities: z.number(), facts: z.number(), relations: z.number() }),
+  note: z.looseObject({ ok: z.literal(true), path: z.string(), warning: z.string().optional(), detail: z.string().optional() }),
+  whats_new: OUT_WHATS_NEW,
+  ask_agent: OUT_ASK_AGENT,
+  list_requests: OUT_LIST_REQUESTS,
+  answer_request: OUT_REQUEST,
+  close_request: OUT_REQUEST,
+  [HANDOFF_TOOL_NAME]: OUT_HANDOFF,
+};
+
+/** A tool as this server lists it: with its outputSchema (as JSON Schema draft-07, which the SDK's validator reads) when on. */
+function listedWithSchema<T extends { name: string }>(tool: T, on: boolean): T | (T & { outputSchema: Record<string, unknown> }) {
+  const schema = OUTPUT_SCHEMAS[tool.name];
+  if (!on || !schema) return tool;
+  const { $schema: _dialect, ...json } = z.toJSONSchema(schema, { target: 'draft-7' }) as Record<string, unknown>;
+  return { ...tool, outputSchema: { ...json, type: 'object' as const } };
+}
+
+/**
+ * structuredContent for a reply: the decoded value when the reply is an object, which is what a client parses from the text
+ * block; an array or null reply (a list of hits, a fact list, a lookup that found nothing) is wrapped as { result }, since
+ * structured content is an object. The text block is the same in both cases.
+ */
+function structuredOf(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : { result: value };
+}
+
 /** Listed beside TOOLS only when the server has the handler, i.e. RENOR_HANDOFF_NOTE was on at startup. */
 export const HANDOFF_TOOL = {
   name: HANDOFF_TOOL_NAME,
@@ -386,7 +435,12 @@ export function registerMcpHandlers(server: Server, tools: ReturnType<typeof cre
   const byName = tools as unknown as Record<string, ((args: unknown) => Promise<unknown>) | undefined>;
   const hive = HIVE_TOOLS.filter(tool => typeof byName[tool.name] === 'function');
   const handoff = typeof byName[HANDOFF_TOOL_NAME] === 'function' ? [HANDOFF_TOOL] : [];
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...TOOLS, ...hive, ...handoff] }));
+  // Read once for this server, so the listing and the replies always agree (as the hosted server does).
+  const env = { ...process.env };
+  const carries = (name: string) => toolCarriesStructured(name, env);
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [...TOOLS, ...hive, ...handoff].map(tool => listedWithSchema(tool, carries(tool.name))),
+  }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
@@ -402,7 +456,9 @@ export function registerMcpHandlers(server: Server, tools: ReturnType<typeof cre
       // One line, as the hosted tools answer: indentation is tokens an agent pays for and reads nothing from.
       // Escaped as the hosted server escapes its replies (mvp/server.ts): stored text is untrusted, and a raw bidi
       // override or zero-width character would reach the agent's transcript unrendered.
-      return { content: [{ type: 'text', text: escapeInvisibleControls(JSON.stringify(result)) }] };
+      const text = escapeInvisibleControls(JSON.stringify(result));
+      // A refusal or error is text only (the catch below), as the hosted server answers it.
+      return { content: [{ type: 'text', text }], ...(carries(name) ? { structuredContent: structuredOf(JSON.parse(text)) } : {}) };
     } catch (err) {
       return { content: [{ type: 'text', text: escapeInvisibleControls(`Error: ${err instanceof Error ? err.message : String(err)}`) }], isError: true };
     }

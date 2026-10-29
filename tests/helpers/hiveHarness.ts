@@ -8,8 +8,9 @@ import request from 'supertest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
-import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
+import { MVP_MCP_PATH } from '../../src/mvp/server';
 import { killTree, spawnTree } from './childTree';
+import { startMvpServiceOnFreePort } from './mvpPort';
 
 // Shared by the hive breaker suite and its gateway-backed parity test (tests/memory/gateway-hive-parity.test.ts).
 // Nothing here touches the gateway, so both files can use it and the public cut can carry it.
@@ -62,20 +63,21 @@ export async function startWorkspace(opts: { secretGuard?: boolean; selfHosted?:
   // `memoryDir`: an existing folder to serve (a throwaway copy: close() removes it). Default: a new empty one.
   const memoryDir = opts.memoryDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'hive-breaker-'));
   const authRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hive-breaker-auth-'));
-  const port = await freePort();
   process.env.MVP_MEMORY_DIR = memoryDir;
   process.env.MVP_AUTH_STATE_PATH = path.join(authRoot, 'clients.json');
-  process.env.MVP_BASE_URL = `http://127.0.0.1:${port}`;
   process.env.MVP_OWNER_EMAIL = OWNER_EMAIL;
   process.env.MVP_OWNER_PASSWORD = OWNER_PASSWORD;
-  process.env.MVP_PORT = String(port);
   process.env.MVP_ALLOWED_CALLBACK_URIS = 'http://127.0.0.1:1/callback';
   for (const key of ['MVP_HISTORY_DIR', 'MVP_LEDGER_REL', 'MVP_EMBEDDING_PROVIDER', 'EMBEDDING_PROVIDER']) delete process.env[key];
   process.env.RENOR_SECRET_GUARD = opts.secretGuard ? '1' : '0';
   process.env.MVP_GATEWAY_SECRET = opts.selfHosted ? '' : 'synthetic-gateway-secret';
   process.env.MVP_MCP_JSON = opts.sse ? 'false' : 'true';
-  const config = loadMvpConfig();
-  const service = await startMvpService(config);
+  // The port is probed, then bound; another process can take it in between (EADDRINUSE), so the start retries on a fresh probe.
+  const { started: service, config } = await startMvpServiceOnFreePort((port) => {
+    process.env.MVP_BASE_URL = `http://127.0.0.1:${port}`;
+    process.env.MVP_PORT = String(port);
+    return loadMvpConfig();
+  });
 
   async function authorize(clientName = 'hive-breaker'): Promise<string> {
     const redirectUri = 'http://127.0.0.1:1/callback';

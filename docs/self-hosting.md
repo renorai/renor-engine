@@ -130,7 +130,7 @@ claude mcp add --transport http --scope user --callback-port 39472 renor http://
 
 `MVP_HOST=0.0.0.0` is the address inside the container, and `-p 127.0.0.1:` keeps it off your network. Without `MVP_HOST` the server listens on the container's own loopback and the published port reaches nothing. On a public address the server speaks plain HTTP and refuses to start unless `MVP_BASE_URL` is an `https://` URL, so put a TLS proxy in front. The same image runs the command-line server over stdio, on the same volume: `docker run -i --rm -v renor-data:/data renor-engine mcp`.
 
-**Render.** [Deploy](https://render.com/deploy?repo=https://github.com/patrickpassosb/renor-engine) reads `render.yaml`: it asks for your email, generates the password (the service's Environment tab shows it) and attaches a 1 GB disk at `/data`. A disk needs a paid instance type. The MCP URL is `https://<service>.onrender.com/mcp`.
+**Render.** [Deploy](https://render.com/deploy?repo=https://github.com/renorai/renor-engine) reads `render.yaml`: it asks for your email, generates the password (the service's Environment tab shows it) and attaches a 1 GB disk at `/data`. A disk needs a paid instance type. The MCP URL is `https://<service>.onrender.com/mcp`.
 
 **Railway.** Create a service from this repository; `railway.toml` builds the `Dockerfile`. Then, in the service: attach a volume at `/data`, set `MVP_OWNER_EMAIL`, `MVP_OWNER_PASSWORD` and `MVP_ALLOWED_CALLBACK_URIS`, and generate a domain. Without the volume, each deploy starts from an empty memory.
 

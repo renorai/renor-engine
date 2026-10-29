@@ -5,7 +5,7 @@
 
 [![engine-public-ci](https://github.com/renorai/renor-engine/actions/workflows/engine-public-ci.yml/badge.svg?branch=main)](https://github.com/renorai/renor-engine/actions/workflows/engine-public-ci.yml)
 
-**O Renor é um sistema de memória para agentes de programação: ele mantém o que você informa ao Claude Code, Codex ou Cursor em arquivos Markdown no seu computador e disponibiliza essas informações para qualquer um deles por meio do MCP.**
+**O Renor é um sistema de memória para agentes de programação: ele mantém o que você informa ao Claude Code, Codex ou Cursor em uma pasta de arquivos Markdown no seu computador e disponibiliza essas informações para qualquer um deles por meio do MCP.**
 
 Toda nova sessão de um agente começa do zero: você precisa explicar novamente o projeto, a decisão tomada na semana passada e seus motivos, ou algo que já precisou corrigir duas vezes. Com o Renor, um agente salva a informação e o próximo a encontra. A memória consiste em arquivos comuns que pertencem a você. O sistema é executado localmente, não exige conta nem chave de API e não envia dados para fora do seu computador, a menos que você configure um modelo ou opte por compartilhar dados. O compartilhamento fica desativado por padrão: o nível `signals` envia métricas anônimas de uso; o nível `data` também envia suas pesquisas e o texto das memórias, com chaves e senhas filtradas. O comando `renor-engine telemetry off` desativa a telemetria. Há também uma versão hospedada, sem necessidade de instalação, em [renor.cloud](https://renor.cloud).
 
@@ -27,7 +27,7 @@ O último comando inicia o servidor MCP, salva um fato (`Ada favorite_color ceru
 PASS: self-hosted stdio MCP can remember and retrieve a current fact.
 ```
 
-Baixou um arquivo ZIP em vez de clonar o repositório? Como ele não contém o histórico do Git necessário para identificar a versão do código usada na compilação, execute o build com `RENOR_BUILD_COMMIT=0000000 npm run build`. Se estiver usando uma versão incorreta do Node.js ou tiver ignorado os scripts de instalação, consulte [Solução de problemas](docs/self-hosting.pt-BR.md#troubleshooting).
+Baixou um arquivo ZIP em vez de clonar o repositório? Como ele não contém o histórico do Git necessário para identificar a versão do código usada na compilação, execute o build com `RENOR_BUILD_COMMIT=0000000 npm run build`. Se estiver usando uma versão incorreta do Node.js ou tiver ignorado os scripts de instalação, consulte [Solução de problemas](docs/self-hosting.pt-BR.md#solução-de-problemas).
 
 ## Conecte seu agente
 
@@ -63,7 +63,7 @@ Cada comando abaixo inicia o Renor usando a versão do Node.js que você está u
 claude mcp add --scope user renor-local -e VAULT_PATH="${VAULT_PATH:?run the export line above first}" -- "$(node -p process.execPath)" "$PWD/dist/cli.js" mcp
 ```
 
-Reinicie o Claude Code. O comando `/mcp` exibirá `renor-local em todos os projetos. Para remover a configuração, execute `claude mcp remove renor-local`.
+Reinicie o Claude Code. O comando `/mcp` exibirá `renor-local` em todos os projetos. Para remover a configuração, execute `claude mcp remove renor-local`.
 
 **Codex**
 
@@ -96,7 +96,7 @@ Depois, peça ao agente para se lembrar de alguma informação e faça uma pergu
 | O que os agentes salvam | Acrescentado como Markdown na mesma pasta: fatos em `System/Memory Events Ledger.md` e anotações em `Memory/Daily/<data>.md`. |
 | Índice de pesquisa | Banco SQLite em `$VAULT_PATH/.semantic-memory/index.db`. É um dado derivado: `node dist/cli.js index` o reconstrói a partir dos arquivos Markdown. |
 
-Tudo o que o Renor armazena fica nessa única pasta. Portanto, você pode fazer backup, sincronizá-la ou movê-la como faria com qualquer outra pasta. Nada sai do seu computador, a menos que você configure uma chave de modelo: `EMBEDDING_PROVIDER=openai` envia o texto das suas anotações à OpenAI para gerar embeddings. Já `RENOR_EVIDENCE_MODE=auto` ou `always`, quando usado com uma chave de modelo de evidências (`RENOR_EVIDENCE_API_KEY` ou uma chave `OLLAMA_*`), faz com que a pesquisa envie ao modelo as anotações encontradas. Essa etapa de evidências fica desativada, a menos que `RENOR_EVIDENCE_MODE` seja configurada; portanto, ter apenas uma chave não envia dados. Consulte todas as configurações e seus valores padrão em [docs/ENVIRONMENT-VARIABLES.md](docs/ENVIRONMENT-VARIABLES.pt-BR.md).
+Tudo o que o Renor armazena fica nessa única pasta. Portanto, você pode fazer backup, sincronizá-la ou movê-la como faria com qualquer outra pasta. Nada sai do seu computador, a menos que você configure uma chave de modelo: `EMBEDDING_PROVIDER=openai` envia o texto das suas anotações à OpenAI para gerar embeddings. Já `RENOR_EVIDENCE_MODE=auto` ou `always`, quando usado com uma chave de modelo de evidências (`RENOR_EVIDENCE_API_KEY` ou uma chave `OLLAMA_*`), faz com que a pesquisa envie ao modelo as anotações encontradas. Essa etapa de evidências fica desativada, a menos que `RENOR_EVIDENCE_MODE` seja configurada; portanto, ter apenas uma chave não envia dados. Consulte todas as configurações e seus valores padrão em [docs/ENVIRONMENT-VARIABLES.md](docs/ENVIRONMENT-VARIABLES.md).
 
 **Pesquisa sem embeddings.** Por padrão, o Renor não utiliza modelos de embeddings, então uma anotação é encontrada pelas palavras exatas. Por exemplo, `blue notebook` encontra "The blue notebook is on the desk", mas `where is my notebook?` não encontra essa mesma anotação. Os fatos salvos podem ser encontrados de qualquer maneira. Para pesquisar por significado, configure `EMBEDDING_PROVIDER=openai` com `OPENAI_API_KEY` ou use `local` para baixar um modelo uma única vez e executá-lo no próprio computador. Em seguida, execute `node dist/cli.js rebuild` para gerar embeddings das anotações existentes. Consulte os [detalhes](docs/self-hosting.pt-BR.md#embeddings).
 
