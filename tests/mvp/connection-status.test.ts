@@ -16,7 +16,7 @@ import { authorize, freePort, restoreWorkspaceEnv } from '../helpers/mvpWorkspac
  * The status is an extra trailing text block, so the block every tool always returned is untouched.
  */
 
-const ENV_KEYS = ['MVP_INSTANCE_ID', 'RENOR_CONNECTION_STATUS', 'RENOR_TELEMETRY_DISABLED', 'RENOR_SEARCH_EVIDENCE'];
+const ENV_KEYS = ['RENOR_SHARING_DEFAULT', 'MVP_INSTANCE_ID', 'RENOR_CONNECTION_STATUS', 'RENOR_TELEMETRY_DISABLED', 'RENOR_SEARCH_EVIDENCE'];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 type Block = { type: string; text: string };
@@ -39,6 +39,8 @@ async function start(opts: { instance?: string; killSwitch?: boolean; sessions?:
     MVP_MCP_JSON: opts.sessions === false ? 'true' : 'false',
     RENOR_SEARCH_EVIDENCE: '0',
     RENOR_TELEMETRY_DISABLED: 'true',
+    // This file compares two workspaces byte for byte; at the shipped sharing default each would also record a learning log with keys of its own.
+    RENOR_SHARING_DEFAULT: 'off',
   });
   for (const key of ['MVP_HISTORY_DIR', 'MVP_LEDGER_REL', 'MVP_EMBEDDING_PROVIDER', 'EMBEDDING_PROVIDER', 'MVP_DB_PATH', 'RENOR_CONNECTION_STATUS', 'MVP_INSTANCE_ID']) delete process.env[key];
   if (opts.instance !== undefined) process.env.MVP_INSTANCE_ID = opts.instance;

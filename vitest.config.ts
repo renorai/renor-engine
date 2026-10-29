@@ -1,12 +1,21 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 import DurationSequencer from './tests/setup/durationSequencer.mjs';
+
+const suiteConfigHome = fs.mkdtempSync(path.join(os.tmpdir(), 'renor-vitest-config-'));
+process.once('exit', () => fs.rmSync(suiteConfigHome, { recursive: true, force: true }));
 
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
     // The suite's fictional owner: identity aliases come from RENOR_OWNER_NAMES, which is unset by default.
-    env: { RENOR_OWNER_NAMES: 'Rowan,Rowan Vale,Rowan Vale Holm' },
+    // The sharing default (src/sharing/state.ts) is the shipped one: anonymous usage numbers on until chosen otherwise, so every test that
+    // starts a service runs with it. The only thing pinned is WHERE the install's own state (the first-run notice record, `renor setup`'s
+    // answer, the install's id that binds a consent record to it) lives: a folder of this run's own, so a test never reads or writes the developer's ~/.config/renor.
+    env: { RENOR_OWNER_NAMES: 'Rowan,Rowan Vale,Rowan Vale Holm', XDG_CONFIG_HOME: suiteConfigHome, XDG_STATE_HOME: suiteConfigHome },
     // Start the slowest files first (vitest's own cache, else the seconds recorded in tests/setup/test-durations.json), so no worker is
     // left holding the longest file after the others are done. It only orders; it selects and skips nothing.
     sequence: { sequencer: DurationSequencer },

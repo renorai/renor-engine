@@ -54,7 +54,7 @@ jobs:
       # Actions are pinned to the commit SHA of the tag, not the mutable tag:
       # this workflow runs on pull_request from forks, so a moved tag would run
       # attacker-chosen code. Keep the SHA and the version comment together.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 

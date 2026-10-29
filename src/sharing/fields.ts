@@ -17,14 +17,14 @@ export type SharingLevel = (typeof SHARING_LEVELS)[number];
 export const SHARING_PROTOCOL = 1;
 
 /** The version of the words the CLI shows before a user picks signals or data. A dashboard sends its own wording id. */
-export const CLI_WORDING_VERSION = 'engine-cli-2026-10-28';
+export const CLI_WORDING_VERSION = 'engine-cli-2026-10-29';
 
 /**
  * The id of the words that describe the default (anonymous usage numbers on until the person turns them off): the words
  * `renor-engine telemetry status` and the service's start-up line show, and the wording a default batch names. A default is not
  * a choice, so it is stored as nothing more than this id. Change the words, change the id.
  */
-export const DEFAULT_WORDING_VERSION = 'engine-default-2026-10-26';
+export const DEFAULT_WORDING_VERSION = 'engine-default-2026-10-28';
 
 /** The order of strength: off < signals < data. */
 export function levelRank(level: SharingLevel): number {

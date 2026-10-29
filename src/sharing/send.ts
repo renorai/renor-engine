@@ -9,10 +9,11 @@ import {
 } from './fields';
 import { LABEL_WINDOW_MS, projectRows, type ProjectedKind, type ProjectedRow } from './project';
 import {
-  EXAMPLES_FILE, contributorId, rotateSecret, trainingBearer, effectiveLevel, ensureState, envOverride, freshState, readConsent, readState, removeLocalSharingData,
+  EXAMPLES_FILE, contributorId, rotateSecret, trainingBearer, consentFor, effectiveLevel, ensureState, freshState, readConsent, readState, removeLocalSharingData,
   writeConsent, writeState, type ConsentRecord, type SharingState,
 } from './state';
 import path from 'node:path';
+import { noticeRecorded } from './notice';
 
 /**
  * The sender, and the changes to the choice. Everything that leaves the machine leaves through `post` below, and only from
@@ -180,6 +181,8 @@ export interface SenderOptions {
   sharingOpen?: () => Promise<boolean>;
   /** Asks whether Renor's switch for the default is open (default: sharingDefaultOpen), before reading rows and before EACH batch sent under the default; an error is closed. */
   defaultOpen?: () => Promise<boolean>;
+  /** Whether someone has been told (default: the install's notice record, notice.ts), asked before anything is sent under the default. */
+  noticeRecorded?: () => boolean;
   /** Return the request bodies instead of sending them. Also on with RENOR_SHARING_DEBUG=1. */
   debug?: boolean;
   /**
@@ -326,7 +329,7 @@ export async function shareNow(options: SenderOptions): Promise<ShareResult> {
   const debug = options.debug === true || debugOn(env);
   const previewing = debug && options.previewLevel !== undefined;
   // An earlier explicit Off keeps the numbers off (their stream answers 'off'), and the text, if its switch is on, still goes.
-  const numbersOff = readConsent(options.dir)?.numbersOff === true;
+  const numbersOff = readConsent(options.dir, env)?.numbersOff === true;
   if (options.hosted !== true || previewing || (first.status === 'off' && !numbersOff) || effectiveLevel(options.dir, env) !== 'data') return first;
   const second = await shareStream(options, 'training');
   const rank = (status: ShareStatus): number => STATUS_RANK.indexOf(status);
@@ -351,7 +354,8 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
   const empty = (status: ShareStatus, extra: Partial<ShareResult> = {}): ShareResult =>
     ({ status, level, rows: 0, batches: 0, skipped: 0, ...extra });
   if (level === 'off') return empty('off');
-  const record = readConsent(options.dir);
+  // This folder's own record, else the install's answer it inherits (`renor setup`): either is a choice, so neither is sent as the default.
+  const record = consentFor(options.dir, env);
   // A hosted workspace that once chose Off never sends its numbers again, whatever its owner does with the text switch.
   if (options.hosted === true && !training && record?.numbersOff === true) return empty('off');
   // While the owner's text switch is on, the usage numbers pause: a row of the text stream is the same row with its text, so sending it in both would
@@ -365,6 +369,10 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
   // id. A self-hosted install has no workspace and sends its consent record. The training stream is the one tied stream: the platform's
   // record of the owner's switch is its consent, so it carries neither a consent record nor the default flag.
   const viaDefault = !previewing && !training && (record === null || options.hosted === true);
+  // Nothing is sent under the default until someone has been told (notice.ts): a daemon or an idle service nobody has talked to sends nothing.
+  if (viaDefault && options.hosted !== true && !debug && !(options.noticeRecorded ?? (() => noticeRecorded(env)))()) {
+    return empty('paused', { reason: 'the first-run notice has not been shown yet; nothing is sent under the default until it has' });
+  }
   const consent = viaDefault ? { wording: DEFAULT_WORDING_VERSION } : (record ?? (previewing ? { wording: CLI_WORDING_VERSION } : null));
   if (consent === null || options.memoryDir === null) return empty('no-log', { reason: 'no learning log to read' });
 
@@ -687,10 +695,17 @@ export interface ChooseOptions {
   wording: string;
   adult: boolean;
   source: ConsentRecord['source'];
+  /** Which client application relayed the user's yes (source `prompt`): kept in the record. */
+  client?: ConsentRecord['client'];
   env?: NodeJS.ProcessEnv;
   fetch?: Post;
   now?: () => number;
   hosted?: boolean;
+  /**
+   * Off only: owe the deletion of what Renor holds instead of asking for it inside this call. The sender's next tick asks (settlePendingDelete),
+   * so a caller that must not reach the network (an agent's tool call) records the off at once and the request follows within the hour.
+   */
+  deferRemoteDelete?: boolean;
 }
 
 export interface ChooseResult {
@@ -710,17 +725,19 @@ export interface ChooseResult {
  * at once.
  */
 export async function chooseLevel(options: ChooseOptions): Promise<ChooseResult> {
-  const previous = readConsent(options.dir);
+  const previous = readConsent(options.dir, options.env);
   const now = (options.now ?? Date.now)();
   if (options.level === 'off') {
     const record: ConsentRecord = { version: 1, level: 'off', changedAt: new Date(now).toISOString(), wording: options.wording, adult: previous?.adult ?? false, source: options.source };
-    writeConsent(options.dir, record);
+    writeConsent(options.dir, record, options.env);
     // Stop first: from this write on, no process records or sends anything. Then owe the deletion before discarding anything,
     // so a process that dies here leaves it pending (with the secret it needs) for settlePendingDelete.
     const owed = readState(options.dir);
     if (owed !== null && owed.everSent && !owed.deletePending) writeState(options.dir, { ...owed, deletePending: true });
     for (const name of [EXAMPLES_FILE, `${EXAMPLES_FILE}-wal`, `${EXAMPLES_FILE}-shm`]) fs.rmSync(path.join(options.dir, name), { force: true });
-    const result = await deleteRemote({ dir: options.dir, env: options.env, fetch: options.fetch, hosted: options.hosted });
+    const result: RemoteDeleteResult = options.deferRemoteDelete === true
+      ? { ok: false, requested: false }
+      : await deleteRemote({ dir: options.dir, env: options.env, fetch: options.fetch, hosted: options.hosted });
     // The secret is removed only once the endpoint holds nothing; until then the state keeps it, with the deletion pending.
     if (result.ok) removeLocalSharingData(options.dir);
     const deleted = result.requested || result.owedUnderDoNotTrack ? result.ok : null;
@@ -746,7 +763,7 @@ export async function chooseLevel(options: ChooseOptions): Promise<ChooseResult>
   };
   if (numbersOff && options.level === 'signals') {
     const off: ConsentRecord = { version: 1, level: 'off', changedAt: new Date(now).toISOString(), wording: options.wording, adult: true, source: options.source, numbersOff: true };
-    writeConsent(options.dir, off);
+    writeConsent(options.dir, off, options.env);
     for (const name of [EXAMPLES_FILE, `${EXAMPLES_FILE}-wal`, `${EXAMPLES_FILE}-shm`]) fs.rmSync(path.join(options.dir, name), { force: true });
     let remoteDeleted: boolean | null = null;
     if (hostedWas) remoteDeleted = await leaveText();
@@ -763,9 +780,10 @@ export async function chooseLevel(options: ChooseOptions): Promise<ChooseResult>
   }
   const record: ConsentRecord = {
     version: 1, level: options.level, changedAt: new Date(now).toISOString(), wording: options.wording, adult: true, source: options.source,
+    ...(options.client !== undefined ? { client: options.client } : {}),
     ...(numbersOff ? { numbersOff: true as const } : {}),
   };
-  writeConsent(options.dir, record);
+  writeConsent(options.dir, record, options.env);
   ensureState(options.dir);
   let remoteDeleted: boolean | null = null;
   if (levelRank(options.level) < levelRank('data')) {
@@ -798,7 +816,9 @@ export async function deleteAllShared(options: Pick<SenderOptions, 'dir' | 'env'
 /** The retry of a removal that could not be made earlier. Called by the loop, whatever the level. */
 export async function settlePendingDelete(options: Pick<SenderOptions, 'dir' | 'env' | 'fetch' | 'hosted'>): Promise<void> {
   const env = options.env ?? process.env;
-  if (envOverride(env) !== null) return; // an environment override means no request at all from this process
+  // Only DO_NOT_TRACK=1 forbids a request (deleteRemote records the deletion as owed under it). RENOR_SHARING=off stops sending rows; a
+  // deletion the person already asked for is still theirs, and goes out.
+  if (doNotTrack(env)) return;
   const state = readState(options.dir);
   if (state === null) return;
   // Only the text for training is owed (the owner switched it off): the numbers are untouched.

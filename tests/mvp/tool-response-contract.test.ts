@@ -343,6 +343,8 @@ describe('finding 17: every tool renders its JSON the same way, on one line', ()
     expect((await check('apply_import', { batchId: preview.body.batchId })).body.ok).toBe(true);
     expect((await check('undo_import', { batchId: preview.body.batchId })).body.retired).toBe(1);
 
+    expect((await check('sharing_level', { action: 'get' })).body.ok).toBe(true);
+
     const listed = (await client.listTools()).tools.map((t) => t.name).sort();
     expect([...answered].sort()).toEqual(listed);
 

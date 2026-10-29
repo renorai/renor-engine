@@ -78,6 +78,8 @@ import { RankingTrace, withRankingTrace } from '../retrieval/rankingTrace';
 import { sharingHook } from '../sharing/examples';
 import { SHARING_LEVELS } from '../sharing/fields';
 import { chooseLevel, deleteAllShared } from '../sharing/send';
+import { AGENT_LEVELS, SHARING_TOOL_DESCRIPTION, runSharingTool, type AskHuman } from '../sharing/agentTool';
+import { AGENT_NOTICE_INSTRUCTION, showNotice } from '../sharing/notice';
 import { contributorId, defaultInForce, effectiveLevel, ensureState, readConsent, trainingBearer } from '../sharing/state';
 import { hostHeaderValidation } from '@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js';
 import { LOCAL_API_HOSTNAMES } from '../api/apiAuth';
@@ -647,6 +649,22 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     sharing: config.sharingDir === undefined ? undefined : sharingHook(config.sharingDir),
   });
 
+  // The first-run sharing notice: the first tool reply this self-hosted install gives an agent carries one extra text block the agent relays
+  // to the user (src/sharing/notice.ts). The default way to run (MVP_MCP_JSON=true) is stateless, so there is no session to take a first reply
+  // of: the install's record decides, and the notice goes on the first reply after it was due. Once per install and recorded; never on a
+  // hosted workspace, for the dashboard, or after any choice. A notice that cannot be worked out never fails the call.
+  const withSharingNotice = <T extends { content?: unknown }>(result: T): T => {
+    if (dashboard || config.sharingDir === undefined || !Array.isArray(result?.content)) return result;
+    let notice: string | null = null;
+    try {
+      showNotice(config.sharingDir, 'agent', line => { notice = line; });
+    } catch {
+      return result;
+    }
+    if (notice === null) return result;
+    return { ...result, content: [...result.content, { type: 'text', text: JSON.stringify({ renor_sharing_notice: notice, instruction: AGENT_NOTICE_INSTRUCTION }) }] };
+  };
+
   /** Privacy-safe: tool name / ok / ms and, on a refusal, its code from the closed set — never args or memory content. */
   function tracedTool<H extends (...args: never[]) => CallToolResult | Promise<CallToolResult>>(tool: string, handler: H): H {
     // On-demand: a running tool call (a write, an index job) holds the engine awake
@@ -684,7 +702,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
           ...(ok ? {} : { error_kind: 'other' as const, error_reason: toolRefusalOf(result) ?? 'refused' as const }),
           ...phasesOf(),
         });
-        return announcer.decorate(result, first);
+        return withSharingNotice(announcer.decorate(result, first));
       } catch (err) {
         emitTelemetry({
           event: 'tool_use',
@@ -1764,6 +1782,60 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     }
   });
   if (!dashboard) registeredToolEntry(server, 'sharing_settings').enabled = false;
+
+  // For the user's agent: read or LOWER what this Renor shares with Renor, when the user asks in plain words (src/sharing/agentTool.ts).
+  // It never raises: that needs the user's own yes. Back to anonymous numbers the engine asks for through the user's client (elicitation) when it can;
+  // the memory text is only ever a terminal's yes, because a client application can answer a question without the user.
+  server.registerTool('sharing_level', {
+    title: 'What Renor shares to improve (off, anonymous, everything)',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    description: SHARING_TOOL_DESCRIPTION,
+    inputSchema: {
+      action: z.enum(['get', 'set']).describe('get: what is shared now. set: change it, only when the user asks'),
+      level: z.enum(AGENT_LEVELS).optional().describe('With set: off, anonymous or everything. Going up is the user\'s own yes, never yours: asked by the engine for anonymous, at a terminal for everything'),
+    },
+    outputSchema: z.looseObject({
+      ok: z.boolean(),
+      action: z.enum(['get', 'set']),
+      level: z.enum(AGENT_LEVELS),
+      byDefault: z.boolean(),
+      chosen: z.enum(AGENT_LEVELS).nullable(),
+      changedAt: z.string().nullable(),
+      loweredByEnvironment: z.boolean(),
+      hosted: z.boolean(),
+      changed: z.boolean().optional(),
+      remoteDeleted: z.boolean().nullable().optional(),
+      message: z.string().optional(),
+    }),
+  }, async (args, extra) => {
+    try {
+      const dir = config.sharingDir;
+      if (dir === undefined) throw refusal('invalid_argument', 'sharing is not configured on this server');
+      // The question goes to the user through their own client. A client that did not declare elicitation, or a server that has no session to
+      // ask over (the stateless default), answers null: the tool then changes nothing and names the terminal command.
+      const ask: AskHuman = async ({ message }) => {
+        if (server.server.getClientCapabilities()?.elicitation === undefined) return null;
+        const reply = await server.server.elicitInput({
+          message,
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              agree: { type: 'boolean', title: 'Yes, share', description: 'Yes, I want this' },
+              adult: { type: 'boolean', title: 'I am 18 or older', description: 'I am 18 or older and I choose this myself' },
+            },
+            required: ['agree', 'adult'],
+          },
+        }, { relatedRequestId: extra.requestId });
+        if (reply.action !== 'accept') return { agreed: false, adult: false };
+        const info = server.server.getClientVersion();
+        const client = info !== undefined ? { name: String(info.name).slice(0, 80), version: String(info.version).slice(0, 40) } : undefined;
+        return { agreed: reply.content?.agree === true, adult: reply.content?.adult === true, ...(client !== undefined ? { client } : {}) };
+      };
+      return jsonResult(await runSharingTool(args, { dir, hosted: Boolean(config.gatewaySecret), ask }));
+    } catch (err) {
+      return toolError(err);
+    }
+  });
 
   server.registerTool('whats_new', {
     title: "What's new for me",

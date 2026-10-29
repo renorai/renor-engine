@@ -508,7 +508,7 @@ program
 
 program
   .command("telemetry <action> [argument]")
-  .description("Choose whether to share anonymous signals or training data with Renor (off by default): status | signals | data | off | delete | preview [level] | send | fields [level]")
+  .description("Choose what to share with Renor: off, anonymous usage numbers (signals, the default) or everything incl. memory text (data): status | signals | data | off | delete | preview [level] | send | fields [level]")
   .option("--yes", "do not ask: you have read the words shown and confirm you are 18 or older")
   .option("--local", "delete: also empty the local learning log")
   .option("--dir <path>", "the sharing folder (default: RENOR_SHARING_DIR, else ~/.config/renor)")

@@ -1,3 +1,4 @@
+import { showNotice } from './notice';
 import { defaultSharingDir, effectiveLevel, installLimit, readConsent } from './state';
 import { chooseLevel, settlePendingDelete, shareNow, type SenderOptions } from './send';
 
@@ -9,9 +10,9 @@ import { chooseLevel, settlePendingDelete, shareNow, type SenderOptions } from '
 export async function applyInstallOff(options: SenderOptions): Promise<boolean> {
   const env = options.env ?? process.env;
   if (installLimit(options.dir, env) !== 'off') return false;
-  const own = readConsent(options.dir);
+  const own = readConsent(options.dir, env);
   if (own === null || own.level === 'off') return false;
-  const install = readConsent(defaultSharingDir(env));
+  const install = readConsent(defaultSharingDir(env), env);
   await chooseLevel({
     dir: options.dir, level: 'off', wording: install?.wording ?? 'install-off', adult: own.adult, source: install?.source ?? 'setup',
     env, fetch: options.fetch, hosted: options.hosted,
@@ -71,4 +72,16 @@ export function startSharingLoop(options: SenderOptions & { intervalMs?: number;
   const first = setTimeout(() => void tick(), options.firstTickMs ?? 30_000);
   first.unref();
   return { stop: () => { clearInterval(timer); clearTimeout(first); }, tick };
+}
+
+/**
+ * The service's start-up for sharing: tell the person first, then start the sender. `print` shows the first-run notice (when it is due),
+ * and the sender is started only after that call has returned, so no tick can come before the notice was printed. The notice is recorded
+ * after it printed; if it could not be printed or recorded, the sender still starts but sends nothing under the default (send.ts asks
+ * noticeRecorded), and an explicit choice is not held up by it.
+ */
+export function startSharingService(options: SenderOptions & { print: (line: string) => void; intervalMs?: number; firstTickMs?: number; log?: (line: string) => void }): SharingLoop {
+  const { print, ...sender } = options;
+  showNotice(sender.dir, 'terminal', print, sender.env ?? process.env);
+  return startSharingLoop(sender);
 }

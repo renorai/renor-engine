@@ -5,7 +5,7 @@ import { fieldsAtLevel } from './fields';
 import {
   chooseLevel, debugOn, deleteAllShared, settlePendingDelete, shareNow, sharingEndpoint, type Post,
 } from './send';
-import { defaultInForce, defaultLevel, effectiveLevel, envOverride, hasChosen, hostedEngine, readConsent, readState, sharingDirFor } from './state';
+import { consentFor, defaultInForce, defaultLevel, effectiveLevel, envOverride, foreignConsent, hasChosen, hostedEngine, readConsent, readState, sharingDirFor } from './state';
 import { ADULT_LINE, CLI_WORDING_VERSION, defaultWording, wordingFor } from './wording';
 
 /**
@@ -57,20 +57,23 @@ export async function runTelemetry(action: string, argument: string | undefined,
   try {
     switch (action) {
       case 'status': {
-        const record = readConsent(dir);
+        const own = readConsent(dir, env);
+        // This folder's record, else the install's answer (`renor setup`) that a folder with no record of its own follows.
+        const record = consentFor(dir, env);
         const state = readState(dir);
         const override = envOverride(env);
         const level = effectiveLevel(dir, env);
         const fallback = defaultLevel(env);
         const byDefault = defaultInForce(dir, env);
         io.out(`sharing: ${level}${override !== null && level !== (record?.level ?? fallback) ? ` (lowered by the environment from ${record?.level ?? fallback})` : ''}${byDefault ? ' (the default: you have not chosen)' : ''}`);
-        if (record === null && hasChosen(dir)) io.out('choice: a record is there but cannot be read, so it counts as off');
+        if (record === null && hasChosen(dir, env)) io.out('choice: a record is there but cannot be read, so it counts as off');
+        else if (record === null && foreignConsent(dir, env)) io.out('choice: a record is there, but it was made on another install (copied or synced in), so it counts as no choice here');
         else if (record === null && fallback === 'off') io.out('choice: none made (the default is off; nothing is recorded for sharing or sent)');
         else if (record === null) {
           io.out('choice: none made (the default is usage numbers, on until you turn them off)');
           io.out(defaultWording());
         } else {
-          io.out(`choice: ${record.level}, chosen ${record.changedAt} via ${record.source}, wording ${record.wording}, 18 or older: ${record.adult ? 'yes' : 'no'}`);
+          io.out(`choice: ${record.level}, chosen ${record.changedAt} via ${record.source}, wording ${record.wording}, 18 or older: ${record.adult ? 'yes' : 'no'}${own === null ? ' (this install\'s answer at `renor setup`, which this memory folder follows)' : ''}`);
         }
         io.out(`folder: ${dir}`);
         io.out(`endpoint: ${sharingEndpoint(env)}`);

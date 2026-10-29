@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -20,7 +20,10 @@ type Started = Awaited<ReturnType<typeof startMvpService>>;
 
 let ws: Workspace | undefined;
 let restarted: Started | undefined;
+// These tests compare two whole exports; at the shipped sharing default the export also carries a learning log stamped with its own export time.
+beforeEach(() => { process.env.RENOR_SHARING_DEFAULT = 'off'; });
 afterEach(async () => {
+  delete process.env.RENOR_SHARING_DEFAULT;
   if (restarted) await stopService(restarted).catch(() => undefined);
   await ws?.close().catch(() => undefined);
   ws = undefined;

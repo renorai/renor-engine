@@ -13,9 +13,10 @@ import { MAX_STATEMENT_LENGTH } from '../memory/limits';
  * Tools a directory client is not offered: neither listed nor run. search_history reads a promoted-history folder a hosted
  * workspace does not have, so it could only answer "not configured". The others duplicate a listed tool (save_memory and
  * remember_note are remember with fewer choices) or are maintenance a hosted workspace does for itself (index_memory,
- * memory_status, lookup_entity). Named agent keys keep all of them.
+ * memory_status, lookup_entity), or change what the owner shares with Renor (sharing_level: a choice the directory rules would have to
+ * review as an instruction to the model). Named agent keys keep all of them.
  */
-export const DIRECTORY_HIDDEN_TOOLS = ['search_history', 'save_memory', 'remember_note', 'index_memory', 'memory_status', 'lookup_entity'] as const;
+export const DIRECTORY_HIDDEN_TOOLS = ['search_history', 'save_memory', 'remember_note', 'index_memory', 'memory_status', 'lookup_entity', 'sharing_level'] as const;
 
 const NOT_FOR_SECRETS = 'Memory is kept as readable Markdown, so it is not a place for passwords, API keys or tokens.';
 
@@ -57,6 +58,8 @@ export const DIRECTORY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   retire_memory:
     'Takes one memory (a note, a daily-log entry or a fact, by its id) out of recall without deleting it: it leaves every read and search at once, and restore_memory puts it back. '
     + 'Retiring a correction undoes its replaces link, so the memory it replaced reads as current again. A wrong value is corrected by saving the new one, which keeps history; retiring is for forgetting.',
+  sharing_level:
+    'Reads what this Renor shares with Renor to improve it (off, anonymous usage numbers, or everything including the memory text) and, when the user asks, lowers it. Raising it is never the agent\'s: only the user\'s own yes does: asked by the engine through their client for anonymous numbers, and given at a terminal for the memory text.',
   restore_memory:
     'Puts a retired memory back exactly as it was and re-indexes it. A file that now occupies the same path is not overwritten, and the restore is refused.',
   preview_import:

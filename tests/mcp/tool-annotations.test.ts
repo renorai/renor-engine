@@ -21,6 +21,8 @@ const WRITING_TOOLS = [
   'preview_import',
   // whats_new moves this connection's mark, so a second call answers less: not read-only and not idempotent.
   'whats_new',
+  // sharing_level reads the level and, on the user's word, lowers it (a file in the sharing folder): not read-only, and setting the same level again changes nothing.
+  'sharing_level',
   // Requests are records; asking, answering and closing still change state.
   'ask_agent', 'answer_request', 'close_request',
 ];

@@ -14,7 +14,7 @@ import { shutdownPosthogMcp } from './posthogMcp';
 import { createLogger } from './log';
 
 const log = createLogger('engine');
-import { startSharingLoop } from '../sharing/loop';
+import { startSharingService } from '../sharing/loop';
 import { defaultInForce, effectiveLevel } from '../sharing/state';
 
 /**
@@ -53,9 +53,13 @@ async function main() {
   log.info('learning_log', config.learning?.enabled
     ? { enabled: true, retention_days: config.learning.retentionDays, raw_queries: config.learning.rawQueries, db_path: config.learning.dbPath }
     : { enabled: false });
-  // Sharing (src/sharing): the owner's choice to share signals or data with Renor, off until they choose. At off the timer reads one
-  // small file and does nothing; nothing leaves this process unless the record says so.
-  const sharingLoop = config.sharingDir === undefined ? null : startSharingLoop({ dir: config.sharingDir, memoryDir: config.memoryDir, hosted: Boolean(config.gatewaySecret), log: console.log });
+  // Sharing (src/sharing): anonymous usage numbers are on until the owner turns them off (or chooses), text for training only after their
+  // yes. The first-run notice is printed BEFORE the sender starts, and recorded only once it was printed; the sender sends nothing under the
+  // default until it is recorded (startSharingService).
+  const sharingLoop = config.sharingDir === undefined ? null : startSharingService({
+    dir: config.sharingDir, memoryDir: config.memoryDir, hosted: Boolean(config.gatewaySecret), log: console.log,
+    print: line => { log.info('sharing_notice', { notice: line }); },
+  });
   if (config.sharingDir !== undefined) {
     const byDefault = defaultInForce(config.sharingDir);
     console.log(`[mvp] Sharing           : ${effectiveLevel(config.sharingDir)} (${byDefault ? 'the default: nobody has chosen. Turn it off with `renor-engine telemetry off`' : "the owner's choice; off sends nothing"})`);

@@ -336,6 +336,7 @@ describe('run ledger: which environment is configuration', () => {
       LANGFUSE_SECRET_KEY: 'MVP server telemetry',
       DO_NOT_TRACK: 'the sharing choice (src/sharing): it can only turn sharing off; no effect on results',
       XDG_CONFIG_HOME: 'where the sharing choice is kept (src/sharing/state.ts); no effect on results',
+      XDG_STATE_HOME: 'where the sharing install id is kept (src/sharing/state.ts); no effect on results',
     };
     const read = new Set<string>();
     const access = /(?:process\.env|\benv)\s*(?:\.\s*([A-Z_][A-Z0-9_]*)|\[\s*['"]([A-Z_][A-Z0-9_]*)['"]\s*\])/g;
