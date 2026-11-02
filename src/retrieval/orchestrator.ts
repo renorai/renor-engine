@@ -17,7 +17,7 @@ import { keywordSearch } from './keyword';
 import { quoteFtsQuery, shownPage } from './queryHelpers';
 import { keywordLedgerHits } from './ledgerPresentation';
 import {
-  ENTITY_LANE_BOOST, NEAR_DUP_POOL, applyNearDupCap, entityLaneChunkIds, entityLaneEnabled, entityLaneTerms, laneTermShare,
+  ENTITY_LANE_BOOST, NEAR_DUP_POOL, contentTerms, factBoostMatches, applyNearDupCap, entityLaneChunkIds, entityLaneEnabled, entityLaneTerms, laneTermShare,
   queryRewriteEnabled, resolveNearDupCap, rewriteConversationalQuery,
 } from './plainWording';
 import { addRankingTerm, attachRankingTerms, currentRankingTrace, newRankingTerms, rankingTermIndex } from './rankingTrace';
@@ -1259,7 +1259,7 @@ function rankWindow(read: {
   const contentfulQueryWords = (query.toLowerCase().match(/[\p{L}\p{M}]{3,}/gu) ?? [])
     .filter(w => !TEMPORAL_STOPWORDS.has(w));
   const hitText = (h: { text: string }) => h.text.toLowerCase();
-  const queryWords = query.toLowerCase().split(/\s+/);
+  const factQueryTerms = contentTerms(query);
   for (const hit of scored) {
     // Legacy fact-aware boost: scoped to the hit note's OWN entity facts exactly
     // as before this change — the canonical-name expansion below exists for
@@ -1273,12 +1273,7 @@ function rankWindow(read: {
     })();
     const facts = factsByNote.get(hit.notePath) ?? [];
 
-    const factMatch = ownEntityFacts.some(f =>
-      queryWords.some(w =>
-        (f.object_text ?? '').toLowerCase().includes(w) ||
-        (f.predicate ?? '').toLowerCase().includes(w)
-      )
-    );
+    const factMatch = factBoostMatches(factQueryTerms, ownEntityFacts);
     if (factMatch) {
       hit.score += 0.15;
       if (trace) addRankingTerm(hit, 'fact', 0.15);

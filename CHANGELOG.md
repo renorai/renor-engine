@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- **Default flip (D1), decided by firstmate under the owner's autonomy rule, 2026-10-30:** `RENOR_READER_LAYOUT_SKIP_ADVICE` is now on by default. A search query that asks to be advised (a recommendation, a suggestion, tips, an opinion) keeps the page the layout-off reader gives. On the 30 LongMemEval-S preference questions (gpt-4o-mini reader, gpt-4o-2024-08-06 grader), two draws: 7/30 with the layout against 13/30 with it skipped (19 Oct, exact p 0.031), and 5/30 against 11/30 (30 Oct, p 0.070). Both are net +6 on the questions the rule catches. The committed record of the 30 Oct draw is `engine/docs/evals/results/best-set-20261019/records/draw2-20261030-skip-advice/`. Turn it off with `RENOR_READER_LAYOUT_SKIP_ADVICE=0`.
+
 ## 1.3.0 - 2026-10-29
 
 ### Changed

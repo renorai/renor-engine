@@ -38,6 +38,35 @@ describe('statusWindowHours', () => {
   });
 });
 
+// A decision is standing wording even when its object names a PR or a commit: the DURABLE match must see "decision".
+const DECISIONS_NAMING_STATUS = [
+  { subject: 'Freshness flag', predicate: 'decision', object: 'Keep RENOR_STATUS_FRESHNESS off until main is at a new commit 3f9a1c2e7b' },
+  { subject: 'Freshness flag', predicate: 'open_decision', object: 'PR 648 is not merged yet, so the flag waits for it' },
+  { subject: 'Reader layout', predicate: 'design_decision_2026-10-02', object: 'The advice exception is on; the PR 710 branch is not merged' },
+];
+// A record of a finished PR, review or task is history: its wording may name a state, but the state does not change.
+const RECORDS_NAMING_STATUS = [
+  { subject: 'PR 648', predicate: 'outcome', object: 'PR 648 is not merged yet, waiting for review' },
+  { subject: 'PR 648', predicate: 'verdict', object: 'PR 648 is failing on the lint step' },
+  { subject: 'PR 648', predicate: 'review_verdict', object: 'PR 648 review: MERGE, not merged yet' },
+  { subject: 'PR 648', predicate: 'review verdict', object: 'PR 648 review is approved, waiting on CI' },
+  { subject: 'PR 648', predicate: 'independent_review', object: 'PR 648 is not merged yet, reviewed at head abc1234' },
+  { subject: 'Bench run', predicate: 'result', object: '14 tests failing before the fix, passing after' },
+  { subject: 'PR 648', predicate: 'fix_verdict', object: 'PR 648 fix is blocked, not merged' },
+];
+
+describe('statusWindowHours with decisions and records', () => {
+  it.each(DECISIONS_NAMING_STATUS)('leaves the decision $predicate alone even when its object names status', fact => {
+    expect(statusWindowHours(fact)).toBeNull();
+  });
+  it.each(RECORDS_NAMING_STATUS)('leaves the record $predicate alone even when its object names status', fact => {
+    expect(statusWindowHours(fact)).toBeNull();
+  });
+  it('still labels a real status whose predicate is not a record', () => {
+    expect(statusWindowHours({ subject: 'PR 648', predicate: 'status', object: 'PR 648 is not merged yet' })).toBe(12);
+  });
+});
+
 it('is off unless asked', () => {
   expect(statusFreshnessMode({})).toBe('off');
   expect(statusFreshnessMode({ RENOR_STATUS_FRESHNESS: '1' })).toBe('label');

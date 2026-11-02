@@ -42,6 +42,10 @@ import type { RetrievalProbe } from '../retrieval/semantic';
 import { hasReplacements, withReplacements, type ReplacedLabel, type ReplacementPair } from '../memorymap/replacements';
 import { markRetrieved } from '../callPhases';
 import { staleStatusOf, statusFreshnessMode } from '../memory/statusFacts';
+import { APPROVED_RULES_NOTE, loadPinnedRules, PINNED_RULES_NOTE } from './pinnedRules';
+import { buildDatedOutline, replyCeiling, datedOutlineBudget, datedOutlineEnabled, datedOutlineMinSimilarity, listOutlineCandidates, withoutReplaced, withDatedOutline, MIN_OUTLINE_TOKENS, type OutlineCandidate } from './datedOutline';
+import { turnScorer, vectorsMeanSomething } from '../retrieval/readerEvents';
+import { ruleApprovalsEnabled } from './ruleApprovals';
 
 export interface AgentContextOptions {
   query?: string;
@@ -1470,7 +1474,10 @@ export async function buildAgentContext(
 ) {
   const query = (options.query ?? '').trim();
   const scopeNorm = options.scope === undefined ? undefined : normalizeScope(options.scope);
-  const maxTokens = Math.min(Math.max(options.maxTokens ?? 800, 128), 4000);
+  const maxTokens = Math.min(Math.max(options.maxTokens ?? 800, 128), replyCeiling(options.env ?? process.env));
+  // Off performs no lookup and changes no reply byte. On, failure is deliberately fail-open: pinned rules are additive.
+  let pinnedRules: ReturnType<typeof loadPinnedRules> = { rules: [], pendingRules: [], eventIds: new Set(), tokens: 0 };
+  try { pinnedRules = loadPinnedRules(db, scopeNorm, options.reader, options.env ?? process.env, maxTokens); } catch { /* omit the field */ }
 
   let rankedBy: HitOrder | undefined;
   const memories: AgentContextMemory[] = [];
@@ -1566,7 +1573,8 @@ export async function buildAgentContext(
     }))
     : null;
   const closestFact = judged?.closestFact;
-  const shownFacts = facts.length === 0 && closestFact ? [closestFact] : facts;
+  const unpinnedFacts = facts.filter(f => !f.eventId || !pinnedRules.eventIds.has(f.eventId.toLowerCase()));
+  const shownFacts = unpinnedFacts.length === 0 && closestFact && (!closestFact.eventId || !pinnedRules.eventIds.has(closestFact.eventId.toLowerCase())) ? [closestFact] : unpinnedFacts;
   // The values another writer replaced that stay open against a shown fact (memory/writerConflicts.ts): a fact with one
   // carries its line, and a fact with none is shaped as it always was.
   const disputes = writerConflictLines(db, shownFacts.map(fact => fact.eventId));
@@ -1617,6 +1625,24 @@ export async function buildAgentContext(
     const plain = normalizeMemory({ ...memory, notePath: '', headingPath: '' }, memory.reason)!;
     return labelMemoryText({ ...plain, ...eventMarker(ledgerEventIds(memory), eventAuthors, options.reader) });
   });
+  // The dated outline (RENOR_DATED_OUTLINE, off by default): the pool is read here, the block is built last (below), from
+  // the room the finished reply leaves, so it never takes a place from a fact or memory. Off performs no lookup and changes
+  // no reply byte. On, failure is fail-open: the block is additive, so an error omits it. A read the relevance verdict calls
+  // unrelated gets none ("nothing on file closely matches" and a page of dated notes would contradict each other).
+  let outlinePool: OutlineCandidate[] = [];
+  const outlineEnv = options.env ?? process.env;
+  const outlineBudget = query && datedOutlineEnabled(outlineEnv) && judged?.relevance.relevant !== false
+    ? datedOutlineBudget(Math.max(0, maxTokens - pinnedRules.tokens), outlineEnv)
+    : 0;
+  if (outlineBudget > 0) {
+    try {
+      outlinePool = inReadSnapshot(db, () => listOutlineCandidates(db, memoryDir, scopeNorm));
+      outlinePool = await withoutReplaced(
+        { db, memoryDir, ledgerRelPath: options.ledgerRelPath ?? DEFAULT_LEDGER_REL, indexOptions: {} },
+        outlinePool,
+      );
+    } catch { outlinePool = []; }
+  }
   // The pairs were made on the memories as retrieved; the budget and the reply hold the labelled copies, so the pairs are
   // re-keyed to those (a memory with hidden text is a new object with different text).
   const listedAs = new Map(deduped.map((memory, i) => [memory, candidateMemories[i]] as const));
@@ -1759,6 +1785,8 @@ export async function buildAgentContext(
       scope: scopeNorm ?? 'all',
       retrieval,
       facts: kept.facts,
+      ...(pinnedRules.rules.length > 0 ? { pinned_rules_note: ruleApprovalsEnabled(options.env ?? process.env) ? APPROVED_RULES_NOTE : PINNED_RULES_NOTE, pinned_rules: pinnedRules.rules } : {}),
+      ...(pinnedRules.pendingRules.length > 0 ? { pending_rule_notes: pinnedRules.pendingRules } : {}),
       // The order of the semantic memories (keyword matches, reason "fts" or "note-identity", follow them). Named
       // right above the list it describes: memories[0] is the newest match under "session_date", not the best one.
       ...(rankedBy ? { rankedBy } : {}),
@@ -1990,5 +2018,23 @@ export async function buildAgentContext(
   if (correctionOf.size > 0) pinToCorrections(reply, correctionOf);
   // Last, once the order and the pairs are settled on the full items, which say how they were found.
   if (lean) reply.memories = (reply.memories as AgentContextMemory[]).map(leanMemory);
+  // Last: the dated outline takes only the room the finished reply leaves (capped at its own budget), so the closest match
+  // the relevance contract keeps is never crowded out by it, and the whole reply still holds max_tokens.
+  if (outlinePool.length > 0) {
+    try {
+      const room = Math.min(outlineBudget, maxTokens - replyTokens(JSON.stringify(reply)));
+      const block = room < MIN_OUTLINE_TOKENS ? null : buildDatedOutline(outlinePool, room, {
+        listed: candidateMemories.map(memory => memory.text),
+        scoreOf: engine.vectorIndex && probe.queryVector && vectorsMeanSomething(engine.provider?.identity?.kind)
+          ? turnScorer(engine.vectorIndex, probe.queryVector)
+          : undefined,
+        minSimilarity: datedOutlineMinSimilarity(resolveRelevanceBar(engine.modelKey, outlineEnv), outlineEnv),
+      });
+      if (block) {
+        const withBlock = withDatedOutline(reply, block);
+        if (replyTokens(JSON.stringify(withBlock)) <= maxTokens) return withBlock;
+      }
+    } catch { /* omit the block */ }
+  }
   return reply;
 }

@@ -69,8 +69,10 @@ by default.
 
 - The self-hosted engine's default is a constant, `signals` (`src/sharing/state.ts`, `SHIPPED_DEFAULT_LEVEL`), and **nothing leaves until the first-run
   notice has been shown and recorded, and Renor's own switch for the default is open** (below). A **hosted** engine (`MVP_GATEWAY_SECRET` set) with no
-  dashboard choice stays `off`: it records nothing for sharing, registers nothing and sends nothing, and shows no notice, until the dashboard has its own
-  notice and decision. `RENOR_SHARING_DEFAULT=off|signals` replaces the default for one process (an operator's explicit setting). `data` is never a default.
+  dashboard choice reads the same default, `signals` (owner approval 2026-10-28, production go 2026-11-01); it shows no terminal notice, because the dashboard
+  panel shows the default. `RENOR_SHARING_DEFAULT=off` is the explicit opt-out (`signals` is the same as unset), `DO_NOT_TRACK` and `RENOR_SHARING=off` still lower it, a
+  hosted owner's dashboard choice wins over it, and nothing leaves while Renor's switches (the gateway's `/sharing/status` and `/sharing/default-status`, and the
+  database's `learning_default`) are closed. `RENOR_SHARING_DEFAULT=off|signals` replaces the default for one process (an operator's explicit setting). `data` is never a default.
 - A memory folder in which nobody has chosen, on an install where nobody has chosen, is at `signals` ("the default"), and `status` and the
   service's start-up line say so. A **choice always wins**: any consent file, an explicit `off` included, is the choice, and a file that
   cannot be read is a choice nobody can read, so it is `off`. `renor-engine telemetry off` and an agent's off record the off even when nothing was on,

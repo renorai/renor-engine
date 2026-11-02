@@ -22,7 +22,7 @@ export function statusFreshnessMode(env: NodeJS.ProcessEnv = process.env): Statu
 const HOUR = 3_600_000;
 
 /** Standing wording wins over status wording: "always check whether the PR is merged" is a rule, not a status. */
-const DURABLE = /\b(always|never|must|should|prefers?|policy|rule|convention|decid(?:ed|es|ion)|we (?:use|chose)|going forward|by default)\b/i;
+const DURABLE = /\b(always|never|must|should|prefers?|policy|rule|convention|decisi?on|decid(?:ed|es)|we (?:use|chose)|going forward|by default)\b/i;
 
 const PATTERNS: Array<{ re: RegExp; hours: number }> = [
   // PR / issue / CI state
@@ -38,6 +38,8 @@ const PATTERNS: Array<{ re: RegExp; hours: number }> = [
 
 /** Hours the fact stays fresh, or null when it is not status-like. */
 export function statusWindowHours(fact: { subject: string; predicate: string; object: string }): number | null {
+  // Records of finished PRs, reviews and tasks are history, not state: they do not go stale.
+  if (/^(outcome|verdict|review[ _]verdict|independent[ _]review|result|fix[ _]verdict|verdict[ _]and[ _]blockers)\b/i.test(fact.predicate.replace(/_/g, ' '))) return null;
   const text = `${fact.subject} ${fact.predicate.replace(/_/g, ' ')} ${fact.object}`;
   if (DURABLE.test(text)) return null;
   for (const { re, hours } of PATTERNS) if (re.test(text)) return hours;

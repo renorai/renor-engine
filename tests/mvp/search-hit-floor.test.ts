@@ -24,7 +24,7 @@ import { CALIBRATED_BAR, CalibratedIdentityProvider } from '../helpers/calibrate
 const ENV_KEYS = [
   'MVP_MEMORY_DIR', 'MVP_AUTH_STATE_PATH', 'MVP_BASE_URL', 'MVP_OWNER_EMAIL', 'MVP_OWNER_PASSWORD',
   'MVP_EMBEDDING_PROVIDER', 'EMBEDDING_PROVIDER', 'MVP_HISTORY_DIR', 'MVP_LEDGER_REL',
-  'RENOR_SEARCH_HIT_FLOOR', 'RENOR_CONTEXT_RELEVANCE', 'RENOR_CONTEXT_RELEVANCE_MIN', 'RENOR_SEARCH_EVIDENCE', 'RENOR_READ_HONESTY', 'RENOR_READER_LAYOUT',
+  'RENOR_SEARCH_HIT_FLOOR', 'RENOR_SEARCH_HIT_FLOOR_KEEP', 'RENOR_CONTEXT_RELEVANCE', 'RENOR_CONTEXT_RELEVANCE_MIN', 'RENOR_SEARCH_EVIDENCE', 'RENOR_READ_HONESTY', 'RENOR_READER_LAYOUT',
 ];
 const savedEnv = Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]));
 const cleanups: Array<() => Promise<void>> = [];
@@ -96,13 +96,15 @@ async function serve(provider: EmbeddingProvider | null, populate: (memoryDir: s
   return { call, client };
 }
 
-type Hit = { notePath: string; text: string; reason: string; similarity?: number; score: number };
+type Hit = { notePath: string; text: string; reason: string; similarity?: number; score: number; weak_match?: true };
 type Body = { hits: Hit[]; relevance?: Record<string, unknown>; floor?: { similarity: number; withheld: number }; [key: string]: unknown };
 
-// floorSetting is a test harness setting, never an MCP argument. The baseline exposes raw scores via a tiny floor.
+// floorSetting and keepSetting are test harness settings, never MCP arguments. The baseline exposes raw scores via a tiny
+// floor. Unless a test asks for it, the closest hits are not protected (keep 0), so these tests judge the plain floor.
 const search = async (call: Awaited<ReturnType<typeof serve>>['call'], args: Record<string, unknown> = {}): Promise<Body> => {
-  const { floorSetting = 0.000001, ...toolArgs } = args;
+  const { floorSetting = 0.000001, keepSetting = 0, ...toolArgs } = args;
   process.env.RENOR_SEARCH_HIT_FLOOR = String(floorSetting);
+  process.env.RENOR_SEARCH_HIT_FLOOR_KEEP = String(keepSetting);
   return call('search_memory', { query: QUERY, ...toolArgs });
 };
 
@@ -114,14 +116,39 @@ describe('the shipped default', () => {
     expect(body.floor).toMatchObject({ similarity: 0.63 });
     expect(body.floor!.withheld).toBeGreaterThan(0);
     expect(body.hits.length).toBeGreaterThan(0);
-    for (const hit of body.hits) if (hit.similarity !== undefined) expect(hit.similarity).toBeGreaterThanOrEqual(0.63);
+    // Below the floor only the closest three note hits may stay (the default keep); the plain floor leaves none below it.
+    const below = body.hits.filter(hit => hit.similarity !== undefined && hit.similarity < 0.63);
+    const judged = body.hits.filter(hit => hit.similarity !== undefined);
+    const best = judged.map(hit => hit.similarity!).sort((a, b) => b - a).slice(0, 3);
+    expect(judged.length).toBeLessThanOrEqual(Math.max(3, judged.filter(hit => hit.similarity! >= 0.63).length));
+    for (const hit of below) expect(best).toContain(hit.similarity);
+    const plain = await search(call, { floorSetting: 0.63 });
+    for (const hit of plain.hits) if (hit.similarity !== undefined) expect(hit.similarity).toBeGreaterThanOrEqual(0.63);
     const off = await search(call, { floorSetting: 0 });
     expect(off).not.toHaveProperty('floor');
-    expect(off.hits.length).toBeGreaterThan(body.hits.length);
+    expect(off.hits.length).toBeGreaterThan(plain.hits.length);
     for (const hit of off.hits) expect(hit).not.toHaveProperty('similarity');
     const context = await call('get_context', { query: QUERY });
     process.env.RENOR_SEARCH_HIT_FLOOR = '1';
     expect(await call('get_context', { query: QUERY })).toEqual(context);
+  }, 60_000);
+
+  it('keep 3 on a real page is an ordered sub-list of the unfloored page and a super-list of the plain floor, and labels the weak ones', async () => {
+    const { call } = await serve(new CalibratedIdentityProvider());
+    const off = await search(call, { floorSetting: 0 });
+    const plain = await search(call, { floorSetting: 0.63 });
+    const kept = await search(call, { floorSetting: 0.63, keepSetting: 3 });
+    const key = (hit: Hit) => `${hit.notePath}\n${hit.text}`;
+    const inOrder = (small: Hit[], big: Hit[]) => { let at = 0; return small.every(hit => { at = big.findIndex((b, i) => i >= at && key(b) === key(hit)) + 1; return at > 0; }); };
+    expect(inOrder(kept.hits, off.hits)).toBe(true);
+    expect(inOrder(plain.hits, kept.hits)).toBe(true);
+    const best = kept.hits.filter(hit => hit.similarity !== undefined).map(hit => hit.similarity!).sort((a, b) => b - a).slice(0, 3);
+    for (const hit of kept.hits) {
+      const weak = hit.similarity !== undefined && hit.similarity < 0.63;
+      expect(hit.weak_match === true, key(hit)).toBe(weak);
+      if (weak) expect(best).toContain(hit.similarity);
+    }
+    for (const hit of plain.hits) expect(hit).not.toHaveProperty('weak_match');
   }, 60_000);
 
   it.each([
@@ -139,6 +166,12 @@ describe('the shipped default', () => {
     const strict = await search(call, { floorSetting: 1 });
     expect(strict.hits).toEqual([]);
     expect(strict.floor).toEqual({ similarity: 1, withheld: body.hits.length });
+    // With the default keep, a floor of 1 still leaves the closest three.
+    delete process.env.RENOR_SEARCH_HIT_FLOOR_KEEP;
+    process.env.RENOR_SEARCH_HIT_FLOOR = '1';
+    const kept = await call('search_memory', { query: QUERY }) as Body;
+    expect(kept.hits).toHaveLength(3);
+    expect(kept.floor).toEqual({ similarity: 1, withheld: body.hits.length - 3 });
   }, 60_000);
 
   it('leaves semantic-unavailable responses untouched', async () => {

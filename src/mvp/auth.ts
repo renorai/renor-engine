@@ -598,6 +598,17 @@ export class OwnerOAuthProvider implements OAuthServerProvider {
     return this.issue('renor-gateway', ['mcp'], undefined).tokens;
   }
 
+  /** Mint the gateway's one-use-purpose bearer for the approval route. It is
+   * deliberately a different scope from MCP and can only be obtained through
+   * the loopback gateway-secret endpoint, never OAuth registration/exchange. */
+  issueGatewayRuleApprovalToken(presentedSecret: string): OAuthTokens {
+    const expected = this.config.gatewaySecret;
+    if (!expected || !presentedSecret || !constantTimeEqual(expected, presentedSecret)) {
+      throw new Error('gateway unauthorized');
+    }
+    return this.issue('renor-owner-rules', ['rules:approve'], undefined).tokens;
+  }
+
   /** Expired tokens used to leave only when presented; sweep them so a long-running process does not grow without bound. */
   private sweepTokens(): void {
     const now = Date.now();

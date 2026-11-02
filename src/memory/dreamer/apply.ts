@@ -18,7 +18,8 @@ import { oneLine, type JudgedFact, type PairVerdict } from './adjudicate';
  *   - The event is written by source `renor-dreamer`. Its statement says why, and names the ledger events it relied on.
  *   - A group about a collection predicate is never superseded here (collection.ts): it is skipped and flagged `both-may-hold`.
  *   - It is written only if the older fact is still the current one (`expectCurrentEvent`): an agent that corrected it
- *     while the model was thinking wins.
+ *     while the model was thinking wins. The newer fact and every intermediate one must still be live and current too
+ *     (`expectLiveEvents`): a source retired, erased or replaced meanwhile refuses the write.
  */
 
 export const DREAMER_SOURCE = 'renor-dreamer';
@@ -139,6 +140,7 @@ export async function applyWrites(
         scope: write.older.scope,
         statement: write.statement,
         expectCurrentEvent: write.older.eventId,
+        expectLiveEvents: [...write.via, write.newer].map(f => f.eventId),
       });
       out.push(receipt.action === 'supersede'
         ? { write, receipt }

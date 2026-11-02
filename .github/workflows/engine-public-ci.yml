@@ -91,6 +91,7 @@ jobs:
             --exclude 'tests/review/activation-broker.test.ts' \
             --exclude 'tests/review/dashboard-import-gateway.test.ts' \
             --exclude 'tests/mvp/loud-connection.test.ts' \
+            --exclude 'tests/mvp/owner-rule-key.test.ts' \
             --exclude 'tests/mvp/browser-login.test.ts' \
             --exclude 'tests/review/connect-token-membership.test.ts'
 

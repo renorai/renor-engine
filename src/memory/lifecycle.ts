@@ -1604,6 +1604,8 @@ export async function remember(db: Database.Database, vaultPath: string, ledgerR
    * is none). Otherwise nothing is written and StaleExpectationError is thrown. Absent: no check, as every caller does.
    */
   expectCurrentEvent?: string | null;
+  /** Events whose values the write copies: each must still be a live current fact, else StaleExpectationError. Absent: no check. */
+  expectLiveEvents?: string[];
 }): Promise<MemoryReceipt> {
   return serializeLifecycleWrite(() => rememberCritical(db, vaultPath, ledgerRelPath, args));
 }
@@ -1722,6 +1724,7 @@ async function refuseSecrets(
 async function rememberCritical(db: Database.Database, vaultPath: string, ledgerRelPath: string, sent: {
   subject: string; predicate: string; object: string; source?: string; scope?: string; statement?: string; writer?: string;
   expectCurrentEvent?: string | null;
+  expectLiveEvents?: string[];
 }): Promise<MemoryReceipt> {
   // What is stored is the source's name, not what was sent (sourceName.ts): a path or a URL is cut down to what it ends in,
   // a long name is cut and control characters are dropped, before anything is judged, so the checks below and the secret
@@ -1750,6 +1753,12 @@ async function rememberCritical(db: Database.Database, vaultPath: string, ledger
   if (args.expectCurrentEvent !== undefined) {
     const held = currents.find(c => c.scope === scope) ?? currents[0];
     if ((held?.event_id ?? null) !== args.expectCurrentEvent) throw new StaleExpectationError(args.expectCurrentEvent, held?.event_id ?? null);
+  }
+  // Every other event the caller relied on must still be a live, current fact: one retired, erased or replaced while
+  // the caller was deciding is gone from `facts` or closed, and its value must not be copied.
+  for (const eventId of args.expectLiveEvents ?? []) {
+    const live = prepareOnce(db, 'SELECT 1 FROM facts WHERE event_id = ? AND valid_to IS NULL').get(eventId);
+    if (!live) throw new StaleExpectationError(eventId, null);
   }
 
   // nochange only when nothing the caller said is new: the scope holds this value and no other AND, when they

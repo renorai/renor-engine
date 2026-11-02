@@ -55,13 +55,14 @@ export function readerLayoutEnabled(): boolean {
 }
 
 /**
- * Default off. `1`, `true`, `yes` or `on` leaves a query that asks to be advised (adviceQuestion.ts: a recommendation, a
- * suggestion, tips, ideas, an opinion) without the layout, so its page is the one RENOR_READER_LAYOUT=0 gives. Every other query,
- * and every query with this unset, is laid out exactly as before.
+ * Default on (decided by firstmate under the owner's autonomy rule, 2026-10-30; see the CHANGELOG). A query that asks to be
+ * advised (adviceQuestion.ts: a recommendation, a suggestion, tips, ideas, an opinion) is left without the layout, so its page
+ * is the one RENOR_READER_LAYOUT=0 gives. `0`, `false`, `no` or `off` turns the exception off: every query is laid out as before.
+ * Any other value, and unset, keeps the exception on, as the other switches treat an unknown value.
  */
 export function readerLayoutSkipsAdvice(): boolean {
   const v = (process.env.RENOR_READER_LAYOUT_SKIP_ADVICE ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+  return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
 }
 
 /** Is the page of this query laid out? The kill switch decides first, then the advice exception. */

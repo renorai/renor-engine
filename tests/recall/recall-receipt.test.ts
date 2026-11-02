@@ -127,6 +127,12 @@ describe('recall receipt: the registered plugin hook', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'renor-plugin-'));
     fs.mkdirSync(path.join(root, 'hooks'));
     fs.cpSync(path.join(__dirname, '../../dist/recall'), path.join(root, 'hooks/renor-recall'), { recursive: true });
+    // The shared inert encoder ships one level up, and the compiled recall files name it by that path (scripts/plugin/pack-claude-code-plugin.mjs).
+    fs.copyFileSync(path.join(__dirname, '../../claude-code-plugin/hooks/inert.cjs'), path.join(root, 'hooks/inert.cjs'));
+    for (const name of fs.readdirSync(path.join(root, 'hooks/renor-recall'))) {
+      const file = path.join(root, 'hooks/renor-recall', name);
+      if (name.endsWith('.js')) fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split('../../claude-code-plugin/hooks/inert.cjs').join('../inert.cjs'));
+    }
     return new Promise(resolve => {
       const child = spawn(command, { shell: true, env: { PATH: process.env.PATH, ...env, CLAUDE_PLUGIN_ROOT: root } });
       let stdout = '';

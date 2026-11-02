@@ -157,6 +157,19 @@ describe('engine tools on authenticated MCP (ADR-0003)', () => {
     const status = parse(await client.callTool({ name: 'memory_status', arguments: {} }));
     expect(status.notes).toBeGreaterThanOrEqual(1);
     expect(status.semantic).toBe(false);
+    // No server capture feature is on here, so the answer is what it was before capture_features existed.
+    expect(status).not.toHaveProperty('capture_features');
+    // Switched on, the same answer carries the server capture state (the flag is read per call).
+    process.env.RENOR_STATUS_LEDGER = '1';
+    try {
+      const on = parse(await client.callTool({ name: 'memory_status', arguments: {} }));
+      expect(on.capture_features).toEqual({
+        save_moment: 'off', status_ledger: true, pinned_rules: false,
+        rule_approvals: false, session_index: false, capture_server: false,
+      });
+    } finally {
+      delete process.env.RENOR_STATUS_LEDGER;
+    }
     // No embedding provider: no vectors and no mirror, but the ledger's size is still reported.
     expect(status.storage).toEqual({ vectors: 0, ledgerBytes: expect.any(Number) });
     await client.close();

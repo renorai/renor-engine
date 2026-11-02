@@ -17,6 +17,7 @@
     "tests/review/on-demand-admission.test.ts",
     "tests/review/activation-broker.test.ts",
     "tests/review/dashboard-import-gateway.test.ts",
-    "tests/mvp/loud-connection.test.ts"
+    "tests/mvp/loud-connection.test.ts",
+    "tests/mvp/owner-rule-key.test.ts"
   ]
 }

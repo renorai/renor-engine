@@ -294,13 +294,14 @@ export function envOverride(env: NodeJS.ProcessEnv = process.env): SharingLevel 
 export const SHIPPED_DEFAULT_LEVEL: 'off' | 'signals' = 'signals';
 
 /**
- * The shipped default is for the self-hosted engine. A hosted workspace's switch is its owner's, in the dashboard, which has no first-run
- * notice or question of its own yet, so a hosted engine (hostedEngine) with no choice stays `off` as before; only an operator's explicit
- * RENOR_SHARING_DEFAULT changes that.
+ * The shipped default applies to hosted engines too (owner approval 2026-10-28, production go 2026-11-01): a hosted engine (hostedEngine)
+ * with no choice and no RENOR_SHARING_DEFAULT reads `signals`. RENOR_SHARING_DEFAULT=off is the explicit opt-out, a hosted owner's
+ * dashboard choice wins over it, and the operator switches (the gateway's /sharing/status and /sharing/default-status, and the database's
+ * learning_default) remain the real on/off. A hosted engine still prints no terminal notice: the dashboard panel shows the default.
  */
 export function defaultLevel(env: NodeJS.ProcessEnv = process.env): 'off' | 'signals' {
   const raw = (env.RENOR_SHARING_DEFAULT ?? '').trim().toLowerCase();
-  if (raw === '') return hostedEngine(env) ? 'off' : SHIPPED_DEFAULT_LEVEL;
+  if (raw === '') return SHIPPED_DEFAULT_LEVEL;
   if (raw === 'off' || raw === 'signals') return raw;
   throw new Error('RENOR_SHARING_DEFAULT must be off or signals');
 }

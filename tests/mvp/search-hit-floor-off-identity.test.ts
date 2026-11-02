@@ -55,10 +55,15 @@ const mkdir = (tag: string) => {
   return dir;
 };
 
+/** The plugin directory engine/src imports from (hooks/inert.cjs), for a base that already has it; an older base has no such path and `git archive` refuses a missing one. */
+function pluginPaths(sha: string): string[] {
+  return spawnSync('git', ['-C', REPO, 'cat-file', '-e', `${sha}:engine/claude-code-plugin`]).status === 0 ? ['engine/claude-code-plugin'] : [];
+}
+
 /** engine/src of `sha`, exported from git (nothing in the checkout is touched). */
 function exportSrc(sha: string, tag: string): string {
   const dir = mkdir(tag);
-  const tar = execFileSync('git', ['-C', REPO, 'archive', '--format=tar', sha, 'engine/src'], { maxBuffer: 1 << 28 });
+  const tar = execFileSync('git', ['-C', REPO, 'archive', '--format=tar', sha, 'engine/src', ...pluginPaths(sha)], { maxBuffer: 1 << 28 });
   if (spawnSync('tar', ['-x', '-C', dir], { input: tar }).status !== 0) throw new Error(`tar could not unpack ${sha}`);
   fs.symlinkSync(path.join(ENGINE, 'node_modules'), path.join(dir, 'engine', 'node_modules'));
   const src = path.join(dir, 'engine', 'src');

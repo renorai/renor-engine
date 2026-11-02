@@ -70,6 +70,35 @@ export function contentTerms(query: string): string[] {
   return out;
 }
 
+/** Distinct whole content words a query must share with an entity's facts before the fact boost applies. */
+export const FACT_BOOST_MIN_TERMS = 2;
+
+/**
+ * True when at least FACT_BOOST_MIN_TERMS distinct (or the one, for a one-word query) content words of the query appear as WHOLE words in the facts' objects
+ * or predicates. Stop words and substrings ("it" inside "commit") never count, so a long plain-wording question no longer
+ * lifts every hit by noise.
+ */
+export function factBoostMatches(
+  queryContentTerms: string[],
+  facts: Array<{ object_text?: string | null; predicate?: string | null }>,
+): boolean {
+  const terms = [...new Set(queryContentTerms)];
+  // A query with a single content word ("Acme") can only ever match one; it still counts, as a whole word. Longer queries need two.
+  const needed = Math.min(FACT_BOOST_MIN_TERMS, terms.length);
+  if (needed === 0) return false;
+  const tokens = new Set<string>();
+  for (const f of facts) {
+    for (const text of [f.object_text, f.predicate]) {
+      for (const w of contentTerms(text ?? '')) tokens.add(w);
+    }
+  }
+  let matched = 0;
+  for (const t of terms) {
+    if (tokens.has(t) && ++matched >= needed) return true;
+  }
+  return false;
+}
+
 /**
  * Wrappers a person puts around a question when they talk to an agent. Taken off the front of the query, repeatedly,
  * and only there: inside a query the same words can be what it is about.

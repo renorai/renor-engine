@@ -291,7 +291,7 @@ program
       : null;
     // The evidence pass read the sources as stored; what is printed is what the user said.
     // Laid out for the model that reads it (RENOR_READER_LAYOUT; readerLayout.ts): the hits of a session come as one, and its time phrases are resolved. RENOR_READER_EVENTS adds event lines above them for an order or a date question.
-    // A query that asks to be advised keeps the page as it was when RENOR_READER_LAYOUT_SKIP_ADVICE is on.
+    // A query that asks to be advised keeps the page as it was when RENOR_READER_LAYOUT_SKIP_ADVICE is on (default on; `0` turns it off).
     // RENOR_READER_ADVICE_LINES (default off): for a query that asks to be advised, the user's own matching statements come first (adviceLines.ts).
     const presented = presentLedgerEvents(digested ? digested.hits : result.hits, isLedger);
     const notTable = (p: string) => !isLedger(p) && p !== EVIDENCE_HIT_PATH && p !== DIGEST_HIT_PATH;

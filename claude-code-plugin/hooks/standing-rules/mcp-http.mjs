@@ -104,6 +104,13 @@ export function createHttpClient({ url, token, signal, clientName = 'renor-sessi
     await post({ jsonrpc: '2.0', method: 'notifications/initialized' });
   })());
   return {
+    /** A JSON-RPC request outside tools/call (the session index); resolves to the reply's `result` object. */
+    async callMethod(method, params) {
+      await init();
+      const { result } = await request(method, params);
+      if (!result || typeof result !== 'object' || Array.isArray(result)) throw new HookError('bad-reply');
+      return result;
+    },
     async callTool(name, args) {
       await init();
       const { result } = await request('tools/call', { name, arguments: args });

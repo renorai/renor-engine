@@ -139,6 +139,16 @@ None of these three was run live with this hook. The JSON shapes come from each 
 
 ## Standing rules at session start (`RENOR_STANDING_RULES_HOOK=1`, off by default)
 
+When the server also enables `RENOR_RULE_APPROVALS=1`, the hook accepts its `approved` state as well as the local
+approval file. Approved entries are rules; pending entries are shown separately as short notes that must be confirmed.
+The local file remains an offline fallback. Approval can be changed only with the owner terminal command
+`npx renor rules approve` / `npx renor rules revoke <n>`; there is deliberately no MCP approval tool.
+
+The engine has a separate opt-in, `RENOR_PINNED_RULES=1`, which returns current standing-rule facts with every
+`get_context` reply and lets automatic recall present them even for an unrelated prompt. Its block defaults to 250
+tokens (`RENOR_PINNED_RULES_MAX_TOKENS`) and is inside automatic recall's untrusted-data boundary. Unlike this
+SessionStart hook, pinned rules do **not** consult the owner's local approvals file.
+
 `hooks/standing-rules/session-start.mjs` runs on `SessionStart` (matchers `startup`, `clear`, `compact`; a resume or fork
 keeps the transcript). It puts the standing rules **the owner approved** in front of the agent, with no query, newest
 first and dated, each with the agent that saved it, in at most 300 tokens (`RENOR_STANDING_RULES_MAX_TOKENS`):
@@ -165,12 +175,22 @@ A new lasting rule from the user: save it with remember, subject "standing rule"
   never shown; an import (untrusted) is never listed. `approve.mjs` needs an interactive terminal, which an agent's shell
   tool does not have. Something that can write the owner's files can also write the approvals file, as it can write
   CLAUDE.md: that is outside what this guards against.
+- Optional `RENOR_STANDING_RULES_TRUST=agents` also shows current rules saved directly by an agent before local approval,
+  marking each `saved by <author>, not approved by you`. It remains unset by default, preserving approval-only behavior.
+  When the server runs with `RENOR_RULE_APPROVALS` on, this setting is ignored and pending rules never enter this block.
+  Imported or untrusted facts still require the local approval file and are never admitted by this option. These rules
+  are listed in a separate section after the approved ones, headed as saved by agents and NOT approved by the user: the
+  agent is told not to follow them unless the user confirms, and to ask first.
 
 **Privacy.** Every value is screened before it is shown, whatever `RENOR_PRIVACY_MARKERS` says: a `<private>` region
 becomes `[private]`, and a topic or text starting with `#norecall` drops the rule (`hooks/standing-rules/privacy.mjs`,
 the rule of PR 861, checked against its vectors). A rule's scope and author are stored normalized, with markup cut out
 and the words kept, so a marker there cannot be undone: a rule whose scope or author holds the letters `private` or
 `norecall` is never shown (nor offered by `approve.mjs`), including a project merely named that way.
+
+**Recent-memory index (optional).** `RENOR_SESSION_INDEX=1` makes SessionStart ask the server once, with the JSON-RPC request `renor/session_index`, for a compact, newest-first index (about 2,000 o200k tokens) and appends it to the same `additionalContext`, after approved rules. It is not a tool: `tools/list`, tool schemas, server instructions and `get_context` replies are unchanged. Rows use the existing `note:<vault-relative-path>` or `fact:<mem_…>` IDs accepted by `read_memory`, and point the agent to `get_context` / `search_memory` for detail. Every memory-derived field is escaped (markup and control characters), so a memory cannot close the `<renor-session-index>` block or forge another one. It is navigation, not a replacement for search. The index is frozen for the session: it is built once at SessionStart, never refreshed by recall, and a resume keeps the transcript. It makes no model call and sends no text beyond the owner workspace and the agent already connected to it. Any index error falls back to the rules-only block; the existing four-second deadline still covers both reads. The default is off.
+
+**Per-session state directory.** The hook keeps each session's frozen index and the ids it listed in one per-user private directory: `$XDG_RUNTIME_DIR/renor/pinned-rules` when `XDG_RUNTIME_DIR` is an absolute path to this user's own directory with mode exactly 0700, else `~/.renor/cache/pinned-rules`. Only that directory's files are trusted, and only when the directory is a real directory owned by the current user with no group or other bits, each file is a regular 0600 file owned by the user (opened without following links), and any other planted or foreign file is ignored. The directory is pruned at each start: files older than 7 days go, and it keeps at most 512 files and 8 MiB, never removing the active session's files. Because the marks now live there, with `RENOR_STANDING_RULES_HOOK=1` (whether or not `RENOR_SESSION_INDEX` is on) the pinned-rule marks move from `os.tmpdir()` to this private directory. Automatic recall reads the same path (`pinnedStateDir` in `src/recall/autoRecall.ts`).
 
 **The token.** A `command` hook cannot use the sign-in Claude Code holds, so it uses a connect token:
 `RENOR_CONNECT_TOKEN`, else `RENOR_AUTO_RECALL_TOKEN`. It is sent only to an `https` endpoint (`RENOR_MCP_URL`, default
@@ -192,20 +212,62 @@ from `hooks/standing-rules/standing-rules.mjs`; the block is wrapped in `<renor-
 
 ## Save before the agent finishes (`RENOR_SAVE_HOOK=1`, off by default)
 
+### Automatic end-of-turn capture
+
+Automatic capture is **off by default**. `~/.renor/capture.json` (or `RENOR_CAPTURE_MODE`) selects one of:
+
+- `off`: nothing new happens. Hook output, files and logs are byte-identical to a plugin without this section.
+- `user`: every `everyTurns` typed turns (default 5), the Stop hook asks the session's own agent to save 1 to 5 dated
+  observations with `remember`. It costs one extra agent turn on the user's allowance. **Nothing leaves the machine
+  through any new path**: the delta stays in the agent's context and the block text never contains it.
+- `server`: the hook posts a redacted delta to the Renor gateway (`POST /capture/turns`, the gateway origin from
+  `RENOR_MCP_URL`, https or loopback http only). Renor's server calls a Claude model to extract observations. It costs
+  Renor, not the user, and needs an opted-in workspace.
+- `alternate` (by session: even hash of the session id is `user`, odd is `server`) and `trial` (a third of sessions each
+  `off`, `user`, `server`) assign arms per session, deterministically, for A/B tests.
+
+**What leaves the machine in each mode.** `off`: nothing. `user`: nothing new (the agent's own `remember` calls are the
+only writes). `server`: only the delta, which holds the user's own typed words and the assistant's final text, with tool
+calls and results, thinking, code fences, pasted blocks, `<private>` regions, system reminders and secret-scanner lines
+removed first (a delta with more than three flagged lines is not sent at all). The key goes as a bearer token.
+
+**Rules stay pending.** A standing rule found by either mode is saved as a `standing rule` fact, and it is only saved
+while rule approvals are on (`RENOR_RULE_APPROVALS`); the owner approves it before it applies.
+
+**Stop never waits.** Server posting runs in a detached child process started with the job in its environment (not on
+its command line), because installed Claude Code versions cannot be assumed to support the optional `async` field of a
+command hook. The child posts with a 6-second timeout, logs its outcome and exits; a 403, 429, timeout or malformed
+reply exits quietly.
+
+**The log.** Each decision is one line of `~/.renor/capture-log.jsonl` (mode 0600) with counts, labels, token counts and
+the transcript's cache fields only: never text. `npx renor capture log --since 7` summarises it by mode, including the
+cache-hit share (`cache_read / (cache_read + cache_creation)`) per arm, so a mode that lowers the user's cache hits shows.
+
+Variables: `RENOR_CAPTURE_MODE` (`off`, `user`, `server`, `alternate`, `trial`), `RENOR_CAPTURE_EVERY_TURNS` (default 5),
+`RENOR_CAPTURE_LOG` (the log path). The workspace side is in [`ENVIRONMENT-VARIABLES.md`](../docs/ENVIRONMENT-VARIABLES.md).
+
 On `Stop`, `hooks/stop-save.mjs` looks for what the user explicitly said to keep this session and Renor does not hold
-yet: their own sentences that open with "remember that", "please remember", "from now on" or "going forward". If there
+yet. Alongside the original keep leads ("remember", "from now on", "going forward"), it recognizes a conservative fixed
+list of English and Portuguese lasting-rule cues such as “always”, “never”, “sempre” and “nunca” anywhere in a sentence.
+Eligible sentences have 4 or more words, are at most 300 characters and are not questions. If there
 is any, it stops the agent once (`decision: block`) and lists the dated statements for it to save with its own
-`remember` tool. The hook holds no key and opens no connection, so every save is screened by the server as any other
+`remember` tool. Rule cues ask the agent to save only a lasting rule as a `standing rule` fact (short lowercase topic,
+unchanged sentence, no scope); old keep-only matches remain plain statements. The hook holds no key and opens no
+connection, so every save is screened by the server as any other
 (`RENOR_SECRET_GUARD`, and the Jev save screen for an opted-in workspace).
 
 What it never offers: a bare "yes" to an agent's proposal (mostly an action such as "commit and push this"), anything a
 classifier would have to guess, assistant text, tool calls and output, subagent and meta lines, slash commands, system
-reminders, code blocks, and anything inside `<private>...</private>`. It is silent when there is nothing new or
+reminders, code blocks, pasted-content blocks, context-summary wrappers, turns over 600 characters, and anything inside
+`<private>...</private>`. A turn carrying `<artifact-content-authored-by-others/>` is also dropped. A `[rule]` is offered only for a sentence the user states themselves (first or second person, or an imperative); a quoted sentence, text in backticks, and a sentence that reports what a source says ("the file says ...", "according to ...") are skipped. It is silent when there is nothing new or
 `stop_hook_active` is set, offers a line once per session (state in `RENOR_HOOK_STATE_DIR`, else `$CLAUDE_PLUGIN_DATA`,
 else `~/.renor/hooks`) and once more if the agent's save of it failed, skips a line `remember`, `save_memory` or
 `remember_note` saved in the transcript (matched to its `tool_result` by id; a result with `is_error`, or none, is not a
 save), and offers at most 5 per stop. Widening it to decisions and preferences the user did not flag waits for a decision gate
 that passes the owner's labelled set.
+
+For a privacy-safe detector replay, run `npx tsx scripts/eval/capture/cue-replay.ts --turns turns.jsonl [--json]` on
+JSONL rows shaped `{ "ts": "...", "text": "..." }`; it prints only counts and zero-based fired line indices.
 
 ## Shipping it in renor-skills (not done by this change)
 
@@ -273,3 +335,25 @@ Per the clients' documentation, read on 2026-10-21. Neither client was run live 
 returns what it would inject. `autoRecall(prompt, config, caller)` runs both around any `get_context` caller. A replay of
 real sessions can call them on recorded prompts with its own caller.
 `scripts/eval/agent-workflow/auto-recall.ts` is the offline example.
+
+# Automatic end-of-turn capture
+
+Off by default. `RENOR_CAPTURE_MODE` selects one of `off` (default), `user`, `server`, `alternate` (half the sessions each, by a
+stable hash) or `trial` (a third each). Each session is assigned once, so an arm stays an arm.
+
+| Mode | Who extracts | What leaves the machine | Cost |
+| --- | --- | --- | --- |
+| `user` | the user's own agent | nothing: the Stop hook appends one fixed, optional request every `RENOR_CAPTURE_EVERY_TURNS` turns (default 5) and the agent may save a note with `remember` | the user's own tokens for one extra short step |
+| `server` | a Claude model on Renor's engine | the hook posts the typed user and assistant text of the last turns to the Renor gateway (field list in `engine/docs/ENVIRONMENT-VARIABLES.md`) | Renor, capped per call and per day |
+
+**Cache-safe boundary.** The offer is appended after the latest turn. It never changes the system prompt, the tool
+definitions or the MCP instructions, and with capture on those bytes are identical to capture off (checked by
+`engine/tests/mvp/capture-cache-identity.test.ts`). The offer quotes no transcript text and copies no instruction from
+the conversation.
+
+**Server mode settings** are operator-only: `RENOR_CAPTURE_SERVER_OPTIN`, `RENOR_CAPTURE_KEY_FILE`, `RENOR_CAPTURE_MAX_USD_CALL`
+and `RENOR_CAPTURE_MAX_USD_DAY` are read by the workspace engine's process, not by any tool. A turn that the secret
+scanner flags is dropped whole on the client and again on the server, before any cost is reserved or any request is made.
+Saved rules are pending until you approve them, and a capture never replaces an existing standing rule.
+
+The hook's settings file is `~/.renor/capture.json`: `{ "mode": "user", "everyTurns": 5, "keyFile": "~/.renor/key" }`.

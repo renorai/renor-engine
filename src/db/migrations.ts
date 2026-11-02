@@ -676,6 +676,18 @@ const migrations: Migration[] = [
       if (cols.includes('event_id')) db.exec('CREATE INDEX IF NOT EXISTS idx_facts_event_nocase ON facts(event_id COLLATE NOCASE)');
     },
   },
+  {
+    version: 30,
+    name: '30_standing_rule_approvals',
+    up: (db: Database.Database) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS standing_rule_approvals (
+        rule_key TEXT PRIMARY KEY,
+        event_id TEXT,
+        approved_at TEXT NOT NULL,
+        via TEXT NOT NULL
+      )`);
+    },
+  },
 
 ];
 
