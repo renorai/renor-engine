@@ -263,7 +263,7 @@ reminders, code blocks, pasted-content blocks, context-summary wrappers, turns o
 `stop_hook_active` is set, offers a line once per session (state in `RENOR_HOOK_STATE_DIR`, else `$CLAUDE_PLUGIN_DATA`,
 else `~/.renor/hooks`) and once more if the agent's save of it failed, skips a line `remember`, `save_memory` or
 `remember_note` saved in the transcript (matched to its `tool_result` by id; a result with `is_error`, or none, is not a
-save), and offers at most 5 per stop. Widening it to decisions and preferences the user did not flag waits for a decision gate
+save), and offers at most 5 per stop. Each session keeps a cursor in the same state file: only lines after it are read, so a fresh session is read from its first line, a first run that finds earlier turns (a resume, or the hook enabled mid-session) starts at the newest typed user turn or after the newest compaction boundary, whichever is later (lines from an already answered turn can be offered), and a rewritten transcript moves the cursor to the end. A question is never offered, and a shouted complaint ("I SAID", "MAKE SURE", mostly upper case) is a plain line, never a `[rule]`. Widening it to decisions and preferences the user did not flag waits for a decision gate
 that passes the owner's labelled set.
 
 For a privacy-safe detector replay, run `npx tsx scripts/eval/capture/cue-replay.ts --turns turns.jsonl [--json]` on

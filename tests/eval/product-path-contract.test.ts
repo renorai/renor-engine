@@ -710,6 +710,7 @@ describe('product-path contract: product SQLite is only opened through openDb()'
       'src/learning/store.ts', // optional learning-log DB, a separate user-owned activity log, not the product schema
       'src/sharing/examples.ts', // the shared-example texts' own DB (only at the data level), not the product schema
       'scripts/eval/benchmark-embed-inventory.ts', // eval helper: reads the embedding cache files read-only, never the product schema
+      'scripts/eval/cloud-bundle/build-bundle.ts', // eval helper: copies eval cache DB vectors into the benchmark bundle DB, never the product schema
     ]);
     const offenders: string[] = [];
     const walk = (dir: string): void => {

@@ -247,7 +247,7 @@ function saveRows(log: LearningExport, options: ProjectOptions, windowMs: number
         at, at + windowMs, at)
       : labelOf([], at, at + windowMs);
     const reads = joinable ? (servedBy.get(memoryKey) ?? []).filter(time => time > at && time <= at + windowMs).length : 0;
-    const hasCites = tables.feedback.some(cite => cite.tool === tool && Math.abs((asNumber(cite.at) ?? Number.NaN) - at) <= 2000
+    const hasCites = tables.feedback.some(cite => cite.tool === tool && asNumber(cite.observed) !== 0 && Math.abs((asNumber(cite.at) ?? Number.NaN) - at) <= 2000
       && cite.agent_key === op.agent_key && cite.session_key === op.session_key);
     const row: Record<string, unknown> = {
       kind: 'save-outcome/1',

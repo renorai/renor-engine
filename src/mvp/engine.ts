@@ -653,7 +653,7 @@ export async function engineSearchMemory(
   };
 }
 
-export function engineSearchText(db: Database.Database, memoryDir: string, query: string, topK: number, scope?: string, includeHistory = false, ledgerRelPath = DEFAULT_LEDGER_REL, ledgerRecords?: LedgerRecordCache, matchOverride?: string) {
+export function engineSearchText(db: Database.Database, memoryDir: string, query: string, topK: number, scope?: string, includeHistory = false, ledgerRelPath = DEFAULT_LEDGER_REL, ledgerRecords?: LedgerRecordCache, matchOverride?: string, stem = false) {
   const fts = prepareOnce(db, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'`).get();
   if (!fts) return { ok: false, error: 'fts-unavailable', results: [] as unknown[] };
   // matchOverride (H11b): an FTS expression built by the caller (an OR over the question's content words); absent, the whole query as one phrase.
@@ -686,7 +686,7 @@ export function engineSearchText(db: Database.Database, memoryDir: string, query
     // from a row that is shown, however many of them rank above it. The first read is the window of the best
     // `topK * 10` rows (at most 200) this search has always read.
     prose = shownPage(
-      n => keywordSearch(db, match, n),
+      n => keywordSearch(db, match, n, stem),
       rows => {
         const live = keywordLedgerHits(resolveLedgerHits(
           rows.map(r => toResult({ ...r, score: Math.abs(r.score), reason: 'fts' })),
@@ -865,6 +865,8 @@ export interface IndexPass {
   errors: number;
   /** Why the first of them failed, as a client may be told it (host paths redacted). */
   failure?: string;
+  /** Checked files over the note size cap, which stay out of the index (paths below the memory folder). Absent when none. */
+  tooLarge?: string[];
 }
 
 /**
@@ -1030,7 +1032,8 @@ export async function engineIndexChanged(
   }
   // What the pass could not finish is not dropped: it is finished in the background, once the service answers.
   if (errors > 0 && pass.interactive) engineFinishIndexInBackground(db, config, engine);
-  return { total: changed.length, indexed, errors, ...(failure === undefined ? {} : { failure }) };
+  const overCap = candidates.filter(f => tooLarge.get(f.file) === stampOf(f)).map(f => path.relative(config.memoryDir, f.file));
+  return { total: changed.length, indexed, errors, ...(failure === undefined ? {} : { failure }), ...(overCap.length > 0 ? { tooLarge: overCap } : {}) };
 }
 
 /**

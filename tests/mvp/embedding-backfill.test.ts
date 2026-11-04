@@ -204,7 +204,7 @@ describe('a keyword-only workspace started with an embedding provider', () => {
     const keywordOnly = await before.call('memory_status');
     expect(keywordOnly.semantic).toBe(false);
     expect(keywordOnly).not.toHaveProperty('embeddingRebuild');
-    expect(await before.call('search_memory', { query: 'zebrafish aquarium' })).toMatchObject({ ok: false, error: 'semantic-unavailable' });
+    expect(await before.call('search_memory', { query: 'zebrafish aquarium' })).toMatchObject({ ok: true, fallback: 'keyword' });
     expect(readEmbeddingTableDims(before.service.db)).toBeNull(); // it never had a vector table
     await before.close();
 
@@ -375,7 +375,7 @@ describe('a workspace that had the provider, ran without it, and has it again', 
     const status = await back.call('memory_status');
     expect(status.semantic).toBe(false);
     expect(status.embeddingRebuild).toEqual({ chunks: total, chunksLeft: missing.length });
-    expect(await back.call('search_memory', { query: 'orchard ladder' })).toMatchObject({ ok: false, error: 'semantic-rebuilding' });
+    expect(await back.call('search_memory', { query: 'orchard ladder' })).toMatchObject({ ok: true, fallback: 'keyword' });
 
     provider.release();
     await back.service.embeddingRebuild;

@@ -1626,8 +1626,37 @@ async function eraseFact(ctx: MemoryMapContext, id: string): Promise<PurgeReceip
   return receipt;
 }
 
-export async function purgeRetired(ctx: MemoryMapContext, target: string, only?: readonly string[]): Promise<PurgeReceipt> {
-  if (factEventId(target) !== null) return eraseFact(ctx, target);
+/**
+ * What a permanent deletion removed, named by what the learning log keyed it under (src/learning/tap.ts). The receipt cannot say:
+ * its ids are `retired:<random>` for a note or entry, and the journal keeps no path once the memory is purged, so this is read
+ * before the erase. It never leaves the process: `purgeRetired` hands it to the caller's `onErased` and puts it in no reply.
+ */
+export type ErasedLink =
+  | { kind: 'note'; path: string }
+  | { kind: 'fact'; eventId: string; scope: string; subject: string; predicate: string };
+
+function factLink(ctx: MemoryMapContext, id: string): ErasedLink[] {
+  const f = listRetiredFacts(ctx.db).find((row) => row.id === id);
+  return f ? [{ kind: 'fact', eventId: f.eventId, scope: f.scope, subject: f.subject, predicate: f.predicate }] : [];
+}
+
+function reportErased(onErased: ((links: ErasedLink[]) => void) | undefined, links: ErasedLink[]): void {
+  if (!onErased || links.length === 0) return;
+  try {
+    onErased(links);
+  } catch {
+    // The deletion has happened; a log that could not follow must not fail it.
+  }
+}
+
+export async function purgeRetired(ctx: MemoryMapContext, target: string, only?: readonly string[],
+  onErased?: (links: ErasedLink[]) => void): Promise<PurgeReceipt> {
+  if (factEventId(target) !== null) {
+    const links = factLink(ctx, target);
+    const receipt = await eraseFact(ctx, target);
+    reportErased(onErased, links);
+    return receipt;
+  }
   if (target !== 'all' && !target.startsWith('retired:')) {
     throw refusal('invalid_argument', 'pass the id of a retired memory from memory_map.retired (retired:<id>) or "all"; a live memory is retired first');
   }
@@ -1651,11 +1680,16 @@ export async function purgeRetired(ctx: MemoryMapContext, target: string, only?:
     const facts = chosen.filter((r) => r.memory.kind === 'fact');
     const files = chosen.filter((r) => r.memory.kind !== 'fact');
     const erasedFacts = [] as string[];
+    const links: ErasedLink[] = [];
     for (const fact of facts) {
+      links.push(...factLink(ctx, fact.memory.id));
       const erased = await eraseFact(ctx, fact.memory.id);
       erasedFacts.push(...erased.ids);
     }
-    if (files.length === 0) return { ok: true, action: 'deleted', ids: erasedFacts, freedBytes: 0, at };
+    if (files.length === 0) {
+      reportErased(onErased, links);
+      return { ok: true, action: 'deleted', ids: erasedFacts, freedBytes: 0, at };
+    }
 
     const rids = new Set(files.map((r) => r.memory.id));
     const memoryIds = new Set(files.map((r) => r.memory.memoryId));
@@ -1713,6 +1747,8 @@ export async function purgeRetired(ctx: MemoryMapContext, target: string, only?:
       .filter(Boolean).join(' and ');
     ctx.db.prepare('INSERT INTO write_events (note_path, action, summary, created_at, author) VALUES (?, ?, ?, ?, ?)')
       .run('_retired_', 'delete', `deleted permanently: ${counted}`, at, ctx.source ?? null);
+    for (const notePath of new Set(files.map((r) => r.memory.path))) links.push({ kind: 'note', path: notePath });
+    reportErased(onErased, links);
     return { ok: true, action: 'deleted', ids: [...erasedFacts, ...rids], freedBytes, at };
   });
 }

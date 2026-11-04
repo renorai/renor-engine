@@ -706,6 +706,9 @@ export function runMigrations(db: Database.Database): void {
     }
   }
 
+  const debug = process.env.RENOR_LOG_LEVEL === 'debug';
+  const startedAt = Date.now();
+  let applied = 0;
   for (const migration of migrations) {
     if (migration.version <= currentVersion) continue;
     db.transaction(() => {
@@ -717,6 +720,9 @@ export function runMigrations(db: Database.Database): void {
       }
     })();
     currentVersion = migration.version;
-    log.info('migration_applied', { version: migration.version, name: migration.name });
+    applied += 1;
+    if (debug) log.info('migration_applied', { version: migration.version, name: migration.name });
   }
+  // One summary line instead of one stderr line per migration: MCP clients show stderr to the user.
+  if (applied > 0 && !debug) log.info('database_ready', { migrations: applied, ms: Date.now() - startedAt });
 }

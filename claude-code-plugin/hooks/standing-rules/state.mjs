@@ -87,8 +87,9 @@ export function writePrivateFile(dir, file, text) {
 /**
  * Removes what the cap does not keep: files older than MAX_AGE_MS, then the oldest until the directory holds at most
  * MAX_ENTRIES files and MAX_BYTES bytes. `keep` names files that are never removed (the session starting now).
+ * `owns` limits what the pruning may touch to the file names it accepts (default: every file in the directory).
  */
-export function prunePrivateDir(dir, keep = new Set(), now = Date.now()) {
+export function prunePrivateDir(dir, keep = new Set(), now = Date.now(), owns = () => true) {
   let entries;
   try {
     entries = fs.readdirSync(dir);
@@ -103,7 +104,7 @@ export function prunePrivateDir(dir, keep = new Set(), now = Date.now()) {
     const file = path.join(dir, name);
     let st;
     try { st = fs.lstatSync(file); } catch { continue; }
-    if (!st.isFile()) continue;
+    if (!st.isFile() || !owns(name)) continue;
     if (keep.has(name)) {
       count += 1;
       bytes += st.size;

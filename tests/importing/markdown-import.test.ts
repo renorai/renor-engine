@@ -274,7 +274,7 @@ describe.skipIf(!supportsNonUtf8Names)('Markdown folder import — names that ar
     expect(fs.readdirSync(path.join(destination, 'Imported/vault')).sort()).toEqual(['Projects', 'good.md']);
     // Fresh database migration diagnostics now belong on stderr; actual import
     // failures must still be absent while invalid filenames are skipped.
-    expect(error.mock.calls.filter(([message]) => !String(message).includes('"event":"migration_applied"'))).toEqual([]);
+    expect(error.mock.calls.filter(([message]) => !String(message).includes('"event":"database_ready"'))).toEqual([]);
   });
 
   it('names the file in the text summary and says what to do about it', async () => {

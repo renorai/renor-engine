@@ -333,6 +333,18 @@ describe('the release seed', () => {
 
   const entries = (dir: string): string[] => (fs.existsSync(dir) ? fs.readdirSync(dir).sort() : []);
 
+  /**
+   * What deploy-remote.sh does to a seed before any engine reads it (`chmod -R go-w`), so a fixture's modes do not depend on the
+   * umask the suite runs under: under 0002 (a non-root shell with per-user groups) mkdir leaves the seed group-writable, and the
+   * engine rightly refuses it. The tests that need an untrusted seed make it so explicitly, after this.
+   */
+  function sealLikeDeploy(dir: string): void {
+    const st = fs.lstatSync(dir);
+    if (st.isSymbolicLink()) return;
+    fs.chmodSync(dir, st.mode & 0o7777 & ~0o022);
+    if (st.isDirectory()) for (const name of fs.readdirSync(dir)) sealLikeDeploy(path.join(dir, name));
+  }
+
   beforeEach(() => {
     root = workspaceRoot('seed');
     versioned = versionedName();
@@ -340,7 +352,7 @@ describe('the release seed', () => {
     // The build account's uid (here 0) in place of this one.
     fs.mkdirSync(path.join(seed, versioned.replace(/-\d+$/, '-0')), { recursive: true });
     for (const name of ['0a1b2c3d', 'deadbeef']) fs.writeFileSync(path.join(seed, versioned.replace(/-\d+$/, '-0'), name), `entry ${name}`);
-    fs.chmodSync(seed, 0o755);
+    sealLikeDeploy(seed);
   });
 
   function enableWithSeed(cacheDir: string, seedDir: string | undefined = seed): { report: ReturnType<typeof enableInChild>; cached: string[] } {
@@ -417,7 +429,7 @@ describe('the release seed', () => {
     });
     expect(make.status).toBe(0);
     expect(entries(path.join(seeded, versioned.replace(/-\d+$/, `-${process.getuid!()}`))).length).toBeGreaterThan(50);
-    fs.chmodSync(seeded, 0o755);
+    sealLikeDeploy(seeded);
 
     const { report, cached } = enableWithSeed(path.join(root, 'cache', 'compile'), seeded);
 

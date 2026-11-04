@@ -214,3 +214,11 @@ export function readWhatsNew(db: Database.Database, args: {
   ).run(args.agent, scopeKey, asOf, -1);
   return { items, as_of: asOf, next_since: asOf, cursor: null, ...extra };
 }
+
+/** The one line an empty workspace adds to get_context and whats_new; it goes with the first save. */
+export const EMPTY_WORKSPACE_NOTE = 'Renor is empty. Save decisions, root causes and corrections with remember before you finish.';
+
+/** True while the workspace holds no note and no fact. Both lookups stop at the first row. */
+export function workspaceIsEmpty(db: Database.Database): boolean {
+  return db.prepare('SELECT NOT EXISTS (SELECT 1 FROM notes) AND NOT EXISTS (SELECT 1 FROM facts)').pluck().get() === 1;
+}

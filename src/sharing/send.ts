@@ -9,7 +9,7 @@ import {
 } from './fields';
 import { LABEL_WINDOW_MS, projectRows, type ProjectedKind, type ProjectedRow } from './project';
 import {
-  EXAMPLES_FILE, contributorId, rotateSecret, trainingBearer, consentFor, effectiveLevel, ensureState, freshState, readConsent, readState, removeLocalSharingData,
+  EXAMPLES_FILE, contributorId, rotateSecret, trainingBearer, consentFor, effectiveLevel, ensureState, freshState, readConsent, readCutoff, readState, removeLocalSharingData,
   writeConsent, writeState, type ConsentRecord, type SharingState,
 } from './state';
 import path from 'node:path';
@@ -229,6 +229,14 @@ function bearerOf(state: SharingState, hosted: boolean | undefined): string {
   return hosted ? state.secret : (state.token ?? state.secret);
 }
 
+/**
+ * Keeps a bearer that may have identified accepted rows, so a deletion still reaches them after the install's credential changes. A delete accepts
+ * any well-formed bearer whatever key signed it, so a retired token or the pre-credential secret is still the only way to ask for that contributor's rows.
+ */
+function retireBearer(state: SharingState, bearer: string): void {
+  state.retiredSecrets = [...new Set([...(state.retiredSecrets ?? []), bearer])].slice(-50);
+}
+
 async function post(
   url: string, bearer: string | null, body: string, send: Post | undefined, hosted = false, env: NodeJS.ProcessEnv = process.env, wantJson = false,
 ): Promise<{ status: number; retryAfter: number | null; code: string | null; json: unknown }> {
@@ -419,10 +427,10 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
   }
 
   // Debug reads the state if there is one and never makes it; a real send makes it on first use.
-  const state = debug ? (readState(options.dir) ?? freshState()) : ensureState(options.dir);
+  const state = debug ? (readState(options.dir) ?? freshState(readCutoff(options.dir))) : ensureState(options.dir);
   // The text stream starts at the switch-on time, never at 0: nothing created before it is ever sent tied, so nothing sent untied is repeated.
   if (training) {
-    const from = Math.max(0, Date.parse(record?.changedAt ?? '') || 0);
+    const from = Math.max(0, Date.parse(record?.changedAt ?? '') || 0, readCutoff(options.dir));
     state.trainingWatermarks ??= { retrieval: from, save: from, session: from };
   }
   const marks = training ? state.trainingWatermarks! : state.watermarks;
@@ -509,6 +517,8 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
       }
       return empty('failed', { reason: `${registered.reason}; will retry` });
     }
+    // An install that sent before credentials existed was identified by its secret: keep it, the old rows are still deletable only through it.
+    if (state.everSent || state.deletePending) retireBearer(state, state.token ?? state.secret);
     state.token = registered.token;
     writeState(options.dir, state);
   }
@@ -538,7 +548,7 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     // Off was chosen while the request was out: it may have landed after the deletion off asked for, so ask again.
     if (effectiveLevel(options.dir, env) === 'off') {
       const removal = await requestDelete(options.dir, state, { env, fetch: options.fetch, hosted: options.hosted });
-      if (removal.ok) removeLocalSharingData(options.dir);
+      if (removal.ok) removeLocalSharingData(options.dir, now);
       return { ...stopped(), reason: 'off was chosen during the run; the endpoint was asked to delete what it holds' };
     }
     if (failure !== null || status === null) {
@@ -548,6 +558,8 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     // proof is the operator's to fix. Either way nothing was stored and the rows stay unsent.
     if (status === 401 && code === 'unauthenticated') {
       if (!options.hosted) {
+        // The token identifies rows the endpoint may already hold: keep it for the deletion before dropping it.
+        if (state.token !== undefined && (state.everSent || state.deletePending)) retireBearer(state, state.token);
         delete state.token;
         writeState(options.dir, state);
       }
@@ -621,7 +633,8 @@ const doNotTrack = (env: NodeJS.ProcessEnv): boolean => (env.DO_NOT_TRACK ?? '')
  */
 export async function deleteRemote(options: Pick<SenderOptions, 'dir' | 'env' | 'fetch' | 'hosted'>): Promise<RemoteDeleteResult> {
   const state = readState(options.dir);
-  if (state === null || (!state.everSent && !state.deletePending && state.trainingEverSent !== true && state.trainingDeletePending !== true && (state.retiredSecrets ?? []).length === 0)) {
+  if (state === null || (!state.everSent && !state.deletePending && state.trainingEverSent !== true && state.trainingDeletePending !== true
+    && (state.retiredSecrets ?? []).length === 0 && (state.retiredTrainingBearers ?? []).length === 0)) {
     return { ok: true, requested: false };
   }
   return requestDelete(options.dir, state, options);
@@ -633,24 +646,38 @@ export async function deleteRemote(options: Pick<SenderOptions, 'dir' | 'env' | 
  */
 export async function deleteTraining(options: Pick<SenderOptions, 'dir' | 'env' | 'fetch' | 'hosted'>): Promise<RemoteDeleteResult> {
   const state = readState(options.dir);
-  if (state === null || (state.trainingEverSent !== true && state.trainingDeletePending !== true)) return { ok: true, requested: false };
+  const currentOwed = state !== null && (state.trainingEverSent === true || state.trainingDeletePending === true);
+  const retired = state?.retiredTrainingBearers ?? [];
+  if (state === null || (!currentOwed && retired.length === 0)) return { ok: true, requested: false };
   const env = options.env ?? process.env;
   if (doNotTrack(env)) {
-    writeState(options.dir, { ...state, trainingEverSent: true, trainingDeletePending: true });
+    writeState(options.dir, currentOwed ? { ...state, trainingEverSent: true, trainingDeletePending: true } : state);
     return { ok: false, requested: false, owedUnderDoNotTrack: true, reason: 'DO_NOT_TRACK=1 forbids any request, so the deletion is recorded here and sent the first time the engine runs without it' };
   }
+  // The current training contributor, and every earlier one whose secret has since rotated: each is asked once, and kept until it has been.
+  const bearers = [...(currentOwed ? [trainingBearer(state.secret)] : []), ...retired];
+  const remaining = new Set(retired);
+  const { retiredTrainingBearers: _was, ...stateRest } = state;
+  const owed = (): SharingState => ({
+    ...stateRest, ...(currentOwed ? { trainingEverSent: true, trainingDeletePending: true } : {}),
+    ...(remaining.size > 0 ? { retiredTrainingBearers: [...remaining] } : {}),
+  });
   try {
-    const { status } = await post(
-      sharingEndpoint(env), trainingBearer(state.secret), JSON.stringify({ protocol: SHARING_PROTOCOL, action: 'delete' }), options.fetch, options.hosted, env);
-    if ((status >= 200 && status < 300) || status === 401 || status === 404) {
-      const { trainingEverSent: _sent, trainingDeletePending: _owed, trainingWatermarks: _marks, ...rest } = readState(options.dir) ?? state;
-      writeState(options.dir, rest);
-      return { ok: true, requested: true };
+    for (const bearer of bearers) {
+      const { status } = await post(
+        sharingEndpoint(env), bearer, JSON.stringify({ protocol: SHARING_PROTOCOL, action: 'delete' }), options.fetch, options.hosted, env);
+      if ((status >= 200 && status < 300) || status === 401 || status === 404) {
+        remaining.delete(bearer);
+        continue;
+      }
+      writeState(options.dir, owed());
+      return { ok: false, requested: true, reason: `the endpoint answered ${status}` };
     }
-    writeState(options.dir, { ...state, trainingEverSent: true, trainingDeletePending: true });
-    return { ok: false, requested: true, reason: `the endpoint answered ${status}` };
+    const { trainingEverSent: _sent, trainingDeletePending: _owed, trainingWatermarks: _marks, retiredTrainingBearers: _retired, ...rest } = readState(options.dir) ?? state;
+    writeState(options.dir, rest);
+    return { ok: true, requested: true };
   } catch (err) {
-    writeState(options.dir, { ...state, trainingEverSent: true, trainingDeletePending: true });
+    writeState(options.dir, owed());
     return { ok: false, requested: true, reason: err instanceof Error ? err.message : 'request failed' };
   }
 }
@@ -672,6 +699,7 @@ async function requestDelete(dir: string, state: SharingState, options: Pick<Sen
     ...(state.everSent || state.deletePending ? [bearerOf(state, options.hosted)] : []),
     ...(state.retiredSecrets ?? []),
     ...(state.trainingEverSent === true || state.trainingDeletePending === true ? [trainingBearer(state.secret)] : []),
+    ...(state.retiredTrainingBearers ?? []),
   ];
   const owed = { ...state, everSent: true, deletePending: true };
   try {
@@ -739,7 +767,7 @@ export async function chooseLevel(options: ChooseOptions): Promise<ChooseResult>
       ? { ok: false, requested: false }
       : await deleteRemote({ dir: options.dir, env: options.env, fetch: options.fetch, hosted: options.hosted });
     // The secret is removed only once the endpoint holds nothing; until then the state keeps it, with the deletion pending.
-    if (result.ok) removeLocalSharingData(options.dir);
+    if (result.ok) removeLocalSharingData(options.dir, now);
     const deleted = result.requested || result.owedUnderDoNotTrack ? result.ok : null;
     return {
       level: 'off', changed: previous?.level !== 'off', record, remoteDeleted: deleted, reason: result.reason,
@@ -806,27 +834,27 @@ export interface DeleteAllResult {
 }
 
 /** Deletes what the endpoint holds and what sharing keeps here (state, example texts), and keeps the choice. */
-export async function deleteAllShared(options: Pick<SenderOptions, 'dir' | 'env' | 'fetch' | 'hosted'>): Promise<DeleteAllResult> {
+export async function deleteAllShared(options: Pick<SenderOptions, 'dir' | 'env' | 'fetch' | 'hosted' | 'now'>): Promise<DeleteAllResult> {
   const remote = await deleteRemote(options);
   if (!remote.ok) return { remote, localRemoved: false };
-  removeLocalSharingData(options.dir);
+  removeLocalSharingData(options.dir, (options.now ?? Date.now)());
   return { remote, localRemoved: true };
 }
 
 /** The retry of a removal that could not be made earlier. Called by the loop, whatever the level. */
-export async function settlePendingDelete(options: Pick<SenderOptions, 'dir' | 'env' | 'fetch' | 'hosted'>): Promise<void> {
+export async function settlePendingDelete(options: Pick<SenderOptions, 'dir' | 'env' | 'fetch' | 'hosted' | 'now'>): Promise<void> {
   const env = options.env ?? process.env;
   // Only DO_NOT_TRACK=1 forbids a request (deleteRemote records the deletion as owed under it). RENOR_SHARING=off stops sending rows; a
   // deletion the person already asked for is still theirs, and goes out.
   if (doNotTrack(env)) return;
   const state = readState(options.dir);
   if (state === null) return;
-  // Only the text for training is owed (the owner switched it off): the numbers are untouched.
-  if (!state.deletePending && state.trainingDeletePending === true) {
+  // Only the text for training is owed (the owner switched it off, or its secret rotated before the deletion could be made): the numbers are untouched.
+  if (!state.deletePending && (state.trainingDeletePending === true || (state.retiredTrainingBearers ?? []).length > 0)) {
     await deleteTraining(options);
     return;
   }
   if (!state.deletePending) return;
   const result = await deleteRemote(options);
-  if (result.ok) removeLocalSharingData(options.dir);
+  if (result.ok) removeLocalSharingData(options.dir, (options.now ?? Date.now)());
 }

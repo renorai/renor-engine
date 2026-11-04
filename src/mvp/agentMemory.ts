@@ -8,6 +8,7 @@ import { engineSearchMemory, engineSearchText, type Engine } from './engine';
 import { leadingSummaryHits } from '../digests/digests';
 import { normalizeScope, savedScopeMatches } from './scope';
 import { contextDistinctEnabled, distinctMemories } from './contextDistinct';
+import { contextNewerFirstEnabled, newerFirstMemories } from './contextNewerFirst';
 import { claimsReservedEntrySource, eventMarker, factAuthorsByEvent } from './factMarkers';
 import { authorMarker } from '../memory/sourceName';
 import type { HitOrder } from '../retrieval/orchestrator';
@@ -46,10 +47,13 @@ import { APPROVED_RULES_NOTE, loadPinnedRules, PINNED_RULES_NOTE } from './pinne
 import { buildDatedOutline, replyCeiling, datedOutlineBudget, datedOutlineEnabled, datedOutlineMinSimilarity, listOutlineCandidates, withoutReplaced, withDatedOutline, MIN_OUTLINE_TOKENS, type OutlineCandidate } from './datedOutline';
 import { turnScorer, vectorsMeanSomething } from '../retrieval/readerEvents';
 import { ruleApprovalsEnabled } from './ruleApprovals';
+import { ownScopeFirstFacts, ownScopeFirstMemories, ownScopeSlug } from './ownScopeFirst';
 
 export interface AgentContextOptions {
   query?: string;
   scope?: string;
+  /** The project scope the connection names (x-renor-scope, written by `renor connect` into a project config). Only orders, only with RENOR_OWN_SCOPE_FIRST on. */
+  connectionScope?: string;
   maxTokens?: number;
   /** The reading agent's name: a fact saved under another name carries its `source`. Absent: every fact with an author does. */
   reader?: string;
@@ -112,6 +116,8 @@ export interface AgentContextMemory {
    * told them apart (adv report renor-adv-inj6b-1012, F3). Absent on every other memory.
    */
   origin?: 'import';
+  /** `true` on a memory a newer, near-identical memory on the same page follows from (RENOR_CONTEXT_NEWER_FIRST, off by default). */
+  earlier?: true;
 }
 
 export const FTS_STOP_WORDS = new Set([
@@ -1541,15 +1547,20 @@ export async function buildAgentContext(
   const freshness = statusFreshnessMode(options.env);
   const readAt = Date.now();
   const staleOf = (fact: CurrentFact): string | null => freshness === 'off' ? null : staleStatusOf(fact, readAt);
-  const facts = inReadSnapshot(db, () => currentFactMatches(db, query, scopeNorm, query ? 12 : 20, meaning))
-    .filter(fact => freshness !== 'hide' || staleOf(fact) === null);
+  // RENOR_OWN_SCOPE_FIRST: with no scope passed and a default project scope set, that scope's items lead other scopes'.
+  const ownScope = scopeNorm === undefined ? ownScopeSlug(options.env, options.connectionScope) : null;
+  const facts = ownScopeFirstFacts(inReadSnapshot(db, () => currentFactMatches(db, query, scopeNorm, query ? 12 : 20, meaning))
+    .filter(fact => freshness !== 'hide' || staleOf(fact) === null), ownScope);
   markRetrieved(); // the matches and the facts are in hand: what follows builds the reply (callPhases.ts)
 
   // After the keyword matches, so a statement a keyword search also found is that match, not the added copy.
   const isLedger = ledgerNoteMatcher({ memoryDir, ledgerRelPath: options.ledgerRelPath ?? DEFAULT_LEDGER_REL });
-  const deduplicated = dedupeMemories([...memories, ...added]);
+  const deduplicated = ownScopeFirstMemories(dedupeMemories([...memories, ...added]), ownScope);
   // RENOR_CONTEXT_DISTINCT (off by default): a memory that repeats the reply's facts or another memory is not listed.
-  const merged = contextDistinctEnabled(options.env) ? distinctMemories(deduplicated, facts, isLedger) : deduplicated;
+  const distinct = contextDistinctEnabled(options.env) ? distinctMemories(deduplicated, facts, isLedger) : deduplicated;
+  // RENOR_CONTEXT_NEWER_FIRST (off by default): of two near-identical notes, the newer is listed first and the older is tagged `earlier`.
+  const newerFirst = contextNewerFirstEnabled(options.env);
+  const merged = newerFirst ? newerFirstMemories(distinct) : distinct;
   // A correction takes the best score of the memories it corrects and is cut to a share of the budget (`bindCorrections`), and
   // the reply keeps them in pairs: a replaced memory is never listed without its correction, nor before it, whatever the
   // budget cut and however the layout sorts (`pinToCorrections`, and `pinned` below). Awaited only when the workspace has a
@@ -2015,6 +2026,8 @@ export async function buildAgentContext(
       ...keywords,
     ];
   }
+  // The layout above may have sorted a newer note after the older one it overlaps: the same rule, once more on the final list.
+  if (newerFirst) reply.memories = newerFirstMemories(reply.memories as AgentContextMemory[]);
   if (correctionOf.size > 0) pinToCorrections(reply, correctionOf);
   // Last, once the order and the pairs are settled on the full items, which say how they were found.
   if (lean) reply.memories = (reply.memories as AgentContextMemory[]).map(leanMemory);

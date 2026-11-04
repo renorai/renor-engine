@@ -337,6 +337,9 @@ describe('run ledger: which environment is configuration', () => {
       DO_NOT_TRACK: 'the sharing choice (src/sharing): it can only turn sharing off; no effect on results',
       XDG_CONFIG_HOME: 'where the sharing choice is kept (src/sharing/state.ts); no effect on results',
       XDG_STATE_HOME: 'where the sharing install id is kept (src/sharing/state.ts); no effect on results',
+      CLAUDE_CONFIG_DIR: "Claude Code's own config folder, where `renor-engine connect` writes the memory rule (src/connect.ts); not Renor configuration, no effect on results",
+      CODEX_HOME: "Codex's own config folder, where `renor-engine connect` writes the memory rule (src/connect.ts); not Renor configuration, no effect on results",
+      USERPROFILE: 'the Windows home folder, the fallback for HOME in `renor-engine connect` (src/connect.ts); no effect on results',
       XDG_RUNTIME_DIR: 'where the SessionStart hook keeps its owner-only session files (src/recall/autoRecall.ts); no effect on results',
     };
     const read = new Set<string>();

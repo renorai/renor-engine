@@ -220,7 +220,8 @@ describe('notes imported with apply_import into a workspace that searches by mea
     expect(status).toMatchObject({ semantic: false, chunksWithoutVectors: imported.length });
     expect(status.embeddingRebuild).toEqual({ chunks: status.chunks, chunksLeft: imported.length });
     const held = await ws.call('search_memory', { query: IMPORTED });
-    expect(held).toMatchObject({ ok: false, error: 'semantic-rebuilding', hits: [] });
+    expect(held).toMatchObject({ ok: true, fallback: 'keyword' });
+    expect((held.hits as unknown[]).length).toBeGreaterThan(0);
     expect(held.notice).toContain(`(${imported.length} of ${status.chunks} chunks left)`);
     const keyword = await ws.call('get_context', { query: QUESTION });
     expect(keyword.retrieval).toBe('keyword');
@@ -291,7 +292,7 @@ describe('notes imported with apply_import into a workspace that searches by mea
     const status = await ws.call('memory_status');
     expect(status).toMatchObject({ semantic: false, chunksWithoutVectors: imported.length });
     expect(status.embeddingRebuild).toEqual({ chunks: status.chunks, chunksLeft: imported.length });
-    expect(await ws.call('search_memory', { query: IMPORTED })).toMatchObject({ ok: false, error: 'semantic-rebuilding' });
+    expect(await ws.call('search_memory', { query: IMPORTED })).toMatchObject({ ok: true, fallback: 'keyword' }); // semantic is rebuilding: keyword hits, marked
     expect(first.calls).toBeGreaterThan(callsBefore); // the background job asked, and the provider failed
     expect(first.texts.length).toBe(embeddedBefore); // so nothing of the import was embedded
     await ws.close();

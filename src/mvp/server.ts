@@ -21,7 +21,7 @@ import { writerConflictLines } from '../memory/writerConflicts';
 import { MAX_STATEMENT_LENGTH } from '../memory/limits';
 import { cleanSource, headerSource, hiveIdentity, isImportSource, isReservedSource, productFromUserAgent, reservedCallerSource, reservedSourceIn } from '../memory/sourceName';
 import { assertStorable, secretGuardEnabled } from '../extraction/secretGuard';
-import { readWhatsNew, whatsNewPageFromEnv, WHATS_NEW_LIMIT } from '../memory/whatsNew';
+import { readWhatsNew, whatsNewPageFromEnv, WHATS_NEW_LIMIT, EMPTY_WORKSPACE_NOTE, workspaceIsEmpty } from '../memory/whatsNew';
 import { HANDOFF_ARG_DESCRIPTIONS, HANDOFF_MAX_CHARS, HANDOFF_TOOL_DESCRIPTION, HANDOFF_TOOL_NAME, handoffNoteEnabled, runHandoffTool, startHandoffSweep } from '../memory/handoff';
 import { askAgent, askAgentPerHour, answerRequest, closeRequest, listRequestsPage, noteKnownAgent } from '../memory/requests';
 import { searchHistory, HistoryUnavailableError, HISTORY_DISCLAIMER } from './history';
@@ -52,6 +52,7 @@ import {
 } from './engine';
 import type { MvpConfig } from './config';
 import { normalizeScope } from './scope';
+import { inferReplaced, inferReplacesEnabled, readsAsCorrection } from './inferReplaces.js';
 import { identityKey } from '../retrieval/queryHelpers';
 import { ledgerNoteMatcher, withoutLedgerMetadata } from '../retrieval/ledgerPresentation';
 import type { EmbeddingProvider } from '../embeddings/types';
@@ -78,6 +79,7 @@ import { readerDurationNamed } from '../retrieval/questionSpan';
 import { noteTurnsLoader, readerEventsEnabled, readerEventsNamed, turnScorer, vectorsMeanSomething } from '../retrieval/readerEvents';
 import type { RetrievalProbe } from '../retrieval/semantic';
 import { searchBestFirstEnabled } from '../retrieval/orchestrator';
+import { recallInstructions } from './recallTiming';
 import { readBuildIdentity } from '../buildIdentity';
 import { learningObserver } from '../learning/tap';
 import { RankingTrace, withRankingTrace } from '../retrieval/rankingTrace';
@@ -106,7 +108,7 @@ import { CallPhases, isPhasedTool, markRetrieved } from '../callPhases';
 import { saveMomentInstructions, saveMomentMode, saveMomentTool } from './saveMoment';
 import { requestTiming, serverTimingFor } from './serverTiming';
 import { createLogger } from './log';
-import { checkProfileTools, contextProfileFromEnv, LINE_TOOLS, renderLines, type ContextProfile } from './contextProfile';
+import { checkProfileTools, contextProfileFromEnv, searchMemoryKeywordFallbackEnabled, whatsNewFirst, LINE_TOOLS, renderLines, type ContextProfile } from './contextProfile';
 import { renderToon } from './toonResponse';
 import { OUT_ASK_AGENT, OUT_HANDOFF, OUT_HIT, OUT_LIST_REQUESTS, OUT_REQUEST, OUT_WHATS_NEW, pageOutputSchemasEnabled, toolCarriesStructured, toolOutputSchemasEnabled } from './outputSchemas';
 import { statusLedgerInstructions } from './statusLedger';
@@ -635,8 +637,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
   const profile: ContextProfile = directory ? {} : contextProfileFromEnv();
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION, icons: SERVER_ICONS },
-    { instructions: directory ? DIRECTORY_INSTRUCTIONS : profile.instructions ?? ('Renor single-owner memory. At the start of every task, call whats_new before anything else. Open requests addressed to you are first in that reply; answering or closing one records the reply and never runs anything by itself. For substantive user requests, call get_context with the current request before answering so relevant prior context can follow the user across agents. '
-      + 'Call it again before you decide something an earlier session may have settled and before you review another agent\'s work, with that choice or topic as the query: reading once at the start is not enough. '
+    { instructions: directory ? DIRECTORY_INSTRUCTIONS : profile.instructions ?? ('Renor single-owner memory. ' + (whatsNewFirst(profile) ? 'At the start of every task, call whats_new before anything else. Open requests addressed to you are first in that reply; answering or closing one records the reply and never runs anything by itself. ' : '') + recallInstructions()
       + 'To save anything, call remember with one argument, statement: the thing to remember, in plain words. When the user says to remember or save something, they mean this tool, not your own memory. '
       + 'Renor is the place for the why, next to your board or tracker, not a copy of it: when you save on your own, save decisions with their reason, root causes and corrections, not status, progress or event logs. '
       + 'Cite an earlier entry by its subject or task instead of restating it, and save nothing that only repeats one.' + saveMomentInstructions(saveMoment, statusLedger !== '') + ' '
@@ -876,6 +877,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
               touched: [resolveLedgerPath(config.memoryDir, config.ledgerRelPath)],
             });
             if (pass.errors > 0) refresh = unfinishedPass(pass);
+            else if (pass.tooLarge) refresh = { warning: 'memory-saved-but-not-indexed', detail: `${pass.tooLarge.join(', ')} is over the 8 MiB note size limit, so it is saved but no longer searchable. Split it or move it out of the memory folder.` };
           } catch {
             refresh = { warning: 'memory-saved-but-index-refresh-failed' };
           }
@@ -906,12 +908,13 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       }
 
       const source = sourceOf(args.source, extra, config);
+      const inferred = replaces === undefined ? await inferReplacesFor(args.statement, args.scope, source ?? 'mcp:remember') : undefined;
       const note = await engineRememberNote(config, args.statement, undefined, source ?? 'mcp:remember', args.scope, args.timezone);
       recordNoteSave(note.file, args.statement, source, note.scope);
       usefulness.cited(args.cites);
-      const replaced = replaces !== undefined && note.id
+      const replaced = (replaces ?? inferred) !== undefined && note.id
         // The source the entry was written with (the default of this write, when none), so the link names the same one.
-        ? await replacementReceipt(replaces, note.id, source ?? 'mcp:remember')
+        ? await replacementReceipt((replaces ?? inferred)!, note.id, source ?? 'mcp:remember', inferred !== undefined)
         : {};
       return jsonResult({
         ok: true,
@@ -984,6 +987,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       const body = await buildAgentContext(db, engine, config.memoryDir, {
         query: args.query,
         scope: args.scope,
+        connectionScope: headerText(extra?.requestInfo?.headers, 'x-renor-scope'),
         maxTokens: args.max_tokens,
         includeHistory: args.include_history,
         reader: readerOf(extra),
@@ -995,7 +999,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       });
       const checked = await applyAnswerCheck(body as unknown as Record<string, unknown>, args.query, answerChecker, (body as { maxTokens?: number }).maxTokens);
       usefulness.measure('get_context', () => contextItems(checked));
-      return jsonResult(checked);
+      return jsonResult(workspaceIsEmpty(db) ? { ...checked, notice: [checked.notice, EMPTY_WORKSPACE_NOTE].filter(Boolean).join(' ') } : checked);
     } catch (err) {
       return toolError(err);
     }
@@ -1281,7 +1285,14 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       const floor = searchHitFloor(engine.modelKey);
       const probe: RetrievalProbe = {};
       const laidOut = readerLayoutEnabledFor(args.query);
-      const body = await engineSearchMemory(db, engine, config.memoryDir, args.query, topK, args.scope, evidence, args.include_history === true, config.ledgerRelPath, probe, digests, undefined, floor > 0, laidOut, searchBestFirstEnabled());
+      const semantic = await engineSearchMemory(db, engine, config.memoryDir, args.query, topK, args.scope, evidence, args.include_history === true, config.ledgerRelPath, probe, digests, undefined, floor > 0, laidOut, searchBestFirstEnabled());
+      // With semantic search unavailable or rebuilding, answer with keyword hits and say so, rather than an empty refusal.
+      const keyword = !semantic.ok && (semantic.error === 'semantic-unavailable' || semantic.error === 'semantic-rebuilding') && searchMemoryKeywordFallbackEnabled()
+        ? engineSearchText(db, config.memoryDir, args.query.slice(0, 200), topK, args.scope, false, config.ledgerRelPath) : undefined;
+      if (keyword?.ok && (keyword.results as unknown[]).length > 0) {
+        return searchResult(keyword, { ok: true, hits: keyword.results, fallback: 'keyword', notice: `${semantic.notice ?? 'Semantic search is unavailable.'} These are keyword matches (search_text).`, scope: args.scope }, withSchemas);
+      }
+      const body = semantic;
       let result: Record<string, unknown> = body;
       if (body.ok) {
         // Who saved each fact among the hits, marked before anything reads them (the verdict, the page, the floor).
@@ -1359,11 +1370,11 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     try {
       const topK = args.top_k ?? 20;
       const exact = engineSearchText(db, config.memoryDir, args.query, topK, args.scope, false, config.ledgerRelPath);
-      // H12 (RENOR_SEARCH_TEXT_FALLBACK=1, default off): when the exact phrase finds nothing, the words are searched with OR and
+      // H12 (RENOR_SEARCH_TEXT_FALLBACK=1, default off): when the exact phrase finds nothing, the words are searched with OR over the stemmed index (log/logging) and
       // the reply says so (`fallback`). A reply that has hits is never changed. Pre-registered: data/renor-goal-better-temporal-2/prereg/H11b-H18-H12.md.
       const body = searchTextFallbackEnabled() && exact.ok && (exact.results as unknown[]).length === 0
         ? (() => {
-          const any = engineSearchText(db, config.memoryDir, args.query, topK, args.scope, false, config.ledgerRelPath, undefined, keywordOrMatch(args.query));
+          const any = engineSearchText(db, config.memoryDir, args.query, topK, args.scope, false, config.ledgerRelPath, undefined, keywordOrMatch(args.query), true);
           return any.ok && (any.results as unknown[]).length > 0 ? { ...any, fallback: 'any-word' } : exact;
         })()
         : exact;
@@ -1441,12 +1452,14 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     try {
       const source = sourceOf(args.source, extra, config);
       if (args.replaces !== undefined) await assertReplaceable(mapContext(), args.replaces, normalizeScope(args.scope));
+      const inferred = args.replaces === undefined ? await inferReplacesFor(args.text, args.scope, source ?? 'mcp') : undefined;
       const body = await engineRememberNote(config, args.text, args.date, source, args.scope, args.timezone);
       recordNoteSave(body.file, args.text, source, body.scope);
       usefulness.cited(args.cites);
-      const replaced = args.replaces !== undefined && body.id
+      const replaces = args.replaces ?? inferred;
+      const replaced = replaces !== undefined && body.id
         // The source the entry was written with (engineRememberNote's default when none), so the link names the same one.
-        ? await replacementReceipt(args.replaces, body.id, source ?? 'mcp')
+        ? await replacementReceipt(replaces, body.id, source ?? 'mcp', inferred !== undefined)
         : {};
       return jsonResult({ ...body, ...replaced, ...(await indexSavedNote(db, config, engine, digests, body.file)) });
     } catch (err) {
@@ -1500,11 +1513,31 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       ?? (process.env.RENOR_EVIDENCE_CACHE?.trim() || path.join(path.dirname(config.dbPath), 'evidence-cache.db')),
   });
   // The part of a save's receipt that says what `replaces` did: the link, or why none was made (a loop is never recorded).
-  const replacementReceipt = async (old: string, by: string, source?: string): Promise<Record<string, unknown>> => {
+  const replacementReceipt = async (old: string, by: string, source?: string, inferred = false): Promise<Record<string, unknown>> => {
     const record = await recordReplacement(mapContext(), old, by, source);
+    // An inferred link says so (RENOR_INFER_REPLACES); retire_memory on the save undoes it like any other. A loop is simply not linked.
+    if (record && inferred) return { replaced: { id: record.old, by: record.by }, replacesInferred: true };
+    if (!record && inferred) return {};
     return record
       ? { replaced: { id: record.old, by: record.by } }
       : { replacesIgnored: 'nothing was linked: this save is the memory it replaces, or is already replaced by it, and a replacement loop would hide both' };
+  };
+  // RENOR_INFER_REPLACES (default off): the earlier note in the same scope (any client; inferReplaced holds a different client to a stricter match) that this plain-words save
+  // reads as a correction of. Advisory: a failed lookup leaves the save unlinked, never failed.
+  const inferReplacesFor = async (text: string, scope: string | undefined, source: string | undefined): Promise<string | undefined> => {
+    if (!inferReplacesEnabled() || !readsAsCorrection(text)) return undefined;
+    try {
+      const normalized = normalizeScope(scope);
+      const terms = factQueryTerms(text);
+      if (terms.length === 0) return undefined;
+      const found = await findMemories(mapContext(), { query: text, terms, limit: 20, scope: normalized });
+      const already = await replacementIndex(mapContext());
+      const live = found.memories.filter(m => !already.replacedBy(m.id));
+      const hit = inferReplaced(text, normalized, source, live.map(m => ({ id: m.id, path: m.path, excerpt: m.excerpt, source: m.source, at: m.at })));
+      return hit?.id;
+    } catch {
+      return undefined;
+    }
   };
   const memoryIdSchema = z.string().min(1).max(1024).describe('A memory id (note:<path> or entry:<path>#<hash>) from memory_map; memory_map with a query finds one by its words without loading the whole map');
   // A fact is retired and restored by its event: retire_memory and restore_memory take `fact:<eventId>` too.
@@ -1756,7 +1789,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       if (!isDashboardCall(extra?.requestInfo?.headers, config)) {
         throw refusal('invalid_argument', 'delete_retired_memory is only available to the owner, from the Renor dashboard');
       }
-      return jsonResult(await purgeRetired({ ...mapContext(), source: 'dashboard' }, args.id, args.ids));
+      return jsonResult(await purgeRetired({ ...mapContext(), source: 'dashboard' }, args.id, args.ids, (links) => learner?.erased(links)));
     } catch (err) {
       return toolError(err);
     }
@@ -1905,14 +1938,15 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
   }, async (args, extra) => {
     try {
       const agent = hiveAgentOf(extra, 'whats_new', config);
-      return jsonResult(readWhatsNew(db, {
+      const feed = readWhatsNew(db, {
         agent,
         scope: args.scope,
         includeOwn: args.include_own === true,
         since: args.since,
         cursor: args.cursor,
         limit: args.limit ?? whatsNewPageFromEnv(),
-      }));
+      });
+      return jsonResult(workspaceIsEmpty(db) ? { ...feed, items: [{ kind: 'note', at: feed.as_of, source: 'renor', scope: null, summary: EMPTY_WORKSPACE_NOTE }, ...feed.items] } : feed);
     } catch (err) {
       return toolError(err);
     }
@@ -2130,8 +2164,20 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
         })
         : profile.descriptions
           ? tools.map((tool) => {
-            const own = typeof tool.name === 'string' ? profile.descriptions![tool.name] : undefined;
-            return own ? { ...tool, description: own } : tool;
+            const name = typeof tool.name === 'string' ? tool.name : '';
+            let own = profile.descriptions![name];
+            if (own && name === 'remember' && typeof tool.description === 'string') {
+              const at = tool.description.indexOf('Save something to memory:');
+              if (at > 0 && own.startsWith('Save something to memory:')) own = tool.description.slice(0, at) + own;
+            }
+            const args = profile.argDescriptions?.[name];
+            const schema = tool as { inputSchema?: { properties?: Record<string, { description?: string }> } };
+            const props = schema.inputSchema?.properties;
+            const inputSchema = args && props
+              ? { ...schema.inputSchema, properties: Object.fromEntries(Object.entries(props).map(([k, v]) => [k, args[k] ? { ...v, description: args[k] } : v])) }
+              : undefined;
+            if (!own && !inputSchema) return tool;
+            return { ...tool, ...(own ? { description: own } : {}), ...(inputSchema ? { inputSchema } : {}) };
           })
           : tools,
     };

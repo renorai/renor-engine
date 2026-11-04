@@ -49,6 +49,7 @@ for (const rel of ['dist/cli.js', 'dist/indexer/o200k.json', 'dist/BUILD.json'])
 const stage = join(outDir, 'package');
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(join(stage, 'dist'), { recursive: true });
+mkdirSync(join(stage, 'bin'), { recursive: true });
 
 const result = await esbuild.build({
   entryPoints: [join(engineRoot, 'dist', 'cli.js')],
@@ -67,6 +68,8 @@ const result = await esbuild.build({
 
 copyFileSync(join(engineRoot, 'dist', 'indexer', 'o200k.json'), join(stage, 'dist', 'o200k.json'));
 copyFileSync(join(engineRoot, 'dist', 'BUILD.json'), join(stage, 'dist', 'BUILD.json'));
+// The Node-version guard is the bin entry: plain old-syntax JS that checks the version, then loads dist/cli.js.
+copyFileSync(join(engineRoot, 'bin', 'renor-engine.cjs'), join(stage, 'bin', 'renor-engine.cjs'));
 // The private tree keeps the public README as README.public.md; the public export renames it README.md (oss/public-files.txt).
 copyFileSync(join(engineRoot, existsSync(join(engineRoot, 'README.public.md')) ? 'README.public.md' : 'README.md'), join(stage, 'README.md'));
 for (const file of ['LICENSE', 'NOTICE']) copyFileSync(join(engineRoot, file), join(stage, file));
@@ -98,8 +101,8 @@ const manifest = {
   version: source.version,
   description: source.description,
   main: 'dist/cli.js',
-  bin: { 'renor-engine': 'dist/cli.js' },
-  files: ['dist', 'README.md', 'LICENSE', 'NOTICE', 'THIRD-PARTY-NOTICES'],
+  bin: { 'renor-engine': 'bin/renor-engine.cjs' },
+  files: ['bin', 'dist', 'README.md', 'LICENSE', 'NOTICE', 'THIRD-PARTY-NOTICES'],
   keywords: source.keywords,
   homepage: source.homepage,
   repository: source.repository,

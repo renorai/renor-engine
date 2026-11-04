@@ -74,7 +74,7 @@ describe('the npm package', () => {
     expect(packed.name).toBe('renor-engine');
     expect(manifest.license).toBe('Apache-2.0');
     // `renor` is the setup CLI on npm; a second package claiming that command would collide on a global install.
-    expect(manifest.bin).toEqual({ 'renor-engine': 'dist/cli.js' });
+    expect(manifest.bin).toEqual({ 'renor-engine': 'bin/renor-engine.cjs' });
     expect(fs.readFileSync(path.join(unpacked, manifest.bin['renor-engine']), 'utf8').startsWith('#!/usr/bin/env node')).toBe(true);
   });
 
@@ -94,7 +94,7 @@ describe('the npm package', () => {
 
   it('packs the bundle, its data, the legal files and nothing else', () => {
     const files = packed.files.map(file => file.path).sort();
-    expect(files).toEqual(['LICENSE', 'NOTICE', 'README.md', 'THIRD-PARTY-NOTICES', 'dist/BUILD.json', 'dist/cli.js', 'dist/o200k.json', 'package.json']);
+    expect(files).toEqual(['LICENSE', 'NOTICE', 'README.md', 'THIRD-PARTY-NOTICES', 'bin/renor-engine.cjs', 'dist/BUILD.json', 'dist/cli.js', 'dist/o200k.json', 'package.json']);
   });
 
   it('carries no private path or key-shaped text', () => {

@@ -109,6 +109,8 @@ export interface FeedbackRecord {
   target: string;
   memoryKey: string | null;
   subjectKey: string | null;
+  /** False for a cite the engine inferred from the agent's own behaviour; default true (the agent named it). */
+  observed?: boolean;
 }
 
 export interface OutcomeRecord {
@@ -255,12 +257,22 @@ export class LearningLog {
     this.write(() => {
       this.db.prepare(
         `INSERT INTO feedback (at, actor, session_key, agent_key, tool, kind, target, memory_key, subject_key, observed)
-         VALUES (?, ?, ?, ?, ?, 'cite', ?, ?, ?, 1)`,
+         VALUES (?, ?, ?, ?, ?, 'cite', ?, ?, ?, ?)`,
       ).run(
         record.at ?? this.now(), record.actor, record.sessionKey, record.agentKey, record.tool, record.target,
-        record.memoryKey, record.subjectKey,
+        record.memoryKey, record.subjectKey, record.observed === false ? 0 : 1,
       );
     });
+  }
+
+  /** Whether a retrieval in this session served this memory or subject within `windowMs` of the log's clock. Keyed hashes only. */
+  servedWithin(sessionKey: string | null, memoryKey: string | null, subjectKey: string | null, windowMs: number): boolean {
+    if (sessionKey === null || (memoryKey === null && subjectKey === null)) return false;
+    const row = this.db.prepare(
+      `SELECT 1 FROM candidates c JOIN retrievals r ON r.id = c.retrieval_id
+       WHERE r.session_key = ? AND r.at >= ? AND c.rank IS NOT NULL AND (c.memory_key = ? OR c.subject_key = ?) LIMIT 1`,
+    ).get(sessionKey, this.now() - windowMs, memoryKey, subjectKey);
+    return row !== undefined;
   }
 
   /** An outcome of a task. `observed` follows from the basis: a proxy is inferred and is never observed. */

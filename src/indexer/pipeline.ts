@@ -128,10 +128,32 @@ export interface IndexOptions {
  */
 export const MAX_NOTE_BYTES = 8 * 1024 * 1024;
 
+/**
+ * The cap for a daily ledger (`.../Daily/YYYY-MM-DD.md`), which is a series of entries and is cut one chunk per entry
+ * (dailyEntries.ts), so its memory cost follows its entries and not a front matter. A busy day outgrows MAX_NOTE_BYTES,
+ * and a ledger left unindexed hides its newest memories; it is indexed up to this size, provided its front matter
+ * is small (the 28x cost above is the front matter's). Every other note keeps MAX_NOTE_BYTES.
+ */
+export const MAX_LEDGER_BYTES = 64 * 1024 * 1024;
+/** The front matter of a ledger over MAX_NOTE_BYTES may be at most this long; the engine's own header is under 200 bytes. */
+const MAX_LEDGER_FRONTMATTER_BYTES = 64 * 1024;
+
+/** The cap that applies to a file: a daily ledger's, else MAX_NOTE_BYTES. */
+export function noteByteCap(filePath: string): number {
+  return isDailyNotePath(filePath) ? MAX_LEDGER_BYTES : MAX_NOTE_BYTES;
+}
+
+/** The length of the front matter block at the top of `raw` (0 when there is none; the whole file when it never closes). */
+function frontmatterBytes(raw: Buffer): number {
+  if (!raw.subarray(0, 4).toString('latin1').startsWith('---')) return 0;
+  const close = raw.indexOf('\n---', 3);
+  return close === -1 ? raw.length : close;
+}
+
 /** A note over MAX_NOTE_BYTES. indexFile throws it before reading a byte; indexVault reports it instead of counting an error. */
 export class NoteTooLargeError extends Error {
-  constructor(readonly filePath: string, readonly bytes: number) {
-    super(`note is ${bytes} bytes; a note over ${MAX_NOTE_BYTES / (1024 * 1024)} MiB (${MAX_NOTE_BYTES} bytes) is not indexed. Split it or move it out of the memory folder.`);
+  constructor(readonly filePath: string, readonly bytes: number, readonly cap: number = MAX_NOTE_BYTES) {
+    super(`note is ${bytes} bytes; a note over ${cap / (1024 * 1024)} MiB (${cap} bytes) is not indexed. Split it or move it out of the memory folder.`);
     this.name = 'NoteTooLargeError';
   }
 }
@@ -825,11 +847,14 @@ async function indexFileUnlocked(
 ): Promise<void> {
   // 0. A note over the cap is not read (a read allocates the file, and parsing it a multiple of that)
   const { size } = await fs.stat(filePath);
-  if (size > MAX_NOTE_BYTES) throw new NoteTooLargeError(filePath, size);
+  const cap = noteByteCap(filePath);
+  if (size > cap) throw new NoteTooLargeError(filePath, size, cap);
 
   // 1. Read file content. Never through a symbolic link: the walker does not list one, and a caller that names one (the
   // watcher is told of a link to a file as the file) must not pull a file from outside the vault into recall.
   const raw = await readRegularFile(filePath);
+  // A ledger over the ordinary cap is indexed only if its front matter is small: that, not its entries, is what costs 28x.
+  if (size > MAX_NOTE_BYTES && frontmatterBytes(raw) > MAX_LEDGER_FRONTMATTER_BYTES) throw new NoteTooLargeError(filePath, size, MAX_NOTE_BYTES);
   // A note this process indexed that has only been appended to since is indexed by what was appended (see
   // indexAppend); anything else is read and indexed in full, below.
   const base = takeAppendBase(db, filePath);

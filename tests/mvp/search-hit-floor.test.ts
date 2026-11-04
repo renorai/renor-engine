@@ -405,10 +405,12 @@ it('keeps relevance.fact when the floor frees slots but does not backfill its un
   await call('save_memory', { subject: 'user', predicate: 'preferred_editor', object: 'Neovim' });
   await call('index_memory', {});
   let before: Body | undefined;
-  for (let i = 0; i < 50; i++) {
+  // The fact vector is embedded in the background; under a loaded gate that can take far longer than 500ms, so wait up
+  // to ~15s (Date.now is frozen here, hence a count rather than a deadline) instead of racing it.
+  for (let i = 0; i < 600; i++) {
     before = await search(call, { query: 'what is my favorite editor', top_k: 8, floorSetting: 0 });
     if (before.relevance?.fact) break;
-    await new Promise(resolve => setTimeout(resolve, 10));
+    await new Promise(resolve => setTimeout(resolve, 25));
   }
   expect(before!.relevance).toMatchObject({ relevant: true, fact: { subject: 'user', predicate: 'preferred_editor', object: 'Neovim' } });
   const after = await search(call, { query: 'what is my favorite editor', top_k: 8, floorSetting: 1 });

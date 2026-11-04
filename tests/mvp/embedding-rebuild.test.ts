@@ -365,7 +365,7 @@ describe('the service rebuilds a mixed or unknown index in the background and sa
     expect(status.embeddingRebuild).toEqual({ chunks: n, chunksLeft: n });
 
     const semantic = await client.callTool({ name: 'search_memory', arguments: { query: 'quokkaberry' } });
-    expect(parse(semantic)).toMatchObject({ ok: false, error: 'semantic-rebuilding', hits: [] });
+    expect(parse(semantic)).toMatchObject({ ok: true, fallback: 'keyword' });
     expect(parse(semantic).notice).toContain(`(${n} of ${n} chunks left)`);
     expect(parse(semantic).notice).toMatch(/Keyword search works meanwhile/);
 

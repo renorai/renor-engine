@@ -208,7 +208,8 @@ function checkObject(path: string, specs: Record<string, FieldSpec>, value: unkn
   const record = value as Record<string, unknown>;
   for (const name of Object.keys(record)) {
     if (skip.includes(name)) continue;
-    const spec = specs[name];
+    // Own properties only: `constructor`, `toString` or an own `__proto__` key must not be read off Object.prototype as a listed field.
+    const spec = Object.prototype.hasOwnProperty.call(specs, name) ? specs[name] : undefined;
     if (spec === undefined) throw new RowError(`${path}.${name} is not a listed field`);
     if (spec.level !== undefined && levelRank(spec.level) > levelRank(level)) {
       throw new RowError(`${path}.${name} is not shared at level ${level}`);

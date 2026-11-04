@@ -19,6 +19,12 @@ import { isSharingLevel, lowerLevel, type SharingLevel } from './fields';
 
 export const CONSENT_FILE = 'sharing.json';
 export const STATE_FILE = 'sharing-state.json';
+/**
+ * The deletion cutoff: when sharing's local state was last removed after a deletion, the time before which no row is ever sent again. It holds no
+ * secret and no row, and it outlives the state file (which holds the contributor's secret and is removed on deletion), so a new contributor
+ * created afterwards starts from it and only activity after the deletion is shared, never the history that was just deleted.
+ */
+export const CUTOFF_FILE = 'sharing-cutoff.json';
 /** The text of examples a `data` choice keeps until it is sent; it lives next to the two files. */
 export const EXAMPLES_FILE = 'sharing-examples.sqlite';
 
@@ -79,6 +85,12 @@ export interface SharingState {
    * that these belong together.
    */
   retiredSecrets?: string[];
+  /**
+   * Training bearers (trainingBearer of a retired install secret) whose removal is still owed: the owner switched text for training off or on and
+   * the secret rotated before the training contributor could be deleted (the endpoint was unreachable, or DO_NOT_TRACK=1 deferred it). Each is kept
+   * until the endpoint has been asked to delete it, independently of the new anonymous identity and of whether usage numbers were ever sent.
+   */
+  retiredTrainingBearers?: string[];
   /** A removal of the training contributor is owed (it could not be reached when it was asked for). */
   trainingDeletePending?: boolean;
   /** Training rows were sent at some time, so the endpoint may hold some for the training contributor. */
@@ -407,6 +419,9 @@ export function readState(dir: string): SharingState | null {
     ...(Array.isArray(raw.retiredSecrets) && raw.retiredSecrets.some(item => typeof item === 'string' && item.length >= 32)
       ? { retiredSecrets: raw.retiredSecrets.filter((item): item is string => typeof item === 'string' && item.length >= 32).slice(-50) }
       : {}),
+    ...(Array.isArray(raw.retiredTrainingBearers) && raw.retiredTrainingBearers.some(item => typeof item === 'string' && item.length >= 32)
+      ? { retiredTrainingBearers: raw.retiredTrainingBearers.filter((item): item is string => typeof item === 'string' && item.length >= 32).slice(-50) }
+      : {}),
     ...(raw.trainingEverSent === true ? { trainingEverSent: true } : {}),
     ...(raw.trainingDeletePending === true ? { trainingDeletePending: true } : {}),
     ...(typeof raw.token === 'string' && /^[A-Za-z0-9_-]{86}$/.test(raw.token) ? { token: raw.token } : {}),
@@ -439,21 +454,32 @@ export function trainingBearer(secret: string): string {
 export function rotateSecret(dir: string): SharingState {
   const state = ensureState(dir);
   const { trainingEverSent: _t, trainingDeletePending: _d, trainingWatermarks: _w, ...rest } = state;
+  // The training contributor is derived from the secret being retired, so a training deletion still owed (or rows ever sent to it) must keep its bearer.
+  const trainingOwed = state.trainingEverSent === true || state.trainingDeletePending === true;
+  const retiredTraining = [...new Set([...(state.retiredTrainingBearers ?? []), ...(trainingOwed ? [trainingBearer(state.secret)] : [])])].slice(-50);
   const next: SharingState = {
     ...rest,
     secret: randomBytes(32).toString('base64url'),
     retiredSecrets: [...(state.retiredSecrets ?? []), ...(state.everSent || state.deletePending ? [state.secret] : [])].slice(-50),
+    ...(retiredTraining.length > 0 ? { retiredTrainingBearers: retiredTraining } : {}),
     everSent: false,
   };
   writeState(dir, next);
   return next;
 }
 
-export function freshState(): SharingState {
+/** The deletion cutoff (ms) in the folder, or 0 when no deletion ever removed the state here. */
+export function readCutoff(dir: string): number {
+  const raw = readJson(path.join(dir, CUTOFF_FILE));
+  return isRecord(raw) && raw.version === 1 && typeof raw.at === 'number' && Number.isFinite(raw.at) && raw.at > 0 ? raw.at : 0;
+}
+
+/** A state for a new contributor. Its watermarks start at `cutoff` (the deletion cutoff), so history that was deleted is never sent again. */
+export function freshState(cutoff = 0): SharingState {
   return {
     version: 1,
     secret: randomBytes(32).toString('base64url'),
-    watermarks: { retrieval: 0, save: 0, session: 0 },
+    watermarks: { retrieval: cutoff, save: cutoff, session: cutoff },
     everSent: false,
     deletePending: false,
   };
@@ -467,13 +493,23 @@ export function writeState(dir: string, state: SharingState): void {
 export function ensureState(dir: string): SharingState {
   const existing = readState(dir);
   if (existing !== null) return existing;
-  const made = freshState();
+  const made = freshState(readCutoff(dir));
   writeState(dir, made);
   return made;
 }
 
-/** Removes the files sharing keeps (the record stays: it is the proof of what was chosen, and holds no row). */
-export function removeLocalSharingData(dir: string): void {
+/**
+ * Removes the files sharing keeps (the record stays: it is the proof of what was chosen, and holds no row). When a state existed, the deletion
+ * cutoff is written first (at least `now`, and at least every watermark the state had), so the next contributor never re-sends the deleted history.
+ */
+export function removeLocalSharingData(dir: string, now: number = Date.now()): void {
+  const state = readState(dir);
+  if (state !== null) {
+    const at = Math.max(
+      now, readCutoff(dir), ...Object.values(state.watermarks), ...Object.values(state.trainingWatermarks ?? {}),
+    );
+    writeJson(dir, CUTOFF_FILE, { version: 1, at });
+  }
   for (const name of [STATE_FILE, EXAMPLES_FILE, `${EXAMPLES_FILE}-wal`, `${EXAMPLES_FILE}-shm`]) {
     fs.rmSync(path.join(dir, name), { force: true });
   }

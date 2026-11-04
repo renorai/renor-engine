@@ -13,7 +13,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
 import { DEFAULT_LEDGER_REL, factsFor, remember, replayLedger, resolveLedgerPath } from '../../src/memory/lifecycle';
-import { writerConflictLines } from '../../src/memory/writerConflicts';
+import { writerConflictLine, writerConflictLines } from '../../src/memory/writerConflicts';
 import { withFactHits } from '../../src/mvp/factsLane';
 import { named, restoreEnv, startWorkspace, type Harness } from '../helpers/hiveHarness';
 
@@ -271,5 +271,29 @@ describe('the fact lane of search_memory', () => {
       db.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('RENOR_UPDATE_AS_HISTORY', () => {
+  const one = [{ writer: 'owner-agent', object: 'Lisbon', validFrom: '2026-10-01T00:00:00Z', byEvent: 'e2' }];
+  const two = [...one, { writer: 'third-bot', object: 'Oslo', validFrom: '2026-10-02T00:00:00Z', byEvent: 'e3' }];
+  const prev = process.env.RENOR_UPDATE_AS_HISTORY;
+  afterAll(() => { if (prev === undefined) delete process.env.RENOR_UPDATE_AS_HISTORY; else process.env.RENOR_UPDATE_AS_HISTORY = prev; });
+
+  it('is off by default: the CONFLICT line is unchanged', () => {
+    delete process.env.RENOR_UPDATE_AS_HISTORY;
+    expect(writerConflictLine(one)).toMatch(/^CONFLICT: "Lisbon" by owner-agent, 2026-10-01\. /);
+  });
+
+  it('on, an ordinary update by another agent reads as history, not CONFLICT', () => {
+    process.env.RENOR_UPDATE_AS_HISTORY = '1';
+    const line = writerConflictLine(one);
+    expect(line).toBe('replaced "Lisbon" (owner-agent, 2026-10-01); the value shown is current.');
+    expect(line).not.toContain('CONFLICT');
+  });
+
+  it('on, writers still in disagreement with two or more different writers stay a CONFLICT', () => {
+    process.env.RENOR_UPDATE_AS_HISTORY = '1';
+    expect(writerConflictLine(two)).toMatch(/^CONFLICT: /);
   });
 });

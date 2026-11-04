@@ -308,7 +308,7 @@ describe('finding 17: every tool renders its JSON the same way, on one line', ()
     expect((await check('retrieve_memory', { subject: 'mango stand' })).body.facts.length).toBe(2);
     expect((await check('get_context', { query: 'When does the mango stand close?' })).body.ok).toBe(true);
     expect((await check('search_text', { query: 'mango' })).body.ok).toBe(true);
-    expect((await check('search_memory', { query: 'mango' })).body.error).toBe('semantic-unavailable');
+    expect((await check('search_memory', { query: 'mango' })).body.fallback).toBe('keyword');
     expect((await check('lookup_entity', { name: 'mango' })).body.ok).toBe(true);
     expect((await check('search_history', { query: 'mango' })).body.configured).toBe(false);
     expect((await check('export_memory')).body.format).toBe('markdown');

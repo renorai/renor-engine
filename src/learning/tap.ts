@@ -6,6 +6,7 @@ import { RankingTrace, traceKey, type TraceEntry } from '../retrieval/rankingTra
 import { CANDIDATE_KINDS, RANKER_BASELINE, RETRIEVAL_TOOLS, SAVE_TOOLS, WRITE_TOOLS } from './schema';
 import type { SharingHook } from '../sharing/examples';
 import type { LearningSettings } from './settings';
+import type { ErasedLink } from '../memorymap/memoryMap';
 import { learningLogAt, type CandidateRecord, type LearningLog, type MemoryOpRecord } from './store';
 
 /**
@@ -29,6 +30,11 @@ export interface LearningObserver {
    * ranker's trace only when this is true, since nothing would be written with it. Read at each call, as `observe` reads it.
    */
   recordsNext(): boolean;
+  /**
+   * A permanent deletion's own account of what it removed (memoryMap.ts `ErasedLink`), read before the erase: the receipt names
+   * a note or entry only as `retired:<random>`, which no key can be derived from. Removes every link the log holds to them.
+   */
+  erased(links: readonly ErasedLink[]): void;
 }
 
 export interface ObserverContext {
@@ -113,6 +119,9 @@ function identityOf(log: LearningLog, id: string): Identity {
  * three forms readUsefulness.ts matches. A bare string with a path's shape is a note; any other bare string is a subject, and a
  * subject is keyed within the scope of the save that names it, as a fact's subject is.
  */
+/** How long after a retrieval a save about the same subject counts as an inferred use. */
+const INFERRED_CITE_WINDOW_MS = 30 * 60_000;
+
 function citeOf(log: LearningLog, cite: string, scope: string): { target: string; memoryKey: string | null; subjectKey: string | null } {
   const value = cite.trim();
   if (value === '') return { target: 'unkeyed', memoryKey: null, subjectKey: null };
@@ -306,16 +315,22 @@ function recordOp(log: LearningLog, base: CallBase, op: MemoryOpRecord['op'], ki
 
 /**
  * A fact save (save_memory, or remember with subject, predicate and object): the value of one subject, predicate and scope.
- * A supersede is recorded as the operation it is, with the value it replaces. It is not a use of any earlier read: the product's
- * usage signal counts it as one (readUsefulness.ts, `updated`), and this log does not.
+ * A supersede is recorded as the operation it is, with the value it replaces. When the save names no cites and this session was
+ * served that subject within the last 30 minutes, it is also recorded as an inferred cite (observed = 0): agents almost never
+ * send `cites`, and a save about what was just recalled is the engine's own evidence that the recall was used. The product's
+ * usage signal counts a supersede as a use too (readUsefulness.ts, `updated`).
  */
 function factSave(log: LearningLog, ctx: ObserverContext, base: CallBase, action: unknown, scope: unknown, subject: unknown, predicate: unknown,
-  object: unknown): void {
+  object: unknown, namedCites = false): void {
   if (typeof subject !== 'string' || typeof predicate !== 'string') return;
   if (action !== 'store' && action !== 'supersede') return; // nochange: nothing was written
   const normalized = normalizeScope(typeof scope === 'string' ? scope : undefined);
   const memoryKey = log.key('fact', normalized, norm(subject), norm(predicate));
   const subjectKey = log.key('subject', normalized, norm(subject));
+  if (!namedCites && log.servedWithin(base.sessionKey, memoryKey, subjectKey, INFERRED_CITE_WINDOW_MS)) {
+    log.recordFeedback({ actor: base.actor, sessionKey: base.sessionKey, agentKey: base.agentKey, tool: base.tool,
+      target: 'subject', memoryKey: null, subjectKey, observed: false });
+  }
   if (typeof object === 'string' && ctx.sharing && ctx.sharing.level() === 'data') ctx.sharing.memory(memoryKey, `${subject} ${predicate}: ${object}`);
   if (action === 'supersede') recordOp(log, base, 'supersede', 'fact', memoryKey, subjectKey, memoryKey);
   else recordOp(log, base, 'create', 'fact', memoryKey, subjectKey);
@@ -332,6 +347,7 @@ function noteSave(log: LearningLog, ctx: ObserverContext, base: CallBase, file: 
 }
 
 function recordWrite(log: LearningLog, ctx: ObserverContext, base: CallBase, args: Record<string, unknown>, body: Record<string, unknown>): void {
+  const hasCites = Array.isArray(args.cites) && args.cites.length > 0;
   if ((SAVE_TOOLS as readonly string[]).includes(base.tool) && Array.isArray(args.cites)) {
     const scope = normalizeScope(typeof args.scope === 'string' ? args.scope : undefined);
     for (const cite of args.cites.filter((value): value is string => typeof value === 'string').slice(0, MAX_CITES)) {
@@ -344,10 +360,10 @@ function recordWrite(log: LearningLog, ctx: ObserverContext, base: CallBase, arg
   }
   switch (base.tool) {
     case 'save_memory':
-      factSave(log, ctx, base, body.action, args.scope, args.subject, args.predicate, args.object);
+      factSave(log, ctx, base, body.action, args.scope, args.subject, args.predicate, args.object, hasCites);
       return;
     case 'remember':
-      if (body.mode === 'fact') factSave(log, ctx, base, body.action, args.scope, args.subject, args.predicate, args.object);
+      if (body.mode === 'fact') factSave(log, ctx, base, body.action, args.scope, args.subject, args.predicate, args.object, hasCites);
       else noteSave(log, ctx, base, body.file, args.replaces, args.statement);
       return;
     case 'remember_note':
@@ -420,6 +436,23 @@ export function learningObserver(settings: LearningSettings | undefined, ctx: Ob
   let held: LearningLog | null = settings.enabled ? learningLogAt(settings) : null;
   return {
     recordsNext: () => settings.enabled || (sharing !== undefined && sharing.level() !== 'off'),
+    erased: (links) => {
+      if (!settings.enabled && (sharing === undefined || sharing.level() === 'off')) return;
+      try {
+        held ??= learningLogAt(settings);
+        for (const link of links) {
+          if (link.kind === 'note') {
+            held.eraseMemory(held.key('note', link.path));
+          } else {
+            // A fact is keyed by what saves and retrievals name it by (scope, subject, predicate), and by its event for a read by id.
+            held.eraseMemory(held.key('fact', normalizeScope(link.scope), norm(link.subject), norm(link.predicate)));
+            held.eraseMemory(held.key('event', link.eventId));
+          }
+        }
+      } catch {
+        // Recording must never fail the call it describes.
+      }
+    },
     observe: (tool, args, result, ok, ms, extra, trace) => {
       // The sharing choice is read at each call: off records nothing and makes no file, anything above it records.
       if (!settings.enabled && (sharing === undefined || sharing.level() === 'off')) return;

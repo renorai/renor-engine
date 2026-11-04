@@ -31,7 +31,7 @@ Baixou um arquivo ZIP em vez de clonar o repositório? Como ele não contém o h
 
 ## Conecte seu agente
 
-**Sem clonar o repositório.** Com o Node.js 22 instalado, basta executar um comando para registrar o pacote publicado. Suas anotações serão armazenadas em uma pasta oculta chamada `.renor` no seu diretório pessoal (`~/.renor`), cujo caminho é exibido na saída de erro padrão durante a inicialização. O Renor nunca reutiliza uma pasta existente chamada `renor`. Para usar outra pasta, adicione `-e VAULT_PATH=/caminho/absoluto` ao comando do `claude` ou `--env VAULT_PATH=/caminho/absoluto` ao comando do `codex`. A primeira inicialização baixa cerca de 130 MB e leva aproximadamente 15 segundos. Se o agente indicar uma falha de conexão, reinicie-o.
+**Sem clonar o repositório.** Com o Node.js 22 instalado, basta executar um comando para registrar o pacote publicado. Suas anotações serão armazenadas em uma pasta oculta chamada `.renor` no seu diretório pessoal (`~/.renor`), cujo caminho é exibido na saída de erro padrão durante a inicialização. O Renor nunca reutiliza uma pasta existente chamada `renor`. Para usar outra pasta, adicione `-e VAULT_PATH=/caminho/absoluto` ao comando do `claude` ou `--env VAULT_PATH=/caminho/absoluto` ao comando do `codex`. A primeira inicialização baixa cerca de 12 MB e leva aproximadamente 3 segundos (medido com o cache do npm limpo). A busca é por palavra-chave por padrão; o modelo local opcional de busca por significado é um download único e separado, somente com `EMBEDDING_PROVIDER=local`. Se o agente indicar uma falha de conexão, reinicie-o.
 
 ```bash
 claude mcp add --scope user renor-local -- npx -y renor-engine mcp

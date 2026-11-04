@@ -72,8 +72,8 @@ describe('openMigratedDb', () => {
       for (let i = 0; i < 3; i++) dbIn(openMigratedDb);
       expect(new Set(copies.mock.calls.map((call) => String(call[0]))).size).toBe(1);
       expect(copies.mock.calls).toHaveLength(3);
-      // runMigrations logs a migration_applied line for each migration it runs, and there were none to run.
-      expect(logged.mock.calls.filter((call) => String(call[0]).includes('"event":"migration_applied"'))).toEqual([]);
+      // runMigrations logs one database_ready line when it applies any, and there were none to run.
+      expect(logged.mock.calls.filter((call) => String(call[0]).includes('"event":"database_ready"'))).toEqual([]);
     } finally {
       copies.mockRestore();
       logged.mockRestore();

@@ -33,13 +33,17 @@ function readme(name: string): string {
   return fs.readFileSync(path.join(ENGINE, name), 'utf8');
 }
 
-/** The commands of the first fenced block under "## Quickstart", without comments. */
+/**
+ * The commands of the first fenced block under "## Build from source" (the public page, whose Quickstart is the npx path),
+ * else under "## Quickstart" (the engine's own page), without comments.
+ */
 function quickstartCommands(name: string): string[] {
   const text = readme(name);
-  const at = text.search(/^## Quickstart\s*$/m);
-  expect(at, `${name} has no "## Quickstart" heading`).toBeGreaterThanOrEqual(0);
+  const fromSource = text.search(/^## Build from source\s*$/m);
+  const at = fromSource >= 0 ? fromSource : text.search(/^## Quickstart\s*$/m);
+  expect(at, `${name} has no "## Build from source" or "## Quickstart" heading`).toBeGreaterThanOrEqual(0);
   const fence = /```bash\n([\s\S]*?)```/.exec(text.slice(at));
-  expect(fence, `${name}: no bash block under "## Quickstart"`).not.toBeNull();
+  expect(fence, `${name}: no bash block under its build heading`).not.toBeNull();
   return fence![1].split('\n').map(line => line.replace(/\s+#.*$/, '').trim()).filter(line => line !== '' && !line.startsWith('#'));
 }
 

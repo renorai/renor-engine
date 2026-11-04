@@ -38,6 +38,8 @@ import { resolveSessionRouterOptions, routeSearch, summarizeForRouter, type Sess
 import { runTelemetry } from "./sharing/cli";
 import { DIGEST_HIT_PATH, attachDigest, digestIndexedNotes, resolveDigestOptions, type DigestOptions } from "./digests/digests";
 import { ENGINE_VERSION } from "./buildIdentity";
+import { engineStatus, statusLines, StatusError } from "./status.js";
+import { APPS, isApp, installRule, removeRule, mcpEntry, rulePath } from "./connect.js";
 
 /**
  * `serving`: the process is the long-running service (serve, mcp), the only one that may set an unterminated ledger tail
@@ -504,6 +506,48 @@ program
       process.stderr.write(`renor-engine mcp: ${(err as Error).message}\n`);
       process.exit(1);
     }
+  });
+
+program
+  .command("status")
+  .description("Show in a few lines whether the setup works: folder, notes, index, search, sharing. Makes no network call.")
+  .option("--json", "print the same fields as one JSON object")
+  .action(async (opts: { json?: boolean }) => {
+    try {
+      const status = await engineStatus(process.env);
+      if (opts.json) process.stdout.write(`${JSON.stringify(status)}\n`);
+      else statusLines(status).forEach((l) => process.stdout.write(`${l}\n`));
+    } catch (err) {
+      if (!(err instanceof StatusError)) throw err;
+      if (opts.json) process.stdout.write(`${JSON.stringify({ ok: false, error: err.message })}\n`);
+      process.stderr.write(`renor-engine status: ${err.message}\n`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("connect <app>")
+  .description(`Connect a local app to this engine: print its MCP entry and write the memory rule into its instructions file. Apps: ${APPS.join(", ")}`)
+  .option("--no-rule", "print the MCP entry only; do not touch the instructions file")
+  .option("--remove", "remove the memory rule block (by its markers) and nothing else")
+  .action((app: string, opts: { rule: boolean; remove?: boolean }) => {
+    if (!isApp(app)) {
+      process.stderr.write(`renor-engine connect: unknown app "${app}". Apps: ${APPS.join(", ")}\n`);
+      process.exit(1);
+    }
+    const cwd = process.cwd();
+    if (opts.remove) {
+      const r = removeRule(app, process.env, cwd);
+      process.stdout.write(`${r.state === "removed" ? "Removed the Renor memory rule from" : "No Renor memory rule in"} ${r.path}\n`);
+      return;
+    }
+    process.stdout.write(`Add this MCP server to ${app}:\n${JSON.stringify({ renor: mcpEntry() }, null, 2)}\n`);
+    if (!opts.rule) {
+      process.stdout.write(`Memory rule skipped (--no-rule). It would go in ${rulePath(app, process.env, cwd)}\n`);
+      return;
+    }
+    const r = installRule(app, process.env, cwd);
+    process.stdout.write(`Memory rule ${r.state}: ${r.path}\n`);
   });
 
 program

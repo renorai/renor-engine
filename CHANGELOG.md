@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 1.4.1 - 2026-11-03
+
+### Changed
+
+- `renor-engine connect <app>` writes the Renor memory rule into the app's instructions file (idempotent, `--no-rule` to opt out, removable by its markers), so agents save unprompted.
+
+## 1.4.0 - 2026-11-03
+
+### Added
+
+- Empty workspace: `get_context` and `whats_new` say what to save first.
+- `search_text` retries with a stemmed OR query when the exact phrase matches nothing (`RENOR_SEARCH_TEXT_FALLBACK`).
+- `search_memory` returns keyword hits instead of an empty reply when semantic search is unavailable.
+- The coding tool profile has shorter tool descriptions, with a size limit pinned by a test.
+- The project scope recorded by `renor connect` ranks first (`x-renor-scope`).
+- Opt-in, default off: `RENOR_INFER_REPLACES` (infer that a correction replaces a note), `RENOR_CONTEXT_NEWER_FIRST` (list the newer of two near-duplicate notes first), an ordinary update by another agent shown as history instead of CONFLICT.
+- A save about a subject just recalled infers a cite.
+- Self-host footprint and Bun-vs-Node-22 measurements, and published LongMemEval, LoCoMo and BEAM scores in the docs.
+
+### Changed
+
+- Daily ledgers over 8 MiB are indexed (up to 64 MiB) instead of skipped; a save says so when a note is over the cap.
+- Gateway: a missing or invalid connect token says how to fix it, failed `/mcp` token lookups are rate-limited per address before the control plane, and the client response ends when the engine closes early.
+- `renor-engine` prints a clear message when Node is older than 22.16, before any import.
+- First start prints one migrations summary line; the documented first-start size and time are corrected (about 12 MB, about 3 s).
+- The save hook offers each user line once, and complaints are no longer saved as rules.
+
 ### Changed
 
 - **Default flip (D1), decided by firstmate under the owner's autonomy rule, 2026-10-30:** `RENOR_READER_LAYOUT_SKIP_ADVICE` is now on by default. A search query that asks to be advised (a recommendation, a suggestion, tips, an opinion) keeps the page the layout-off reader gives. On the 30 LongMemEval-S preference questions (gpt-4o-mini reader, gpt-4o-2024-08-06 grader), two draws: 7/30 with the layout against 13/30 with it skipped (19 Oct, exact p 0.031), and 5/30 against 11/30 (30 Oct, p 0.070). Both are net +6 on the questions the rule catches. The committed record of the 30 Oct draw is `engine/docs/evals/results/best-set-20261019/records/draw2-20261030-skip-advice/`. Turn it off with `RENOR_READER_LAYOUT_SKIP_ADVICE=0`.

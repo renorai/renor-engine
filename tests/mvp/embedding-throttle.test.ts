@@ -134,7 +134,7 @@ describe('while the embedding service refuses (429)', () => {
 
     const search = await ws.timed('search_memory', { query: 'quarterly access review' });
     expect(search.ms).toBeLessThan(PROMPT_MS);
-    expect(search.body).toMatchObject({ ok: false, error: 'semantic-unavailable', hits: [] });
+    expect(search.body).toMatchObject({ ok: true, fallback: 'keyword' });
 
     // Nothing was lost: the saved text is found by its words now.
     const text = await ws.call('search_text', { query: 'quarterly access review' });

@@ -158,7 +158,7 @@ describe('fixed opt-in TOON for HTTP search_memory', () => {
   it('retains JSON refusals and does not attach structuredContent to them', async () => {
     const open = await workspace();
     const toon = await open('toon', true, false);
-    const reply = await toon.call('search_memory', { query: 'Orion' });
+    const reply = await toon.call('search_memory', { query: 'Zzyzxqq' }); // no keyword hit, so the refusal stands
     expect(reply.result.isError).toBe(true);
     expect(JSON.parse(reply.text).ok).toBe(false);
     expect(reply.result.structuredContent).toBeUndefined();
@@ -183,7 +183,7 @@ describe('fixed opt-in TOON for HTTP search_memory', () => {
     const json = await open();
     expect((await json.call('search_memory', { query: 'Orion' })).result.isError).not.toBe(true);
     const toon = await open('toon', true);
-    const reply = await toon.call('search_memory', { query: 'Orion' });
+    const reply = await toon.call('search_memory', { query: 'Zzyzxqq' }); // no keyword hit, so the refusal stands
     expect(reply.result.isError).toBe(true);
     expect(JSON.parse(reply.text)).toMatchObject({ ok: false, error: 'toon-encoding-unsupported' });
     expect(reply.text).not.toContain('\u{E0100}');

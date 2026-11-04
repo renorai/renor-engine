@@ -43,15 +43,15 @@ function copyHits(hits: KeywordHit[]): KeywordHit[] {
  * kept only when that stamp is still current: a write during the ranking is stored under neither stamp, and nothing is
  * kept inside a transaction. Callers may change the hits they are given, so both the kept page and a hit are copies.
  */
-export function keywordSearch(db: Database.Database, match: string, limit: number): KeywordHit[] {
+export function keywordSearch(db: Database.Database, match: string, limit: number, stem = false): KeywordHit[] {
   if (limit < 1) return [];
-  const key = `${limit}\0${match}`;
+  const key = `${keywordIndexTable(db, stem)}\0${limit}\0${match}`;
   const before = limit <= CACHED_PAGE_LIMIT ? databaseStamp(db) : null;
   if (before !== null) {
     const held = cachedPages.get(db)?.get(key);
     if (held && held.stamp === before) return copyHits(held.hits);
   }
-  const rows = rankKeywordHits(db, match, limit);
+  const rows = rankKeywordHits(db, match, limit, stem);
   if (before !== null && databaseStamp(db) === before) {
     let pages = cachedPages.get(db);
     if (!pages) cachedPages.set(db, pages = new Map());
@@ -61,15 +61,58 @@ export function keywordSearch(db: Database.Database, match: string, limit: numbe
   return rows;
 }
 
-function rankKeywordHits(db: Database.Database, match: string, limit: number): KeywordHit[] {
+
+/** RENOR_KEYWORD_STEM=1 searches a Porter-stemmed copy of the chunk index (log/logging/logger, test/tests). Default off. */
+function stemEnabled(): boolean {
+  return (process.env.RENOR_KEYWORD_STEM ?? '').trim() === '1';
+}
+
+const stemReady = new WeakSet<Database.Database>();
+
+/**
+ * The FTS table the keyword lane reads. Off (default): `chunks_fts`, untouched. On: `chunks_fts_stem`, an external-content
+ * FTS5 table over the same chunks with the `porter unicode61` tokenizer, created and filled once per workspace on first use
+ * (existing workspaces need no migration) and kept in sync by triggers. If it cannot be built (read-only database), the
+ * lane falls back to `chunks_fts`.
+ */
+export function keywordIndexTable(db: Database.Database, forceStem = false): string {
+  if (!forceStem && !stemEnabled()) return 'chunks_fts';
+  if (stemReady.has(db)) return 'chunks_fts_stem';
+  try {
+    const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts_stem'`).get();
+    if (!exists) {
+      db.transaction(() => {
+        db.prepare(`CREATE VIRTUAL TABLE chunks_fts_stem USING fts5(text, heading_path, note_path UNINDEXED, content='chunks', content_rowid='id', tokenize='porter unicode61')`).run();
+        db.prepare(`INSERT INTO chunks_fts_stem(chunks_fts_stem) VALUES ('rebuild')`).run();
+        db.prepare(`CREATE TRIGGER chunks_fts_stem_insert AFTER INSERT ON chunks BEGIN
+          INSERT INTO chunks_fts_stem(rowid, text, heading_path, note_path) VALUES (new.id, new.text, new.heading_path, new.note_path);
+        END`).run();
+        db.prepare(`CREATE TRIGGER chunks_fts_stem_delete AFTER DELETE ON chunks BEGIN
+          INSERT INTO chunks_fts_stem(chunks_fts_stem, rowid, text, heading_path, note_path) VALUES ('delete', old.id, old.text, old.heading_path, old.note_path);
+        END`).run();
+        db.prepare(`CREATE TRIGGER chunks_fts_stem_update AFTER UPDATE ON chunks BEGIN
+          INSERT INTO chunks_fts_stem(chunks_fts_stem, rowid, text, heading_path, note_path) VALUES ('delete', old.id, old.text, old.heading_path, old.note_path);
+          INSERT INTO chunks_fts_stem(rowid, text, heading_path, note_path) VALUES (new.id, new.text, new.heading_path, new.note_path);
+        END`).run();
+      })();
+    }
+    stemReady.add(db);
+    return 'chunks_fts_stem';
+  } catch {
+    return 'chunks_fts';
+  }
+}
+
+function rankKeywordHits(db: Database.Database, match: string, limit: number, stem = false): KeywordHit[] {
+  const fts = keywordIndexTable(db, stem);
   // The page is the `limit` best rows, read with one more ranked row that is not returned: its score (`next`) says whether
   // the page ends inside a tie. The ranking is read once, and the extra row costs no chunk text and no row of its own.
   const paged = prepareOnce(
     db,
     `WITH ranked AS MATERIALIZED (
-       SELECT rowid AS rid, bm25(chunks_fts) AS score
-       FROM chunks_fts
-       WHERE chunks_fts MATCH ?
+       SELECT rowid AS rid, bm25(${fts}) AS score
+       FROM ${fts}
+       WHERE ${fts} MATCH ?
        ORDER BY score
        LIMIT ?
      )
@@ -88,9 +131,9 @@ function rankKeywordHits(db: Database.Database, match: string, limit: number): K
       db,
       `${ROWS}
        FROM (
-         SELECT rowid, bm25(chunks_fts) AS score
-         FROM chunks_fts
-         WHERE chunks_fts MATCH ?
+         SELECT rowid, bm25(${fts}) AS score
+         FROM ${fts}
+         WHERE ${fts} MATCH ?
        ) f
        JOIN chunks c ON c.id = f.rowid
        WHERE f.score = ?`,

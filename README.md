@@ -1,131 +1,133 @@
-[Português (Brasil) → README.pt-BR.md](README.pt-BR.md)
+<div align="center">
 
-# Renor
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/renor-logo-light.svg">
+  <img alt="Renor" src="docs/assets/renor-logo-dark.svg" width="420">
+</picture>
 
-![Claude Code saves a decision to Renor; a fresh Codex session recalls it](docs/assets/renor-readme-demo.gif)\
-*Self-hosted Renor, real session: Claude Code saves a decision, a fresh Codex session recalls it. Waiting time sped up.*
+<h3>Shared memory for coding agents, over MCP.</h3>
 
-[![engine-public-ci](https://github.com/renorai/renor-engine/actions/workflows/engine-public-ci.yml/badge.svg?branch=main)](https://github.com/renorai/renor-engine/actions/workflows/engine-public-ci.yml)
+What one agent learns in a session, every agent knows in the next.
 
-**Renor is memory for coding agents: it keeps what you tell Claude Code, Codex or Cursor in a folder of Markdown files on your machine, and serves it back to any of them over MCP.**
+</div>
 
-Every new agent session starts from zero: you re-explain the project, last week's decision and why, the thing you corrected twice. With Renor, one agent saves it and the next one finds it. The memory is plain files you own. It runs locally, needs no account or API key, and sends nothing off your machine unless you configure a model or send anonymous usage numbers (on by default, with a first-run notice; `renor-engine telemetry off` or `DO_NOT_TRACK=1` turns them off). Your memory text is shared only if you say yes to that separately. A hosted version with no install is at <https://renor.cloud>.
+## How it works
+
+1. **Tell one agent once:** a decision, a root cause, a correction.
+2. **Renor saves it** as plain Markdown you own.
+3. **Every agent recalls it** in its next session: Claude Code, Codex, Cursor, Grok, Gemini, VS Code, OpenCode, Pi or any MCP client.
 
 ## Quickstart
 
-You need **Node 22** and git. The install is the only step that needs the network.
+Two ways in. Both take under a minute.
+
+### Hosted: the easiest path
 
 ```bash
-git clone https://github.com/renorai/renor-engine.git
-cd renor-engine
-node -v                    # v22.16 or newer
-npm ci && npm run build
-node scripts/smoke-self-hosted.mjs
+npx renor connect --client claude-code
 ```
 
-The last command starts the MCP server, saves one fact (`Ada favorite_color cerulean`), searches for it three ways and stops. It works in a temporary folder that it deletes afterwards, so it never touches your notes. It ends with:
+`--client` is `claude-code`, `codex`, `cursor`, `grok`, `gemini`, `vscode`, `opencode` or `pi`. One command adds Renor to that app, signs you in through the app's own flow (no token to copy), writes the memory rule below, and ends with a live check that your workspace answers. Search is hybrid (keywords and meaning). Sign up at [renor.cloud](https://renor.cloud).
 
-```text
-PASS: self-hosted stdio MCP can remember and retrieve a current fact.
-```
+### Self-hosted: the private path
 
-Downloaded a ZIP instead of cloning? It has no git history to stamp the build with, so build with `RENOR_BUILD_COMMIT=0000000 npm run build` instead. A wrong Node version or skipped install scripts: see [Troubleshooting](docs/self-hosting.md#troubleshooting).
-
-## Connect your agent
-
-**Without a clone.** With Node 22 installed, one line registers the published package. Your notes go to a hidden `.renor` folder in your home directory (`~/.renor`, printed on stderr at start; it never reuses an existing `renor` folder); to use another folder, add `-e VAULT_PATH=/absolute/path` to the `claude` line or `--env VAULT_PATH=/absolute/path` to the `codex` line. The first start downloads about 130 MB and takes about 15 seconds; if your agent shows one failed connection, restart it.
+Your memory stays in a folder on your machine. No account, no API key. You need Node.js 22.16 or later (22.16+ or 24+); on an older Node, `renor-engine` prints one line saying so and exits.
 
 ```bash
 claude mcp add --scope user renor-local -- npx -y renor-engine mcp
 codex mcp add renor-local -- npx -y renor-engine mcp
 ```
 
-For Cursor or any other client, the server is the command `npx` with the arguments `-y renor-engine mcp`. In Cursor or VS Code (GitHub Copilot), one click adds it:
+Restart the agent. The first start downloads about 12 MB, and the first Renor call works about 3 seconds after an empty start. Notes go to `~/.renor` (set `VAULT_PATH` to use another folder).
+
+**Then add [the memory rule](#the-memory-rule)** to the agent's instructions file, so it saves on its own.
+
+**Cursor or VS Code**, one click:
 
 [![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=renor-local&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInJlbm9yLWVuZ2luZSIsIm1jcCJdfQ%3D%3D)
 [![Add to VS Code](https://img.shields.io/badge/VS_Code-Add_renor--local-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=renor-local&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22renor-engine%22%2C%22mcp%22%5D%7D)
 
-`claude mcp remove renor-local` and `codex mcp remove renor-local` undo the two lines above. The rest of this section is the same thing from a clone, which also lets you change the code.
-
-**From a clone.**
-
-Pick a folder for your memory (a new, empty one is fine; an Obsidian vault works too) and index it. Run this, and the commands below, from the `renor-engine` directory in the same shell:
+**Grok.** Grok starts project servers only in a folder it trusts, so register Renor in the project:
 
 ```bash
-export VAULT_PATH="$HOME/renor-notes"    # absolute path; created if missing
-node dist/cli.js index
+grok mcp add --scope project renor -- npx -y renor-engine mcp
 ```
 
-Each command below starts Renor with the Node 22 you are using now (`node -p process.execPath`), so the agent does not need Node 22 on its own `PATH`. In a new terminal, run the `export` line again first: each command stops with `VAULT_PATH: run the export line above first` rather than register a server that cannot start (an agent shows that only as "Connection closed").
+Trust the folder in Grok, then restart Grok. To check it: ask Grok to save a real decision from your project, restart Grok, and ask about it in the new session. To turn telemetry off, set `DO_NOT_TRACK=1` in the environment Grok runs in. Paste [the memory rule](#the-memory-rule) into the project's `AGENTS.md`.
 
-**Claude Code**
+**Any other MCP client:** the command is `npx` with the arguments `-y renor-engine mcp` (stdio).
+
+**Check it works:**
 
 ```bash
-claude mcp add --scope user renor-local -e VAULT_PATH="${VAULT_PATH:?run the export line above first}" -- "$(node -p process.execPath)" "$PWD/dist/cli.js" mcp
+npx renor-engine status
 ```
 
-Restart Claude Code; `/mcp` lists `renor-local` in every project. `claude mcp remove renor-local` undoes it.
+Then tell your agent a real decision ("remember that the orders service uses Postgres 16"), start a new session, and ask about it.
 
-**Codex**
+Running it on a server or with Docker: [docs/self-hosting.md](docs/self-hosting.md).
+
+Several agents on one memory: start each with its own `RENOR_CONNECTION_NAME` and they get the multi-agent ("hive") tools ([details](docs/self-hosting.md)).
+
+## The memory rule
+
+Five lines that make agents save decisions, corrections and facts on their own. In our Grok test (grok-4.7, renor-engine 1.4.0, 3 Nov 2026), agents with the rule saved in 8 of 8 sessions and the next session recalled 5 of 5 project facts.
+
+`renor connect` writes it for you. Self-hosted, paste it into `~/.claude/CLAUDE.md` (Claude Code), `~/.codex/AGENTS.md` (Codex) or the project's `AGENTS.md` (Grok):
+
+```md
+## Renor memory
+
+Renor is connected to this app and remembers across sessions.
+- Before deciding anything non-trivial, recall first: one get_context call is usually enough.
+- Save with remember when the user makes a decision, corrects you, or states a fact that should outlive this chat. Include the reason.
+- Save the specific value (a port, a name, a path), not a summary of it.
+- Do not save secrets, or things that are already in the code.
+```
+
+Self-hosted, the local tools are `search`, `remember_fact` and `note`; agents map the rule onto them ([tool list](skill/SKILL.md#stdio-renor-engine-mcp)).
+
+## What runs on your machine
+
+- **Your memory is plain Markdown** in one folder you own. Edit it with anything; back it up like any folder.
+- **SQLite** holds the search index, next to the notes. It is rebuilt from the Markdown at any time.
+- **No embedding model needed.** Search is by keyword; when the exact words miss, it retries with word stems. Hybrid search (keywords and meaning) is the hosted default; self-hosters can opt in to OpenAI or a local model ([details](docs/self-hosting.md#embeddings)).
+- **Small:** a 1.8 MB package, about 5 MB installed. About 143 MB of memory with 1,000 saved memories.
+- **Telemetry:** anonymous usage numbers (never text, names or paths) are on by default, with a notice on first run. `renor-engine telemetry off` or `DO_NOT_TRACK=1` turns them off. Your memory text is never shared unless you say yes to that separately. Every field: [docs/TELEMETRY.md](docs/TELEMETRY.md).
+
+## Benchmarks
+
+| Benchmark | Renor | Setup |
+| --- | --- | --- |
+| LongMemEval-S | **98.4%** (492/500) | Deep search, off by default |
+| LongMemEval-S | **94.4%** (472/500) | Default settings |
+| LoCoMo (categories 1 to 4) | **96.7%** (1,489/1,540) | Deep search |
+| BEAM 128K / 1M / 10M | **76.2 / 74.7 / 60.2** | Deep search, score out of 100 |
+| ConvoMem | **88.4%** (191/216) | Default search, 100 conversations per memory |
+
+Claude Opus 5.5 answers LongMemEval, LoCoMo and BEAM; DeepSeek V4.1 Flash answers ConvoMem (a research run). One run each, Oct 2026. Deep search is top-K 50 with a 4,000-token budget (`RENOR_TOPK_SCALES_BUDGET=1`). Judges and methods for every run: [renor.cloud/research](https://renor.cloud/research).
+
+## Build from source
+
+You need Node.js 22.16 or later and git.
 
 ```bash
-codex mcp add renor-local --env VAULT_PATH="${VAULT_PATH:?run the export line above first}" -- "$(node -p process.execPath)" "$PWD/dist/cli.js" mcp
+git clone https://github.com/renorai/renor-engine.git
+cd renor-engine
+npm ci && npm run build
+node scripts/smoke-self-hosted.mjs
 ```
 
-Restart Codex; `codex mcp list` shows it. `codex mcp remove renor-local` undoes it.
+The last command starts the MCP server in a temporary folder, saves one fact, finds it again and ends with `PASS: self-hosted stdio MCP can remember and retrieve a current fact.` It never touches your notes. Downloaded a ZIP instead of cloning? Build with `RENOR_BUILD_COMMIT=0000000 npm run build`. Connecting a local build to each agent: [docs/self-hosting.md](docs/self-hosting.md).
 
-**Cursor**
+## Learn more
 
-Cursor reads MCP servers from `~/.cursor/mcp.json` (every project) or `.cursor/mcp.json` (one project). This prints the entry:
+[Docs](https://renor.mintlify.app) · [Self-hosting, servers and Docker](docs/self-hosting.md) · [Every setting](docs/ENVIRONMENT-VARIABLES.md) · [Telemetry](docs/TELEMETRY.md)
 
-```bash
-VAULT_PATH="${VAULT_PATH:?run the export line above first}" node -e 'console.log(JSON.stringify({ mcpServers: { "renor-local": { command: process.execPath,
-  args: [process.cwd() + "/dist/cli.js", "mcp"], env: { VAULT_PATH: process.env.VAULT_PATH } } } }, null, 2))'
-```
+## License and contributing
 
-Put it in that file, or merge the `renor-local` entry into an existing `mcpServers`, then check that `renor-local` is enabled in Cursor's MCP settings. (The `cursor-plugin/` folder of this repository is the Cursor plugin for the hosted service at renor.cloud, which needs a Renor account; it does not connect to this engine.)
+The engine is **Apache-2.0** ([LICENSE](LICENSE)); 1.0.0 was released under AGPL-3.0; 1.1.0 and later are Apache-2.0; files imported from the upstream project stay ISC ([NOTICE](NOTICE), [UPSTREAM.md](UPSTREAM.md)). The `renor` CLI, the SDKs and the integrations are MIT.
 
-**Any other MCP client:** the command is `node dist/cli.js mcp` (stdio) with `VAULT_PATH` set.
-
-Then ask your agent to remember something, and ask about it in a new session. What an agent saves is searchable at once. A Markdown file you add or edit by hand is searchable after you run `node dist/cli.js index` again.
-
-## Run it on a server
-
-One container serves your memory over HTTP to every agent, from any machine, with OAuth sign-in for you alone. It needs no model or key; the memory stays on a volume you own.
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/renorai/renor-engine)
-
-```bash
-docker build -t renor-engine https://github.com/renorai/renor-engine.git
-docker run -d --name renor -p 127.0.0.1:3471:3471 -v renor-data:/data \
-  -e MVP_OWNER_EMAIL=you@example.com -e MVP_OWNER_PASSWORD="$(openssl rand -base64 18)" \
-  -e MVP_ALLOWED_CALLBACK_URIS=http://localhost:39472/callback renor-engine
-claude mcp add --transport http --scope user --callback-port 39472 renor http://localhost:3471/mcp
-```
-
-Sign in from `/mcp` in Claude Code with that email and password (`docker exec renor printenv MVP_OWNER_PASSWORD`). Railway (`railway.toml`) and Fly.io (`fly.toml`) work the same way; [Docker and one-click hosts](docs/self-hosting.md#docker-and-one-click-hosts) has the steps for each.
-
-## What is stored where
-
-| What | Where |
-| --- | --- |
-| Your notes | Any Markdown files in `$VAULT_PATH`. Renor reads them; edit them with anything. |
-| What agents save | Appended as Markdown in the same folder: facts to `System/Memory Events Ledger.md`, notes to `Memory/Daily/<date>.md`. |
-| Search index | SQLite at `$VAULT_PATH/.semantic-memory/index.db`. Derived: `node dist/cli.js index` rebuilds it from the Markdown. |
-
-Everything Renor keeps is in that one folder, so back it up, sync it or move it like any other folder. Nothing leaves your machine unless you set a model key: `EMBEDDING_PROVIDER=openai` sends your notes' text to OpenAI to embed it, and `RENOR_EVIDENCE_MODE=auto` or `always` with an evidence-model key (`RENOR_EVIDENCE_API_KEY` or an `OLLAMA_*` key) makes search send the notes it matched to that model. The evidence pass is off unless `RENOR_EVIDENCE_MODE` is set, so a key alone sends nothing. Every setting and its default: [docs/ENVIRONMENT-VARIABLES.md](docs/ENVIRONMENT-VARIABLES.md).
-
-**Search without embeddings.** With nothing set, Renor uses no embedding model, so a note is found by its exact words: `blue notebook` finds "The blue notebook is on the desk", but `where is my notebook?` does not. Saved facts are found either way. For search by meaning, set `EMBEDDING_PROVIDER=openai` with `OPENAI_API_KEY`, or `local` to download a model once and run it on this machine, then run `node dist/cli.js rebuild` so existing notes are embedded ([details](docs/self-hosting.md#embeddings)).
-
-## More
-
-- [docs/self-hosting.md](docs/self-hosting.md): troubleshooting, embeddings, the HTTP server with OAuth sign-in, connecting agents over HTTP, the tool lists, owner names, multi-agent ("hive") tools (set `RENOR_CONNECTION_NAME` per agent), and how the vault is protected.
-- [skill/SKILL.md](skill/SKILL.md): instructions to give your agent so it recalls and saves memory without being asked. Most of it names the hosted tools (`get_context`, `remember`); the `renor-local` server above has other names (`search`, `remember_fact`, `note`), listed in its [Stdio section](skill/SKILL.md#stdio-renor-engine-mcp).
-
-Renor is a single-owner engine: one person's notes, one set of agents. It is not a multi-user product.
-
-## Contributing, license, security
-
-Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup and tests and lists good first issues. Renor's own code is **Apache-2.0** ([LICENSE](LICENSE)); 1.0.0 was released under AGPL-3.0; 1.1.0 and later are Apache-2.0; files imported from the upstream project stay ISC ([NOTICE](NOTICE), [UPSTREAM.md](UPSTREAM.md)). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
+Contributions are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) has setup, tests and good first issues. Sign off each commit with the [DCO](https://developercertificate.org/) (`git commit -s`); there is no CLA. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 If Renor saves you re-explaining, a [⭐](https://github.com/renorai/renor-engine) helps other developers find it.

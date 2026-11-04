@@ -80,11 +80,26 @@ export function hasOpenDisplacementBy(db: Database.Database, eventId: string, wr
   return writerOf(db, eventId, null).displaced.some(d => d.writer === writer);
 }
 
+/** RENOR_UPDATE_AS_HISTORY=1 (or on/true): an ordinary update by another agent reads as history, not CONFLICT. Off by default. */
+export const updateAsHistory = (): boolean => /^(1|on|true|yes)$/i.test(process.env.RENOR_UPDATE_AS_HISTORY?.trim() ?? '');
+
+/**
+ * A genuine conflict: values saved by two or more different writers are still open against the current one, so the
+ * writers disagree with each other and not just with an earlier value of their own. A single replaced value is an update.
+ */
+export function isSimultaneousDisagreement(open: OpenDisplacement[]): boolean {
+  return new Set(open.map(d => d.writer)).size > 1;
+}
+
 /**
  * One line a read shows beside a current value that replaced another writer's value: the values it displaced, each with
  * its writer and date, and what clears them. Plain words, so an agent reads it as it reads the rest of the reply.
  */
 export function writerConflictLine(open: OpenDisplacement[]): string {
+  if (updateAsHistory() && !isSimultaneousDisagreement(open)) {
+    const replaced = open.map(d => `replaced ${JSON.stringify(d.object)} (${d.writer}, ${d.validFrom.slice(0, 10)})`).join('; ');
+    return `${replaced}; the value shown is current.`;
+  }
   const values = open.map(d => `${JSON.stringify(d.object)} by ${d.writer}, ${d.validFrom.slice(0, 10)}`).join('; ');
   return `CONFLICT: ${values}. Replaced by a different writer; it stays a conflict until that writer saves this subject and predicate again.`;
 }
