@@ -93,19 +93,23 @@ describe('poolFetch', () => {
   });
 
   it('is plain fetch where the global dispatcher is not the plain pool it knows how to build', async () => {
-    const registered = Symbol.for('undici.globalDispatcher.1');
-    const saved = (globalThis as unknown as Record<symbol, unknown>)[registered];
+    const registered = [Symbol.for('undici.globalDispatcher.1'), Symbol.for('undici.globalDispatcher.2')];
+    const globals = globalThis as unknown as Record<symbol, unknown>;
+    const saved = registered.map(symbol => [symbol, Object.getOwnPropertyDescriptor(globals, symbol)] as const);
     const seen: Array<RequestInit & { dispatcher?: unknown }> = [];
     try {
-      class Wrapper {} // what Node 26 registers: a wrapper around its dispatcher, not the pool
-      (globalThis as unknown as Record<symbol, unknown>)[registered] = new Wrapper();
+      class Wrapper {} // a wrapper around the dispatcher (what Node 26 registers under `.1`), not the pool
+      for (const symbol of registered) globals[symbol] = new Wrapper();
       const request = poolFetch();
       vi.stubGlobal('fetch', async (_input: string, init: RequestInit & { dispatcher?: unknown }) => { seen.push(init); return new Response('plain'); });
       expect(await (await request('http://example.invalid/y', { method: 'GET' })).text()).toBe('plain');
       expect(seen).toHaveLength(1);
       expect('dispatcher' in seen[0]).toBe(false);
     } finally {
-      (globalThis as unknown as Record<symbol, unknown>)[registered] = saved;
+      for (const [symbol, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(globals, symbol, descriptor);
+        else delete globals[symbol];
+      }
     }
   });
 

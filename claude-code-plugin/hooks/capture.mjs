@@ -13,6 +13,12 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const SAVE_TOOL = /(?:^|__)(remember|save_memory|remember_note)$/;
 const COMMAND = /<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|bash-input|bash-stdout|bash-stderr)>/i;
+/** An ISO-8601 timestamp string normalised to UTC, or the current time when the value is missing, not ISO-8601 or out of range. */
+function isoOrNow(v) {
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) { const d = new Date(v); if (Number.isFinite(d.getTime())) return d.toISOString() }
+  return new Date().toISOString()
+}
+
 /**
  * The offer the Stop hook appends after a turn. It is a fixed, optional request: it quotes no transcript text, copies no
  * instruction from the conversation, and only ever adds a note with `remember`, which appends (it never replaces a fact).
@@ -72,7 +78,7 @@ export function buildDelta(entries, scan = scanner()) {
     if (scan(text)) { redactions++; continue; }
     const room = 12000 - chars; if (room <= 0) break;
     text = text.slice(0, room); chars += text.length;
-    messages.push({ role, text, at: typeof e.timestamp === 'string' ? e.timestamp : null });
+    messages.push({ role, text, at: isoOrNow(e.timestamp) });
   }
   return { messages, delta_chars: chars, redactions, secrets: redactions > 0 };
 }

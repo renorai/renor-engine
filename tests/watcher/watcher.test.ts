@@ -43,11 +43,11 @@ describe('startWatcher', () => {
     db.close();
   });
 
-  it('watches correct glob pattern', () => {
+  it('watches the vault directory', () => {
     const db = openDb(DB); runMigrations(db);
     startWatcher('/vault', db, {});
     expect(chokidar.watch).toHaveBeenCalledWith(
-      expect.stringContaining('**/*.md'),
+      '/vault',
       expect.objectContaining({ persistent: true, ignoreInitial: true })
     );
     db.close();

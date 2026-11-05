@@ -169,8 +169,17 @@ function decodeStatement(raw: string, id: string): string {
 
 function newEventId(): string {
   const t = Date.now().toString(36);
-  const r = Math.random().toString(36).slice(2, 8);
+  // Same visible format as before (committed byte-identity baselines stub Math.random); only a short draw is padded to the fixed 6 characters.
+  const r = Math.random().toString(36).slice(2, 8).padEnd(6, '0');
   return `mem_${t}${r}`.toUpperCase();
+}
+
+/** A new event id that is not already in applied_ledger_events; regenerates (up to 3 times) if it is taken. */
+export function freshEventId(db: Database.Database, generate: () => string = newEventId): string {
+  const taken = (id: string) => prepareOnce(db, 'SELECT 1 FROM applied_ledger_events WHERE event_id = ?').get(id) !== undefined;
+  let id = generate();
+  for (let attempt = 0; attempt < 3 && taken(id); attempt++) id = generate();
+  return id;
 }
 
 /**
@@ -1800,7 +1809,7 @@ async function rememberCritical(db: Database.Database, vaultPath: string, ledger
     throw new Error(`lifecycle write rejected without publishing: event time ${at} is older than the current fact (valid_from ${wait.valid_from}, fact id ${wait.id}) for the same subject+predicate. Writes are accepted again once the clock reaches ${wait.valid_from}. The ledger was not modified`);
   }
 
-  const id = newEventId();
+  const id = freshEventId(db);
   const kind = named ? 'supersede' : 'store';
   const ev: LedgerEvent = {
     id, at, kind,
@@ -1816,9 +1825,12 @@ async function rememberCritical(db: Database.Database, vaultPath: string, ledger
   // so it either fully lands or leaves no partial supersession behind.
   const ledger = await appendLedgerEvent(vaultPath, ledgerRelPath, ev);
   const { factId } = applyEvent(db, ev);
+  // The receipt names only live values. `named` may be a retired value (it is closed, and the event must name it), but a
+  // value the user took out of recall never comes back in an answer.
+  const closedLive = across ?? own;
   return {
     ok: true, eventId: id, action: kind, subject: args.subject, predicate: args.predicate,
-    closed: named ? { factId: named.id, object: named.object_text, validTo: at } : null,
+    closed: closedLive ? { factId: closedLive.id, object: closedLive.object_text, validTo: at } : null,
     ...(across && own ? { alsoClosed: { factId: own.id, object: own.object_text, validTo: at } } : {}),
     created: { factId, object: args.object, validFrom: at }, ledger,
   };
@@ -2008,7 +2020,7 @@ export async function retireFact(db: Database.Database, vaultPath: string, ledge
     // A startup replay moves every lifecycle fact onto its lifecycle subject, so this only refuses a fact that has not been.
     if (row.source_note !== LIFECYCLE_NOTE_PATH) throw new Error(`fact ${target} is not attached to its lifecycle subject yet; restart the engine to replay the ledger first`);
     const ev: LedgerEvent = {
-      id: newEventId(), at: new Date().toISOString(), kind: 'retire',
+      id: freshEventId(db), at: new Date().toISOString(), kind: 'retire',
       subject: row.subject, predicate: row.predicate, object: '', closedEvent: null,
       source: (source === undefined ? '' : savedSource(source)) || 'agent', scope: row.scope, target,
     };
@@ -2021,11 +2033,12 @@ export async function retireFact(db: Database.Database, vaultPath: string, ledge
 /**
  * Brings a retired fact back exactly as it was: the same row, value and dates. It is the current value again unless a
  * value saved for the same subject, predicate and scope after it replaced it, as that save would have replaced it had it
- * never been retired; it is then history. RENOR_SECRET_GUARD (default ON) screens it as a save.
+ * never been retired; it is then history. RENOR_SECRET_GUARD (default ON) screens it as a save. `checkStorage` is the
+ * storage limit, asked before anything is written with the bytes the ledger would grow by: it throws to refuse.
  */
 export async function restoreFact(
   db: Database.Database, vaultPath: string, ledgerRelPath: string, id: string, source?: string,
-  validateAfterWrite?: () => void | Promise<void>,
+  checkStorage?: (addedBytes: number) => void | Promise<void>,
 ): Promise<FactRetirementReceipt> {
   return serializeLifecycleWrite(async () => {
     const target = factEventId(id);
@@ -2043,26 +2056,35 @@ export async function restoreFact(
     }
     if (secretGuardEnabled()) await refuseSecrets({ subject: row.subject, predicate: row.predicate, object: row.object_text });
     const ev: LedgerEvent = {
-      id: newEventId(), at: new Date().toISOString(), kind: 'restore',
+      id: freshEventId(db), at: new Date().toISOString(), kind: 'restore',
       subject: row.subject, predicate: row.predicate, object: '', closedEvent: null,
       source: (source === undefined ? '' : savedSource(source)) || 'agent', scope: row.scope, target,
     };
-    const ledgerPath = resolveLedgerPath(vaultPath, ledgerRelPath);
-    const priorBytes = await fs.stat(ledgerPath).then((stat) => stat.size, () => 0);
+    // Everything that can refuse the restore runs before its event is written, so a refusal leaves no event to undo: the
+    // storage check is told the event's size (it is the bytes the ledger would grow by), and the projection is tried in a
+    // transaction that is rolled back. Nothing is held across the await: a savepoint held open there took in, and on a
+    // refusal rolled back, whatever another request wrote on the same connection meanwhile.
+    await checkStorage?.(Buffer.byteLength(ledgerEventBlock(ev), 'utf8'));
+    assertApplies(db, ev);
     await appendLedgerEvent(vaultPath, ledgerRelPath, ev);
-    db.exec('SAVEPOINT restore_storage_limit');
-    try {
-      applyEvent(db, ev);
-      await validateAfterWrite?.();
-      db.exec('RELEASE SAVEPOINT restore_storage_limit');
-    } catch (err) {
-      db.exec('ROLLBACK TO SAVEPOINT restore_storage_limit; RELEASE SAVEPOINT restore_storage_limit');
-      await fs.truncate(ledgerPath, priorBytes);
-      throw err;
-    }
+    applyEvent(db, ev);
     const back = prepareOnce(db, 'SELECT valid_to FROM facts WHERE event_id = ?').get(target) as { valid_to: string | null };
     return { ok: true, id: `fact:${target}`, action: 'restored', title: factTitle(row.subject, row.predicate, row.object_text), at: ev.at, eventId: ev.id, current: back.valid_to === null };
   });
+}
+
+const DRY_RUN = Symbol('dry run');
+
+/** Throws what applying `ev` to the index would throw, and changes nothing: the projection is rolled back either way. */
+function assertApplies(db: Database.Database, ev: LedgerEvent): void {
+  try {
+    db.transaction(() => {
+      applyEvent(db, ev);
+      throw DRY_RUN;
+    })();
+  } catch (err) {
+    if (err !== DRY_RUN) throw err;
+  }
 }
 
 /** A retired fact as memory_map lists it: its value, and when and by whom it was retired. */

@@ -27,7 +27,7 @@ import { escapeInvisibleControls } from '../mvp/sanitize';
 import { matchingCurrentFactHits } from '../retrieval/factsFirst';
 import { HANDOFF_ARG_DESCRIPTIONS, HANDOFF_TOOL_DESCRIPTION, HANDOFF_TOOL_NAME, handoffNoteEnabled, runHandoffTool, startHandoffSweep } from '../memory/handoff';
 import { ENGINE_VERSION } from '../buildIdentity';
-import { z } from 'zod';
+import * as z from 'zod';
 import { OUT_ASK_AGENT, OUT_HANDOFF, OUT_HIT, OUT_LIST_REQUESTS, OUT_REQUEST, OUT_WHATS_NEW, toolCarriesStructured } from '../mvp/outputSchemas';
 
 export function createMcpTools(

@@ -4,6 +4,7 @@ import { encodeTokens } from '../indexer/tokenizer';
 import { escapeInvisibleControls } from './sanitize';
 import { labelMemoryText } from './hiddenSpans';
 import { currentRankingTrace } from '../retrieval/rankingTrace';
+import { keywordDefaultsOff } from '../retrieval/keyword';
 import { engineSearchMemory, engineSearchText, type Engine } from './engine';
 import { leadingSummaryHits } from '../digests/digests';
 import { normalizeScope, savedScopeMatches } from './scope';
@@ -48,6 +49,7 @@ import { buildDatedOutline, replyCeiling, datedOutlineBudget, datedOutlineEnable
 import { turnScorer, vectorsMeanSomething } from '../retrieval/readerEvents';
 import { ruleApprovalsEnabled } from './ruleApprovals';
 import { ownScopeFirstFacts, ownScopeFirstMemories, ownScopeSlug } from './ownScopeFirst';
+import { observeEnabled } from './observations';
 
 export interface AgentContextOptions {
   query?: string;
@@ -97,6 +99,7 @@ export interface AgentContextMemory {
   text: string;
   score?: number;
   reason: string;
+  source?: string;
   session_date?: string;
   /**
    * Present only on a memory a later correction replaced (remember `replaces`): `by` is the correction's memory id, `at`
@@ -407,12 +410,12 @@ const objectIs = (shown: string, value: string): boolean =>
   shown === value || (shown.includes('…') && value.startsWith(shown.split('…')[0]));
 
 /**
- * H11b (RENOR_KEYWORD_OR_ALL=1, default off): the keyword lane issues one FTS expression, the question's content words joined
- * by OR (BM25 ranks rare words highest), instead of the variants. Unset, nothing changes. Pre-registered in
+ * H11b (default on; RENOR_KEYWORD_OR_ALL=0 restores the legacy path): the keyword lane issues one FTS expression, the
+ * question's content words joined by OR (BM25 ranks rare words highest), instead of the variants. Pre-registered in
  * data/renor-goal-better-temporal-2/prereg/H11b-H18-H12.md.
  */
 export function keywordOrAll(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.RENOR_KEYWORD_OR_ALL ?? '').trim() === '1';
+  return !keywordDefaultsOff(env) && (env.RENOR_KEYWORD_OR_ALL ?? '').trim() !== '0';
 }
 
 /** The FTS expression of H11b: each content word quoted, joined by OR. */
@@ -421,9 +424,9 @@ export function keywordOrMatch(query: string): string {
   return terms.map(term => `"${term.replace(/"/g, '""')}"`).join(' OR ');
 }
 
-/** H12 (RENOR_SEARCH_TEXT_FALLBACK=1, default off): search_text falls back to an OR over the words when the exact phrase is empty. */
+/** H12 (default on; =0 restores legacy): search_text falls back to an OR over the words when the exact phrase is empty. */
 export function searchTextFallbackEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.RENOR_SEARCH_TEXT_FALLBACK ?? '').trim() === '1';
+  return !keywordDefaultsOff(env) && (env.RENOR_SEARCH_TEXT_FALLBACK ?? '').trim() !== '0';
 }
 
 export function keywordVariants(query: string): string[] {
@@ -797,6 +800,7 @@ interface HitFields {
   headingPath?: unknown;
   score?: unknown;
   session_date?: unknown;
+  source?: unknown;
   author?: string | null;
 }
 
@@ -811,6 +815,7 @@ function normalizeMemory(raw: unknown, fallbackReason: string, reader?: string):
     text: hit.text,
     ...(typeof hit.score === 'number' ? { score: hit.score } : {}),
     reason,
+    ...(observeEnabled() && hit.source === 'observation' ? { source: 'observation' as const } : {}),
     ...(typeof hit.session_date === 'string' ? { session_date: hit.session_date } : {}),
     // A fact the retrieval named its author of (a fact an identity question reads) is marked as get_context's facts are.
     // A memory that is a ledger event is marked in buildAgentContext, which reads its event's author.
@@ -869,6 +874,23 @@ export function dedupeMemories(memories: AgentContextMemory[]): AgentContextMemo
   return out;
 }
 
+function observationsAfterTiedMemories(memories: AgentContextMemory[]): AgentContextMemory[] {
+  if (!observeEnabled()) return memories;
+  const positions = new Map<number, number[]>();
+  memories.forEach((memory, index) => {
+    const score = memory.score ?? 0;
+    positions.set(score, [...(positions.get(score) ?? []), index]);
+  });
+  const ordered = [...memories];
+  for (const indexes of positions.values()) {
+    const tied = indexes.map(index => memories[index]);
+    const explicit = tied.filter(memory => memory.source !== 'observation');
+    const observations = tied.filter(memory => memory.source === 'observation');
+    [...explicit, ...observations].forEach((memory, offset) => { ordered[indexes[offset]] = memory; });
+  }
+  return ordered;
+}
+
 /**
  * The most of the budget facts take while memories are waiting; the memories get the rest, and the room they leave
  * goes back to the facts. Facts used to be added until the budget was spent, so a dozen facts that each shared one
@@ -915,23 +937,6 @@ export const NEWEST_SESSION_STATEMENT_WEIGHT = 2;
  * tokens). A statement that shares two words, and every match retrieval scored, are not counted.
  */
 export const NEWEST_SESSION_WEAK_STATEMENTS = 1;
-
-export const CONTEXT_SPLIT_FLAG = 'RENOR_CONTEXT_SPLIT';
-
-/**
- * How get_context splits its budget between facts, the newest session and the older evidence (RENOR_CONTEXT_SPLIT, off by
- * default; unset, or anything but `facts,recent,pieces`, gives the constants above). `facts` is the facts' share while memories
- * wait and `recent` the newest session's share, both in (0, 1]; `pieces` is the most pieces of that session, an integer from
- * 1 to 12. The older evidence takes what the two leave.
- */
-export function budgetSplit(): { facts: number; recent: number; pieces: number } {
-  const off = { facts: FACTS_BUDGET_SHARE, recent: NEWEST_SESSION_SHARE, pieces: NEWEST_SESSION_PIECES };
-  const raw = process.env[CONTEXT_SPLIT_FLAG];
-  if (!raw) return off;
-  const [facts, recent, pieces] = raw.split(',').map(part => Number(part.trim()));
-  const share = (n: number) => Number.isFinite(n) && n > 0 && n <= 1;
-  return share(facts) && share(recent) && Number.isInteger(pieces) && pieces >= 1 && pieces <= 12 ? { facts, recent, pieces } : off;
-}
 
 /** The fewest of the question's content words the newest match above the bar must share with it (`newestMatchAbove`). */
 export const NEWEST_ANCHOR_RELEVANCE_FLOOR = 1;
@@ -1245,7 +1250,7 @@ function budgetWith(
   ordered = false,
 ): Budgeted {
   const added = (memory: number): boolean => memories[memory].reason === SESSION_EXPAND_REASON;
-  const factShare = memories.some((_, i) => !added(i)) ? Math.floor(allowance * budgetSplit().facts) : allowance;
+  const factShare = memories.some((_, i) => !added(i)) ? Math.floor(allowance * FACTS_BUDGET_SHARE) : allowance;
   let used = 0;
   let held: Item | undefined; // `keep`, once it has its room
   const fits = (item: Item, limit: number): boolean => {
@@ -1304,8 +1309,7 @@ function budgetWith(
   // while what it said elsewhere still fits, and the statement that decides the answer is usually one of the small ones.
   const reserved = recent === undefined ? -1 : memories.indexOf(recent as AgentContextMemory);
   if (reserved >= 0) {
-    const split = budgetSplit();
-    const room = Math.floor(allowance * split.recent);
+    const room = Math.floor(allowance * NEWEST_SESSION_SHARE);
     const said = (item: Item): number => relevance?.(item) ?? 0;
     const weight = (item: Item): number => ((item as AgentContextMemory).reason === SESSION_EXPAND_REASON ? NEWEST_SESSION_STATEMENT_WEIGHT : 1);
     const value = (item: Item): number => (weight(item) * said(item) * said(item)) / Math.max(1, cost(item));
@@ -1321,7 +1325,7 @@ function budgetWith(
     let taken = 0;
     let weakTaken = 0;
     for (const piece of pool) {
-      if (taken >= (ordered ? Infinity : split.pieces)) break;
+      if (taken >= (ordered ? Infinity : NEWEST_SESSION_PIECES)) break;
       const statement = (piece as AgentContextMemory).reason === SESSION_EXPAND_REASON;
       const weak = !ordered && statement && said(piece) < 2;
       if (weak && weakTaken >= NEWEST_SESSION_WEAK_STATEMENTS) continue;
@@ -1480,7 +1484,11 @@ export async function buildAgentContext(
 ) {
   const query = (options.query ?? '').trim();
   const scopeNorm = options.scope === undefined ? undefined : normalizeScope(options.scope);
-  const maxTokens = Math.min(Math.max(options.maxTokens ?? 800, 128), replyCeiling(options.env ?? process.env));
+  // Research lever RENOR_CONTEXT_TOKEN_BUDGET: a whole positive number caps the reply budget; unset or invalid changes nothing.
+  const env = options.env ?? process.env;
+  const budgetRaw = env.RENOR_CONTEXT_TOKEN_BUDGET;
+  const budgetCap = budgetRaw !== undefined && /^[1-9][0-9]*$/.test(budgetRaw.trim()) ? Math.max(128, Number(budgetRaw.trim())) : Infinity;
+  const maxTokens = Math.min(Math.max(options.maxTokens ?? 800, 128), replyCeiling(options.env ?? process.env), budgetCap);
   // Off performs no lookup and changes no reply byte. On, failure is deliberately fail-open: pinned rules are additive.
   let pinnedRules: ReturnType<typeof loadPinnedRules> = { rules: [], pendingRules: [], eventIds: new Set(), tokens: 0 };
   try { pinnedRules = loadPinnedRules(db, scopeNorm, options.reader, options.env ?? process.env, maxTokens); } catch { /* omit the field */ }
@@ -1500,13 +1508,15 @@ export async function buildAgentContext(
 
   if (query) {
     // Preserve the uncapped get_context default; an explicit environment cap still wins.
-    const semantic = await engineSearchMemory(db, engine, memoryDir, query, 8, scopeNorm, options.evidence, options.includeHistory === true, options.ledgerRelPath, probe, undefined, 0);
+    const observationScope = options.scope ?? options.connectionScope;
+    const semantic = await engineSearchMemory(db, engine, memoryDir, query, 8, scopeNorm, options.evidence, options.includeHistory === true, options.ledgerRelPath, probe, undefined, 0, false, false, false, observationScope);
     semanticAvailable = semantic.ok;
     notice = semantic.notice; // semantic search is off while the embeddings are rebuilt, or the provider failed it: say so
     if (semantic.error === 'semantic-unavailable' && semantic.notice) degraded.push('semantic');
-    if (semantic.ok) {
+    if (semantic.ok || semantic.hits.some(hit => Boolean(hit && typeof hit === 'object' && 'source' in hit && hit.source === 'observation'))) {
       rankedBy = semantic.rankedBy;
       for (const hit of semantic.hits) {
+        if (!semantic.ok && (!hit || typeof hit !== 'object' || !('source' in hit) || hit.source !== 'observation')) continue;
         const normalized = normalizeMemory(hit, 'semantic', options.reader);
         if (normalized) (normalized.reason === SESSION_EXPAND_REASON ? added : memories).push(normalized);
       }
@@ -1523,7 +1533,7 @@ export async function buildAgentContext(
     inReadSnapshot(db, () => {
       const orAll = keywordOrAll();
       for (const variant of orAll ? [query.trim()] : keywordVariants(query)) {
-        const keyword = engineSearchText(db, memoryDir, variant, 6, scopeNorm, options.includeHistory === true, options.ledgerRelPath, ledgerRecords, orAll ? keywordOrMatch(query) : undefined);
+        const keyword = engineSearchText(db, memoryDir, variant, 6, scopeNorm, options.includeHistory === true, options.ledgerRelPath, ledgerRecords, orAll ? keywordOrMatch(query) : undefined, false, observationScope);
         keywordAvailable = keywordAvailable || keyword.ok;
         if (!keyword.ok) { keywordFailed = true; continue; }
         for (const hit of keyword.results) {
@@ -1596,7 +1606,7 @@ export async function buildAgentContext(
     const marked = stale === null ? base : { ...base, staleStatus: stale };
     return line === undefined ? marked : { ...marked, writerConflict: line };
   };
-  const factLaneBudget = hasMemories ? Math.floor(maxTokens * budgetSplit().facts) : maxTokens;
+  const factLaneBudget = hasMemories ? Math.floor(maxTokens * FACTS_BUDGET_SHARE) : maxTokens;
   const maxFactObjectTokens = Math.max(32, Math.floor(factLaneBudget * MAX_FACT_OBJECT_LANE_SHARE));
   // The cap is a crowding rule: it applies only when the facts would not otherwise fit the lane, and never to the
   // top-ranked fact — a long fact that is itself the answer is delivered whole when the lane has room for it.
@@ -2029,6 +2039,7 @@ export async function buildAgentContext(
   // The layout above may have sorted a newer note after the older one it overlaps: the same rule, once more on the final list.
   if (newerFirst) reply.memories = newerFirstMemories(reply.memories as AgentContextMemory[]);
   if (correctionOf.size > 0) pinToCorrections(reply, correctionOf);
+  reply.memories = observationsAfterTiedMemories(reply.memories as AgentContextMemory[]);
   // Last, once the order and the pairs are settled on the full items, which say how they were found.
   if (lean) reply.memories = (reply.memories as AgentContextMemory[]).map(leanMemory);
   // Last: the dated outline takes only the room the finished reply leaves (capped at its own budget), so the closest match

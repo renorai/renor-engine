@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import request from 'supertest';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
@@ -65,7 +66,7 @@ export interface Workspace {
   service: MvpApp & { httpServer: import('http').Server };
   config: MvpConfig;
   memoryDir: string;
-  /** The tool's answer, parsed, and whether it was an error. */
+  /** The first JSON answer is preserved, including isError replies; plain-text rejections return { ok: false, error }. Transport failures throw. */
   call(name: string, args?: Record<string, unknown>): Promise<{ body: any; isError: boolean }>;
   /** Every text block of the tool's answer, unparsed (export_memory sends two; a refusal is plain text), and whether it was an error. */
   callRaw(name: string, args?: Record<string, unknown>): Promise<{ texts: string[]; isError: boolean }>;
@@ -73,7 +74,23 @@ export interface Workspace {
   timed(name: string, args?: Record<string, unknown>): Promise<{ body: any; isError: boolean; ms: number }>;
   /** A call from another connection, registered under `agent` as its client name: what a save and a read record as its author. */
   connectAs(agent: string): Promise<Workspace['call']>;
+  /** The server instructions the shared client received on connect. */
+  instructions(): string;
   close(): Promise<void>;
+}
+
+async function invokeMcp(client: Client, name: string, args: Record<string, unknown>) {
+  let res;
+  try {
+    res = await client.callTool({ name, arguments: args }, undefined, { timeout: 30 * 60_000 });
+  } catch (error) {
+    if (!(error instanceof McpError) || error.code === ErrorCode.ConnectionClosed || error.code === ErrorCode.RequestTimeout) throw error;
+    return { body: { ok: false, error: error.message }, isError: true };
+  }
+  const text = (res.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
+  // Preserve existing JSON payloads, including structured errors and multi-block replies.
+  try { return { body: JSON.parse(text), isError: res.isError === true }; }
+  catch { return { body: { ok: false, error: text }, isError: true }; }
 }
 
 /**
@@ -111,19 +128,14 @@ export async function startWorkspace(
     clients.push(client);
     return client;
   };
-  const invoke = async (client: Client, name: string, args: Record<string, unknown>) => {
-    // No client-side timeout (the SDK's default is 60 s): what a measurement reports is how long the engine took.
-    const res = await client.callTool({ name, arguments: args }, undefined, { timeout: 30 * 60_000 });
-    const text = (res.content as Array<{ type: string; text: string }>)[0].text;
-    return { body: JSON.parse(text), isError: res.isError === true };
-  };
   const shared = await connect();
-  const call: Workspace['call'] = (name, args = {}) => invoke(shared, name, args);
+  const call: Workspace['call'] = (name, args = {}) => invokeMcp(shared, name, args);
   return {
     service,
     config,
     memoryDir,
     call,
+    instructions: () => shared.getInstructions() ?? '',
     async callRaw(name, args = {}) {
       const res = await shared.callTool({ name, arguments: args }, undefined, { timeout: 30 * 60_000 });
       return { texts: (res.content as Array<{ type: string; text: string }>).map(c => c.text), isError: res.isError === true };
@@ -131,7 +143,7 @@ export async function startWorkspace(
     async timed(name, args = {}) {
       const client = await connect();
       const started = performance.now();
-      const result = await invoke(client, name, args);
+      const result = await invokeMcp(client, name, args);
       return { ...result, ms: Math.round(performance.now() - started) };
     },
     async connectAs(agent) {
@@ -142,7 +154,7 @@ export async function startWorkspace(
         { requestInit: { headers: { Authorization: `Bearer ${agentToken}` } } },
       ));
       clients.push(client);
-      return (name, args = {}) => invoke(client, name, args);
+      return (name, args = {}) => invokeMcp(client, name, args);
     },
     async close() {
       await Promise.all(clients.map(c => c.close().catch(() => undefined)));
@@ -180,9 +192,7 @@ export async function connectAs(ws: Workspace, clientName: string): Promise<{ ca
     { requestInit: { headers: { Authorization: `Bearer ${token}` } } },
   ));
   const call: Workspace['call'] = async (name, args = {}) => {
-    const res = await client.callTool({ name, arguments: args }, undefined, { timeout: 30 * 60_000 });
-    const text = (res.content as Array<{ type: string; text: string }>)[0].text;
-    return { body: JSON.parse(text), isError: res.isError === true };
+    return invokeMcp(client, name, args);
   };
   return { call, close: () => client.close() };
 }

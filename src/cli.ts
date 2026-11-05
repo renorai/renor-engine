@@ -8,10 +8,9 @@ import { replayLedger, resolveLedgerPath, DEFAULT_LEDGER_REL } from "./memory/li
 import { indexVault, MAX_NOTE_BYTES } from "./indexer/pipeline";
 import { startWatcher } from "./watcher/watcher";
 import { stalenessGate, stalenessJsonField } from "./indexer/staleness";
-import { retrieveContext } from "./retrieval/orchestrator";
+import { defaultSearchTopK, retrieveContext } from "./retrieval/orchestrator";
 import { readerLayoutEnabledFor, layoutHitsForReader, conversationNoteMatcher } from "./retrieval/readerLayout";
 import { isEventQuestion, noteTurnsLoader, readerEventsEnabled, turnScorer, vectorsMeanSomething } from "./retrieval/readerEvents";
-import { withAdviceLines } from "./retrieval/adviceLines";
 import type { RetrievalProbe } from "./retrieval/semantic";
 import { ledgerNoteMatcher, presentLedgerEvents } from "./retrieval/ledgerPresentation";
 import { attachSearchEvidence, searchEvidenceEnabled, EVIDENCE_HIT_PATH } from "./evidence/attach";
@@ -249,7 +248,7 @@ program
 program
   .command("search <query>")
   .description("Semantic search")
-  .option("-k, --top-k <n>", "results", "20")
+  .option("-k, --top-k <n>", "results", String(defaultSearchTopK()))
   .option("--json", "machine-readable JSON output (full hit text; the benchmark client transport)")
   .action(async (query: string, opts: { topK: string; json?: boolean }) => {
     const { config, db, provider, vectorIndex } = await setup();
@@ -294,13 +293,10 @@ program
     // The evidence pass read the sources as stored; what is printed is what the user said.
     // Laid out for the model that reads it (RENOR_READER_LAYOUT; readerLayout.ts): the hits of a session come as one, and its time phrases are resolved. RENOR_READER_EVENTS adds event lines above them for an order or a date question.
     // A query that asks to be advised keeps the page as it was when RENOR_READER_LAYOUT_SKIP_ADVICE is on (default on; `0` turns it off).
-    // RENOR_READER_ADVICE_LINES (default off): for a query that asks to be advised, the user's own matching statements come first (adviceLines.ts).
     const presented = presentLedgerEvents(digested ? digested.hits : result.hits, isLedger);
-    const notTable = (p: string) => !isLedger(p) && p !== EVIDENCE_HIT_PATH && p !== DIGEST_HIT_PATH;
-    let conversationNote: ((notePath: string) => boolean) | undefined;
-    const hits = withAdviceLines(readerLayoutEnabledFor(query)
+    const hits = (readerLayoutEnabledFor(query)
       ? layoutHitsForReader(presented, { rankedBy: retrieved.rankedBy, isLedger: (p) => isLedger(p) || p === EVIDENCE_HIT_PATH || p === DIGEST_HIT_PATH, isConversation: conversationNoteMatcher(db), query, turnsOf: readerEventsEnabled() ? noteTurnsLoader(db) : undefined, scoreTurns: probe?.queryVector && provider && vectorIndex && vectorsMeanSomething(provider.identity?.kind) ? turnScorer(vectorIndex, probe.queryVector) : undefined })
-      : presented, { query, turnsOf: () => noteTurnsLoader(db), isSource: (h) => (h.chunkId ?? 0) > 0 && h.notePath !== '' && notTable(h.notePath) && (conversationNote ??= conversationNoteMatcher(db))(h.notePath) });
+      : presented);
     if (opts.json) {
       // Sole stdout content: machine-readable hits with FULL text. This is the
       // public CLI contract consumed by external clients (authoritative

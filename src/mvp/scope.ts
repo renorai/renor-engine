@@ -80,8 +80,9 @@ export function notePathMatchesScope(notePath: string, scope: NormalizedScope): 
  * terms are its equality, startsWith and includes cases — and
  * tests/mvp/scope-isolation.test.ts pins them against each other, so a scope
  * can never mean two different things depending on whether it was checked in
- * SQL or in JS. `dir` is built from a validated slug, so it contains no LIKE
- * wildcard. Bind with better-sqlite3's positional params in `params`.
+ * SQL or in JS. A prefix is `instr(...) = 1`, not LIKE: LIKE folds ASCII
+ * case and the JS rule does not. Bind with better-sqlite3's positional params
+ * in `params`.
  */
 export function scopeSqlPredicate(
   scope: NormalizedScope,
@@ -89,14 +90,14 @@ export function scopeSqlPredicate(
 ): { sql: string; params: string[] } {
   if (scope === 'global') {
     return {
-      sql: `(${column} NOT LIKE ? AND instr(${column}, ?) = 0)`,
-      params: [`${SCOPES_ROOT}%`, `/${SCOPES_ROOT}`],
+      sql: `(instr(${column}, ?) <> 1 AND instr(${column}, ?) = 0)`,
+      params: [SCOPES_ROOT, `/${SCOPES_ROOT}`],
     };
   }
   const dir = `${SCOPES_ROOT}${scope.slice(scope.indexOf(':') + 1)}`;
   return {
-    sql: `(instr(${column}, ?) > 0 OR ${column} LIKE ? OR ${column} = ?)`,
-    params: [`/${dir}/`, `${dir}/%`, dir],
+    sql: `(instr(${column}, ?) > 0 OR instr(${column}, ?) = 1 OR ${column} = ?)`,
+    params: [`/${dir}/`, `${dir}/`, dir],
   };
 }
 

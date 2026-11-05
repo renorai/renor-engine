@@ -81,7 +81,7 @@ describe('session-router trial command (offline smoke)', () => {
       expect(result.stderr).toContain('a fresh control re-runs the default configuration');
       expect(fs.existsSync(path.join(root, 'trial', 'control'))).toBe(false);
     } finally {
-      await fsp.rm(root, { recursive: true, force: true });
+      await fsp.rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
     }
   });
 
@@ -132,7 +132,7 @@ describe('session-router trial command (offline smoke)', () => {
       expect(md).toContain('settings match exactly; evaluator code differs');
       expect(md).toContain('settings differ: answerModel');
     } finally {
-      await fsp.rm(root, { recursive: true, force: true });
+      await fsp.rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
     }
   });
 
@@ -168,7 +168,7 @@ describe('session-router trial command (offline smoke)', () => {
       expect(stub.calls.map(call => call.kind)).toEqual(['summary']);
     } finally {
       await stub.close();
-      await fsp.rm(root, { recursive: true, force: true });
+      await fsp.rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
     }
   }, 300_000);
 
@@ -214,7 +214,7 @@ describe('session-router trial command (offline smoke)', () => {
       await vertex.close();
       await judge.close();
       await account.close();
-      await fsp.rm(root, { recursive: true, force: true });
+      await fsp.rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
     }
   }, 300_000);
 
@@ -302,7 +302,7 @@ describe('session-router trial command (offline smoke)', () => {
     } finally {
       await stub.close();
       await summaries.close();
-      await fsp.rm(root, { recursive: true, force: true });
+      await fsp.rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
     }
   }, 300_000);
 });

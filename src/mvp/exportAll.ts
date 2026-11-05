@@ -9,6 +9,7 @@ import { handoffNoteEnabled } from '../memory/handoff';
 import { allReplacementRecords, replacementIndex, type ReplacementIndex, type ReplacementRecord } from '../memorymap/replacements';
 import { learningDbPath, learningRetentionDays } from '../learning/settings';
 import { LearningLog, type LearningExport } from '../learning/store';
+import { observeEnabled, observationsForExport } from './observations';
 
 // ---------------------------------------------------------------------------
 // export_memory: everything one workspace holds, in one documented Markdown format ("renor-export/v1").
@@ -27,7 +28,7 @@ import { LearningLog, type LearningExport } from '../learning/store';
 
 export const EXPORT_FORMAT_VERSION = 'renor-export/v1';
 export const EXPORT_SECTIONS = ['ledger', 'daily-entries', 'notes', 'retired'] as const;
-export type ExportSection = typeof EXPORT_SECTIONS[number];
+export type ExportSection = typeof EXPORT_SECTIONS[number] | 'observations';
 
 /**
  * What the export leaves out, named in every manifest (`notExported`) so a reader can see the gap instead of trusting
@@ -311,23 +312,36 @@ export async function exportEverything(
   opts: { section?: ExportSection; offset?: number },
 ): Promise<ExportReply> {
   const budget = maxChars();
+  const observationRows = observeEnabled() ? observationsForExport(ctx.db, path.resolve(ctx.memoryDir)) : [];
+  const availableSections: readonly ExportSection[] = observationRows.length > 0
+    ? [...EXPORT_SECTIONS, 'observations']
+    : EXPORT_SECTIONS;
   // A whole export builds every section. A reply for one section builds that section only: the others are not read, so
   // their counts are null here (a whole export, with no `section`, counts them all).
-  const wanted: readonly ExportSection[] = opts.section === undefined ? EXPORT_SECTIONS : [opts.section];
+  const wanted: readonly ExportSection[] = opts.section === undefined ? availableSections : [opts.section];
   const built = await buildSections(ctx, wanted);
+  if (wanted.includes('observations')) {
+    built.items.observations = observationRows.map((row) => {
+      const content = [row.text, row.tool ? JSON.stringify(row.tool) : null].filter((part): part is string => part !== null && part.length > 0).join('\n');
+      return `## ${oneLineToken(row.id)}\n\n${field('kind', 'observation')}${field('sessionId', row.session_id)}${field('sequence', String(row.seq))}`
+        + `${field('event', row.event)}${field('client', row.client)}${field('at', row.ts)}${field('receivedAt', row.received_at)}`
+        + `${row.cwd_scope === null ? '' : field('cwdScope', row.cwd_scope)}${field('retired', String(row.retired))}\n${fenced(content)}`;
+    });
+  }
   const count = (name: ExportSection): number | null => built.items[name]?.length ?? null;
   const counts = {
     ledgerEvents: built.ledgerEvents ?? null,
     dailyEntries: count('daily-entries'),
     notes: count('notes'),
     retired: count('retired'),
+    ...(availableSections.includes('observations') ? { observations: count('observations') } : {}),
   };
-  const sections = EXPORT_SECTIONS.map((name) => ({
+  const sections = availableSections.map((name) => ({
     name,
     items: count(name),
     ...(name === 'ledger' ? { events: built.ledgerEvents ?? null } : {}),
   }));
-  const nextAfter = (name: ExportSection): ExportSection | null => EXPORT_SECTIONS[EXPORT_SECTIONS.indexOf(name) + 1] ?? null;
+  const nextAfter = (name: ExportSection): ExportSection | null => availableSections[availableSections.indexOf(name) + 1] ?? null;
   const base = {
     file: ctx.ledgerRelPath,
     format: 'markdown',
@@ -365,7 +379,7 @@ export async function exportEverything(
 
   if (opts.section === undefined) {
     // Whole sections while they fit. The ledger starts the reply and is paged by line only if it alone is too big.
-    for (const name of EXPORT_SECTIONS) {
+    for (const name of availableSections) {
       const items = built.items[name] ?? [];
       const size = items.reduce((n, s) => n + s.length + 1, 0) + sectionHeader(name, items.length, 0).length;
       if (name === 'ledger' ? size <= budget : document.length + size <= budget) {

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 
 /**
  * RENOR_TOOL_OUTPUT_SCHEMAS (on by default; `0` / `false` / `no` / `off` turns it off): the tools whose reply is small

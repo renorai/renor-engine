@@ -5,7 +5,7 @@ import path from 'path';
 import net from 'net';
 import crypto from 'crypto';
 import request from 'supertest';
-import { z } from 'zod';
+import * as z from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';

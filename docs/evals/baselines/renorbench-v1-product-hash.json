@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "benchmark": "renorbench-v1-product",
-  "reason": "evaluator: reply capture and TOON decode in the product runner (renorai/renor-engine#6); numbers unchanged",
-  "recordedAt": "2026-10-28T22:35:32.545Z",
-  "gitSha": "ba2045c78dcd27366ff95ae62bc95a3c99160c6f",
+  "reason": "re-recorded from the tree that merges main into PR 1024 (top-K 50 default, scaled expansion budget on); the product arm still sends --top-k 20, so numbers equal the previous baseline",
+  "recordedAt": "2026-11-04T09:03:29.185Z",
+  "gitSha": "de08c85a8c268861da255ffc9067b2126cb8ee24",
   "manifest": {
     "benchmark": "renorbench-v1-product",
     "casesSha256": "dcefabf571d40270f780281f08ecd09be90d5403207c816d0aeaac2d3a0d4060",
@@ -27,7 +27,7 @@
       "transport": "MCP SDK Client over InMemoryTransport",
       "indexTool": "index_memory",
       "searchTool": "search_memory",
-      "searchArguments": "query only: top_k, scope and include_history left at the tool defaults"
+      "searchArguments": "query and top_k=20: scope and include_history left at the tool defaults"
     },
     "productMode": {
       "overrides": [],

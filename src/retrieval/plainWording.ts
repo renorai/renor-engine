@@ -42,6 +42,26 @@ export function resolveNearDupCap(env: NodeJS.ProcessEnv = process.env): number 
   return Number.isFinite(cap) && cap >= 1 ? Math.floor(cap) : 0;
 }
 
+/** RENOR_RERANK_TOP_N: how many ranked candidates are reranked down to the final k, or 0 (off) when unset, empty, junk or below 1. */
+export function resolveRerankTopN(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.RENOR_RERANK_TOP_N ?? '').trim();
+  if (raw === '') return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 0;
+}
+
+/**
+ * The first `n` of `ranked`, reordered by the share of the query's content words each text carries (best first; ties
+ * keep their ranked order). No model call. `ranked` itself is not changed.
+ */
+export function rerankTopN<T extends { text: string }>(ranked: T[], query: string, n: number): T[] {
+  const terms = contentTerms(query);
+  if (terms.length === 0 || n < 1) return ranked;
+  const head = ranked.slice(0, n).map((hit, at) => ({ hit, at, share: laneTermShare(hit.text, terms) }));
+  head.sort((a, b) => b.share - a.share || a.at - b.at);
+  return [...head.map(h => h.hit), ...ranked.slice(n)];
+}
+
 /** Words that never name what a memory is about: function words and the words of asking and remembering. */
 const PLAIN_STOP = new Set([
   'the', 'and', 'for', 'are', 'was', 'were', 'what', 'which', 'who', 'whom', 'whose', 'where', 'when', 'why', 'how',

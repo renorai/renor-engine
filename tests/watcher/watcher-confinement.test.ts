@@ -21,7 +21,7 @@ async function watchRun(prep: (vault: string, outside: string) => void, after: (
   const db = openDb(path.join(root, 'idx.db'));
   runMigrations(db);
   const watcher = startWatcher(vault, db, {});
-  await new Promise(resolve => watcher.on('ready', resolve));
+  await new Promise<void>(resolve => watcher.on('ready', () => resolve()));
   after(vault, outside);
   await sleep(2500);
   const paths = (db.prepare('SELECT path FROM notes').all() as { path: string }[]).map(r => path.relative(root, r.path)).sort();
@@ -65,6 +65,16 @@ describe('renor watch follows the walker\'s rules', () => {
   it('still watches a vault that itself sits under a folder named node_modules', async () => {
     const indexed = await watchRun(() => {}, (v) => { fs.writeFileSync(path.join(v, 'ok.md'), '# ok\nok'); }, 'node_modules/vault');
     expect(indexed).toEqual(['node_modules/vault/ok.md']);
+  }, 30000);
+
+  it('indexes only markdown files, also in a vault whose path holds glob characters', async () => {
+    const indexed = await watchRun(() => {}, (v) => {
+      fs.mkdirSync(path.join(v, 'sub'));
+      fs.writeFileSync(path.join(v, 'sub/ok.md'), '# ok\nok');
+      fs.writeFileSync(path.join(v, 'notes.txt'), 'not a note');
+      fs.writeFileSync(path.join(v, 'ok.md.bak'), '# bak\nbak');
+    }, 'vault [1] {a,b}');
+    expect(indexed).toEqual(['vault [1] {a,b}/sub/ok.md']);
   }, 30000);
 });
 

@@ -244,9 +244,13 @@ describe('the ledger is not a memory', () => {
       expect(onLedger(found), query).toEqual([]);
     }
     const r = await ws.ask('what kind of source of events is a store of memory?');
-    // The semantic lane may list what it likes; the keyword lane found nothing in anything a person said.
+    // The broad keyword lane may list user notes now that OR fallback is the default; it must never expose the ledger.
     expect(onLedger(r.context).filter(m => /\bfts\b/.test(m.reason))).toEqual([]);
-    expect(r.text).toEqual([]);
+    // Exactly the two user notes the any-word fallback reaches through "memory", and not one chunk of the ledger.
+    expect(r.text.map(h => h.notePath).sort()).toEqual(['Notes/palace.md', 'Notes/zoo.md']);
+    expect(onLedger(r.text)).toEqual([]);
+    // Pre-flip this was `[]`; with any-word fallback it may list user notes, and only user notes.
+    expect(r.text.filter(h => !String(h.notePath).startsWith('Notes/'))).toEqual([]);
   });
 
   it('the file name of the ledger does not make its opening chunk a hit', async () => {

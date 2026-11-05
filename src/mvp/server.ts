@@ -7,9 +7,9 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   mcpAuthRouter,
 } from '@modelcontextprotocol/sdk/server/auth/router.js';
-import { z } from 'zod';
+import * as z from 'zod';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { isInitializeRequest, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, McpError, isInitializeRequest, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { openIndexDb } from '../db/client';
 import { runMigrations } from '../db/schema';
 import { removeDailyHeaderFacts } from '../indexer/pipeline';
@@ -17,6 +17,7 @@ import { clearReindexPending, removeRowsOutsideRoot, reindexPending } from '../i
 import { remember, replayLedger, factsFor, listLifecycleSubjects, resolveLedgerPath, scopeFilterFor, LIFECYCLE_NOTE_PATH, LifecycleInputError, FIELD_LIMITS } from '../memory/lifecycle';
 import { ensureFactTerms } from '../memory/factTerms';
 import { namedConflicts, possibleDuplicates } from '../memory/factConflicts';
+import { autoCorrectionEnabled, detectCorrection } from '../memory/autoCorrection';
 import { writerConflictLines } from '../memory/writerConflicts';
 import { MAX_STATEMENT_LENGTH } from '../memory/limits';
 import { cleanSource, headerSource, hiveIdentity, isImportSource, isReservedSource, productFromUserAgent, reservedCallerSource, reservedSourceIn } from '../memory/sourceName';
@@ -60,6 +61,7 @@ import { emitTelemetry, isPlatformInitialize, isRecallTool } from './telemetry';
 import { ReadUsefulness, contextItems, searchItems, retrieveItems } from './readUsefulness';
 import { instrumentMcpServer } from './posthogMcp';
 import { countSchemaRejections } from './schemaRejections';
+import { ObserveRequestSchema, observeEnabled, storeObservation } from './observations';
 import { buildSessionIndex, DEFAULT_SESSION_INDEX_TOKENS, SESSION_INDEX_METHOD, sessionIndexEnabled } from './sessionIndex';
 import { pinnedRulesEnabled } from './pinnedRules';
 import { approvedRuleKeys, ruleApprovalsEnabled, ruleKey, updateRuleApprovals } from './ruleApprovals';
@@ -78,7 +80,7 @@ import { readerLayoutEnabled, readerLayoutEnabledFor, readerLayoutPage, readerTi
 import { readerDurationNamed } from '../retrieval/questionSpan';
 import { noteTurnsLoader, readerEventsEnabled, readerEventsNamed, turnScorer, vectorsMeanSomething } from '../retrieval/readerEvents';
 import type { RetrievalProbe } from '../retrieval/semantic';
-import { searchBestFirstEnabled } from '../retrieval/orchestrator';
+import { defaultSearchTopK, searchBestFirstEnabled } from '../retrieval/orchestrator';
 import { recallInstructions } from './recallTiming';
 import { readBuildIdentity } from '../buildIdentity';
 import { learningObserver } from '../learning/tap';
@@ -850,9 +852,12 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       if (replaces !== undefined) await assertReplaceable(mapContext(), replaces, normalizeScope(args.scope));
 
       if (asFact) {
+        const correction = autoCorrectionEnabled()
+          ? detectCorrection(db, { subject: args.subject!, predicate: args.predicate!, object: args.object!, scope: args.scope, statement: args.statement })
+          : null;
         const receipt = await remember(db, config.memoryDir, config.ledgerRelPath, {
-          subject: args.subject!,
-          predicate: args.predicate!,
+          subject: correction?.subject ?? args.subject!,
+          predicate: correction?.predicate ?? args.predicate!,
           object: args.object!,
           source: sourceOf(args.source, extra, config),
           writer: agentOf(extra, config),
@@ -902,6 +907,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
           scope: normalizeScope(args.scope),
           ...(duplicates.values.length > 0 ? { possibleDuplicates: duplicates.values } : {}),
           ...(duplicates.total > duplicates.values.length ? { possibleDuplicatesTotal: duplicates.total } : {}),
+          ...(correction && receipt.action !== 'nochange' ? { autoCorrected: { replaced: correction.replaced, reason: correction.reason } } : {}),
           ...adjusted,
           ...refresh,
         });
@@ -945,6 +951,16 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
         replacedBy: id => replaced.replacedBy(id) !== undefined,
       });
       return { text: index.text, tokens: index.tokens, omitted: index.omitted };
+    });
+  }
+  // Owner requires the write-side eval to win first; #1441 owns the default flip.
+  if (observeEnabled()) {
+    server.server.setRequestHandler(ObserveRequestSchema, async request => {
+      try {
+        return { ...storeObservation(db, path.resolve(config.memoryDir), request.params) };
+      } catch {
+        throw new McpError(ErrorCode.InternalError, 'Observation could not be stored');
+      }
     });
   }
   server.registerTool('get_context', {
@@ -999,7 +1015,8 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       });
       const checked = await applyAnswerCheck(body as unknown as Record<string, unknown>, args.query, answerChecker, (body as { maxTokens?: number }).maxTokens);
       usefulness.measure('get_context', () => contextItems(checked));
-      return jsonResult(workspaceIsEmpty(db) ? { ...checked, notice: [checked.notice, EMPTY_WORKSPACE_NOTE].filter(Boolean).join(' ') } : checked);
+      const hasObservations = observeEnabled() && Array.isArray(checked.memories) && checked.memories.some(memory => memory?.source === 'observation');
+      return jsonResult(workspaceIsEmpty(db) && !hasObservations ? { ...checked, notice: [checked.notice, EMPTY_WORKSPACE_NOTE].filter(Boolean).join(' ') } : checked);
     } catch (err) {
       return toolError(err);
     }
@@ -1040,9 +1057,10 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
         const missing = (['subject', 'predicate', 'object'] as const).filter(name => args[name] === undefined);
         throw refusal('missing_argument', `save_memory saves one fact and needs subject, predicate and object (missing: ${missing.join(', ')}). To save plain words, call remember with only statement, e.g. remember({"statement": "We moved the Fjord database to SQLite."}).`);
       }
+      const correction = autoCorrectionEnabled() ? detectCorrection(db, { subject, predicate, object, scope: args.scope }) : null;
       const receipt = await remember(db, config.memoryDir, config.ledgerRelPath, {
-        subject,
-        predicate,
+        subject: correction?.subject ?? subject,
+        predicate: correction?.predicate ?? predicate,
         object,
         source: sourceOf(args.source, extra, config),
         writer: agentOf(extra, config),
@@ -1068,6 +1086,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
         created: receipt.created,
         ...(duplicates.values.length > 0 ? { possibleDuplicates: duplicates.values } : {}),
         ...(duplicates.total > duplicates.values.length ? { possibleDuplicatesTotal: duplicates.total } : {}),
+        ...(correction && receipt.action !== 'nochange' ? { autoCorrected: { replaced: correction.replaced, reason: correction.reason } } : {}),
         ledger: config.ledgerRelPath, // relative: no host paths leak to the client
       });
     } catch (err) {
@@ -1173,7 +1192,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       + 'The reply is two blocks: a JSON manifest (counts per kind for a whole export, the sections it carries, whether it is complete) and the document. A workspace too large for one reply is paged, never cut: while the manifest says truncated, or has nextSection/nextItem, call again with section (ledger, daily-entries, notes, retired) and offset (the item to continue from) until neither is set. '
       + 'Not exported, and listed by kind in the manifest\'s notExported: the search index and embeddings (rebuilt from this), agent requests, import receipts, activity, agent connection state, the promoted history directory, and non-Markdown files.',
     inputSchema: {
-      section: nullAsOmitted(z.enum(EXPORT_SECTIONS).optional()).describe('Continue with this section only (from the manifest\'s nextSection)'),
+      section: nullAsOmitted((observeEnabled() ? z.enum([...EXPORT_SECTIONS, 'observations']) : z.enum(EXPORT_SECTIONS)).optional()).describe('Continue with this section only (from the manifest\'s nextSection)'),
       offset: nullAsOmitted(z.number().int().min(0).optional()).describe('The item of that section to continue from (from the manifest\'s nextItem); default 0'),
     },
     outputSchema: z.looseObject({
@@ -1262,7 +1281,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     description: 'Searches notes by meaning when memory_status reports semantic: true; else it returns no hits and says why (semantic-unavailable or semantic-rebuilding), so use search_text or get_context. rankedBy "session_date" (the default) is newest first, so hits[0] is the latest, not necessarily the best; "score" is best match first. Judge hits by score (higher is closer), not position. A conversation\'s hits on one date are one hit, opening with its date (its header alone is no hit); a time phrase in it is resolved below, counted from that session. A hit without session_date comes last; a fact\'s hit has no notePath. There is no `evidence` object when this deployment has no evidence model configured and the pass is not switched off: no second pass runs, and the hits are the whole result. When there is one, its items come first, outside rankedBy, with reason "evidence", and its state is "ok", "off", "not-applied" or "failed". Facts saved with remember are added outside rankedBy, within top_k; a writerConflict line on one means it replaced another agent\'s value. index.stale: the semantic index lags saved facts. A "replaced" hit\'s correction is listed before it (by: its id, source: who saved it).' + (evidence?.options.background ? EVIDENCE_WAIT_STATES : '') + (evidence?.options.dailyCap !== undefined ? EVIDENCE_DAILY_CAP_STATE : '') + (digests ? DIGEST_HITS : '') + (readerLayoutEnabled() && readerDurationNamed() ? SPAN_HITS : '') + (readerEventsNamed() ? EVENTS_HITS : '') + (readerTimelineEnabled() ? TIMELINE_HITS : '') + (relevanceGuidance ? SEARCH_RELEVANCE_GUIDANCE : ''),
     inputSchema: {
       query: z.string().min(1).max(500).describe('Natural language query'),
-      top_k: z.number().int().min(1).max(50).optional().describe('Max matches (default 20), not counting the short statements the session expansion adds to them'),
+      top_k: z.number().int().min(1).max(50).optional().describe('Max matches (default 50), not counting the short statements the session expansion adds to them'),
       scope: z.string().optional().describe('Memory scope: "global" (default) or scope:<slug> / project:<slug>'),
       include_history: z.boolean().optional().describe('Also return superseded (corrected) memory events, labelled as historical. Default false: only current memory.'),
     },
@@ -1281,11 +1300,20 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     }),
   }, async (args, extra) => {
     try {
-      const topK = args.top_k ?? 20;
+      const topK = args.top_k ?? defaultSearchTopK();
       const floor = searchHitFloor(engine.modelKey);
       const probe: RetrievalProbe = {};
       const laidOut = readerLayoutEnabledFor(args.query);
       const semantic = await engineSearchMemory(db, engine, config.memoryDir, args.query, topK, args.scope, evidence, args.include_history === true, config.ledgerRelPath, probe, digests, undefined, floor > 0, laidOut, searchBestFirstEnabled());
+      const observations = !semantic.ok && observeEnabled()
+        ? semantic.hits.filter(hit => hit && typeof hit === 'object' && 'source' in hit && hit.source === 'observation') : [];
+      if (observations.length > 0) {
+        return searchResult({ ok: true }, {
+          ok: true, hits: (observations as SearchHit[]).map(markStoredHit), fallback: 'keyword',
+          notice: `${semantic.notice ?? 'Semantic search is unavailable.'} These are keyword observations.`,
+          ...(args.scope ? { scope: args.scope } : {}),
+        }, withSchemas);
+      }
       // With semantic search unavailable or rebuilding, answer with keyword hits and say so, rather than an empty refusal.
       const keyword = !semantic.ok && (semantic.error === 'semantic-unavailable' || semantic.error === 'semantic-rebuilding') && searchMemoryKeywordFallbackEnabled()
         ? engineSearchText(db, config.memoryDir, args.query.slice(0, 200), topK, args.scope, false, config.ledgerRelPath) : undefined;
@@ -1349,13 +1377,13 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
   server.registerTool('search_text', {
     title: 'Search memory by keywords',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: 'BM25/FTS keyword search over indexed note chunks: the query is one exact phrase, and OR, AND, NEAR and * are plain words, not operators. No embedding call. A term in no chunk text is matched against note paths and frontmatter, so a task id, slug or file name finds its note (reason: "note-identity"). Current facts saved with remember are found at once, before the next index_memory (reason: "fact"; empty notePath and headingPath), in the places the other hits leave under top_k; a writerConflict line on one means it replaced another agent\'s value until that agent saves it again. Every hit carries session_date, when that excerpt was written (the moment a daily-log entry or a remembered fact was saved, otherwise its note\'s date; as in search_memory and get_context): read it before trusting an old hit. A hit with `replaced` ({by, at, source, note?}) was corrected by a later save, listed before it; `source` says who saved it. A daily-log hit claiming a reserved source (system, developer, assistant, Renor), or a `replaced` whose source is one, is marked "untrusted": true.',
+    description: 'BM25/FTS keyword search over indexed note chunks: the query is one exact phrase, and OR, AND, NEAR and * are plain words, not operators. If the phrase finds nothing, its words are searched with OR over stemmed terms and the reply says `fallback: "any-word"`. No embedding call. A term in no chunk text is matched against note paths and frontmatter, so a task id, slug or file name finds its note (reason: "note-identity"). Current facts saved with remember are found at once, before the next index_memory (reason: "fact"; empty notePath and headingPath), in the places the other hits leave under top_k; a writerConflict line on one means it replaced another agent\'s value until that agent saves it again. Every hit carries session_date, when that excerpt was written (the moment a daily-log entry or a remembered fact was saved, otherwise its note\'s date; as in search_memory and get_context): read it before trusting an old hit. A hit with `replaced` ({by, at, source, note?}) was corrected by a later save, listed before it; `source` says who saved it. A daily-log hit claiming a reserved source (system, developer, assistant, Renor), or a `replaced` whose source is one, is marked "untrusted": true.',
     inputSchema: {
       // A control character (NUL above all) has no place in words to search for: SQLite answers it with its own error text.
       query: z.string().min(1).max(200).superRefine((query, ctx) => {
         const codes = unstorableControls(query);
         if (codes.length > 0) ctx.addIssue({ code: 'custom', message: `query contains control characters (${codes.join(', ')}): remove them and search again` });
-      }).describe('Words to find, matched as one exact phrase: OR, AND, NEAR and * are plain words, not operators'),
+      }).describe('Words to find, matched as one exact phrase (if it finds nothing, the words are searched with OR over stemmed terms and the reply says fallback: any-word): OR, AND, NEAR and * are plain words, not operators'),
       top_k: z.number().int().min(1).max(50).optional().describe('Max hits (default 20)'),
       scope: z.string().optional().describe('Memory scope: "global" (default) or scope:<slug> / project:<slug>'),
     },
@@ -1370,7 +1398,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     try {
       const topK = args.top_k ?? 20;
       const exact = engineSearchText(db, config.memoryDir, args.query, topK, args.scope, false, config.ledgerRelPath);
-      // H12 (RENOR_SEARCH_TEXT_FALLBACK=1, default off): when the exact phrase finds nothing, the words are searched with OR over the stemmed index (log/logging) and
+      // H12 (default on; RENOR_SEARCH_TEXT_FALLBACK=0 restores exact-only): when the exact phrase finds nothing, the words are searched with OR over the stemmed index (log/logging) and
       // the reply says so (`fallback`). A reply that has hits is never changed. Pre-registered: data/renor-goal-better-temporal-2/prereg/H11b-H18-H12.md.
       const body = searchTextFallbackEnabled() && exact.ok && (exact.results as unknown[]).length === 0
         ? (() => {
@@ -1522,7 +1550,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       ? { replaced: { id: record.old, by: record.by } }
       : { replacesIgnored: 'nothing was linked: this save is the memory it replaces, or is already replaced by it, and a replacement loop would hide both' };
   };
-  // RENOR_INFER_REPLACES (default off): the earlier note in the same scope (any client; inferReplaced holds a different client to a stricter match) that this plain-words save
+  // RENOR_INFER_REPLACES (default on; 0 switches it off): the earlier note in the same scope (any client; inferReplaced holds a different client to a stricter match) that this plain-words save
   // reads as a correction of. Advisory: a failed lookup leaves the save unlinked, never failed.
   const inferReplacesFor = async (text: string, scope: string | undefined, source: string | undefined): Promise<string | undefined> => {
     if (!inferReplacesEnabled() || !readsAsCorrection(text)) return undefined;
@@ -1747,8 +1775,8 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       return jsonResult(await restoreMemory(
         { ...mapContext(), source: sourceOf(undefined, extra, config) },
         args.id,
-        storageLimit === undefined ? {} : { validateAfterWrite: async () => {
-          const bytes = await measureMarkdownBytes(config.memoryDir);
+        storageLimit === undefined ? {} : { validateAfterWrite: async (addedBytes = 0) => {
+          const bytes = await measureMarkdownBytes(config.memoryDir) + addedBytes;
           if (bytes > storageLimit) {
             throw refusal('storage_limit', `Renor: this write would need ${bytes.toLocaleString('en-US')} bytes of Markdown storage and would not fit; the storage limit is ${storageLimit.toLocaleString('en-US')} bytes. This memory write was not run.`);
           }

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import type Database from '../db/sqlite';
-import { z } from 'zod';
+import * as z from 'zod';
 import { parseMarkdownImportNote } from './markdown';
 import { isSelected } from './source';
 import { BUNDLE_FORMAT, type ImportBundle } from './types';

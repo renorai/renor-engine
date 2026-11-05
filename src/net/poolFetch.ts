@@ -10,7 +10,7 @@ import dc from 'node:diagnostics_channel';
  *
  * The pool is the same pool with a longer idle timer, built from the class of the global dispatcher so that no package is
  * added and the requests, their headers, bodies, aborts and errors are exactly `fetch`'s. Where the global dispatcher is not
- * there (another runtime, a Node without undici, a Node that registers a wrapper around its pool) the plain `fetch` is
+ * there (another runtime, a Node without undici, a Node that registers only a wrapper around its pool) the plain `fetch` is
  * returned and nothing changes. A server that sends its own `Keep-Alive: timeout=N` is still obeyed when N is shorter, which is
  * how a service says how long it will wait; one that names a longer time does not make the pool hold a connection longer than
  * its own timer.
@@ -24,8 +24,12 @@ import dc from 'node:diagnostics_channel';
  * embedding is a pure function of its text) and that can be sent again (a body held in memory, not a stream).
  */
 
-/** Where undici registers the dispatcher the global `fetch` uses; the symbol is how its own `getGlobalDispatcher` finds it. */
-const GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+/**
+ * Where undici registers the dispatcher the global `fetch` uses; the symbol is how its own `getGlobalDispatcher` finds it.
+ * Node 22 (undici 6) has only `.1`; Node 24 (undici 7) puts the same Agent under both; Node 26 (undici 8) keeps the Agent
+ * under `.2` and a wrapper for older callers under `.1`. Newest first.
+ */
+const GLOBAL_DISPATCHERS = [Symbol.for('undici.globalDispatcher.2'), Symbol.for('undici.globalDispatcher.1')];
 
 /**
  * How long an idle connection is kept. Google's front end closes an idle connection after 240 s: measured on 2026-10-18 on the
@@ -148,10 +152,11 @@ export function poolFetch(options: PoolFetchOptions = {}): PooledFetch {
   // Reading one of undici's globals loads it (`fetch` itself loads it only when it is first called), and undici registers
   // its dispatcher when it loads.
   void globalThis.Headers;
-  const registered = (globalThis as Record<symbol, unknown>)[GLOBAL_DISPATCHER] as { constructor?: { name?: string } } | undefined;
-  const Pool = registered?.constructor;
-  // Only the plain pool is known to take these options: Node 26 registers a wrapper around its dispatcher, which is not one.
-  if (typeof Pool !== 'function' || Pool.name !== 'Agent') return unpooled();
+  // Only the plain pool is known to take these options, not a wrapper around it.
+  const Pool = GLOBAL_DISPATCHERS
+    .map(symbol => ((globalThis as Record<symbol, unknown>)[symbol] as { constructor?: { name?: string } } | undefined)?.constructor)
+    .find(ctor => typeof ctor === 'function' && ctor.name === 'Agent');
+  if (!Pool) return unpooled();
   let dispatcher: { close(): Promise<void> };
   try {
     // keepAliveMaxTimeout caps what a server's own `Keep-Alive` hint may stretch the idle timer to: the hint can only shorten it.

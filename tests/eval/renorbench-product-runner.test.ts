@@ -139,7 +139,8 @@ describe('the run at the shipped defaults', () => {
     expect(defaults.results).toHaveLength(191);
     for (const row of defaults.results) {
       const matches = row.hits.filter((hit: { reason?: string }) => hit.reason !== 'session-expand');
-      expect(matches.length, row.id).toBe(20); // the tool's default window, over a 54-chunk vault
+      expect(matches.length, row.id).toBeGreaterThan(20); // the tool's default window is 50 since PR 1024: more than the 20 it was, over a 54-chunk vault
+      expect(matches.length, row.id).toBeLessThanOrEqual(50);
       expect(row.verdict, row.id).not.toBeNull();
       expect([HASH_RELEVANCE_BAR, RAISED_BAR], row.id).toContain(row.verdict.bar);
       expect(row.replyTokens, row.id).toBeGreaterThan(500);

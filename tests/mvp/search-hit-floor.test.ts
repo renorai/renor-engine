@@ -406,12 +406,16 @@ it('keeps relevance.fact when the floor frees slots but does not backfill its un
   await call('index_memory', {});
   let before: Body | undefined;
   // The fact vector is embedded in the background; under a loaded gate that can take far longer than 500ms, so wait up
-  // to ~15s (Date.now is frozen here, hence a count rather than a deadline) instead of racing it.
+  // to ~15s (Date.now is mocked here, hence a count rather than a deadline) instead of racing it.
   for (let i = 0; i < 600; i++) {
+    // A fill that failed once holds the backend off until Date.now passes retryAfter (30 s); with the clock frozen that
+    // never happens and the fact stays unembedded. Move the clock on each lap so a failed fill is retried, not final.
+    vi.spyOn(Date, 'now').mockReturnValue(NOW + i * 31_000);
     before = await search(call, { query: 'what is my favorite editor', top_k: 8, floorSetting: 0 });
     if (before.relevance?.fact) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
+  vi.spyOn(Date, 'now').mockReturnValue(NOW);
   expect(before!.relevance).toMatchObject({ relevant: true, fact: { subject: 'user', predicate: 'preferred_editor', object: 'Neovim' } });
   const after = await search(call, { query: 'what is my favorite editor', top_k: 8, floorSetting: 1 });
   expect(after.hits).toEqual([]);

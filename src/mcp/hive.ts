@@ -1,5 +1,5 @@
 import type Database from '../db/sqlite';
-import { z } from 'zod';
+import * as z from 'zod';
 import { assertStorable, secretGuardEnabled } from '../extraction/secretGuard';
 import { claimAgentLease, newLeaseHolder } from '../memory/agentLease';
 import { MAX_STATEMENT_LENGTH } from '../memory/limits';

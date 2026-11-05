@@ -15,7 +15,7 @@
  *                 topic that already has a current fact is skipped: a capture never supersedes or retires an existing fact.
  *
  * What it never does: write the delta. Nothing it receives is stored, logged or echoed; the reply is counts only, and
- * every error answer is a fixed code. A failure, timeout, bad reply or unknown usage saves nothing.
+ * every error answer is a fixed code. Extraction failures save nothing; write failures report partial counts.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -26,14 +26,15 @@ import { ruleApprovalsEnabled } from '../mvp/ruleApprovals';
 import { scanSecrets } from './secretScanner';
 import {
   ANTHROPIC_CAPTURE_PRICE_PER_MILLION, captureConfigDigest, captureMaxUsd, captureServerConfig, captureUserContent, extractCapture,
-  type CaptureConfig, type CapturePrice,
+  type CaptureConfig, type CaptureDiagnostics, type CapturePrice,
 } from './captureModel';
 
 export const CAPTURE_SOURCE = 'capture-server';
 export const CAPTURE_WRITER = 'renor-capture-server';
 export const CAPTURE_CLIENT = 'claude-code-hook/1';
-/** After a failed call, capture answers 503 for this long, so an outage costs one call, not one per turn. */
+/** Outages and repeated content failures pause paid capture calls for this long. */
 export const CAPTURE_COOLDOWN_MS = 30_000;
+const CONTENT_FAILURE_LIMIT = 3;
 const DEDUPE_WINDOW = 200;
 const DEDUPE_OVERLAP = 0.8;
 const MAX_MESSAGES = 40;
@@ -205,6 +206,7 @@ export function createCaptureTurns(deps: CaptureTurnsDeps): (body: unknown) => P
   const spendFile = path.join(deps.stateDir, 'capture-spend.json');
   const callsFile = path.join(deps.stateDir, 'capture-calls.jsonl');
   let cooldownUntil = 0;
+  let consecutiveContentFailures = 0;
   const recent: Array<{ key: string; tokens: Set<string> }> = [];
 
   const isDuplicate = (key: string): boolean => {
@@ -217,39 +219,47 @@ export function createCaptureTurns(deps: CaptureTurnsDeps): (body: unknown) => P
   };
 
   return async function handle(body: unknown): Promise<CaptureTurnsAnswer> {
+    const diagnostics: CaptureDiagnostics = { stop_reason: null, parsed: false, output_tokens: null };
+    const finish = (answer: CaptureTurnsAnswer): CaptureTurnsAnswer => {
+      if (answer.status >= 400) log(`[capture] failure ${JSON.stringify({
+        error: answer.body.error, ...diagnostics, upstream: undefined,
+      })}`);
+      return answer;
+    };
     try {
       const cfg: CaptureConfig | null = captureServerConfig(deps.env);
-      if (!cfg) return { status: 403, body: { error: 'capture_not_enabled' } };
+      if (!cfg) return finish({ status: 403, body: { error: 'capture_not_enabled' } });
       const delta = parseDelta(body);
-      if (!delta) return { status: 400, body: { error: 'invalid_body' } };
+      if (!delta) return finish({ status: 400, body: { error: 'invalid_body' } });
 
       // Screened before any spend, log or provider call. Only the count of turns held back is logged, never their text.
       let screened: { kept: Delta['messages']; dropped: number };
       try {
         screened = screenTurns(delta.messages);
       } catch {
-        return { status: 503, body: { error: 'scanner_unavailable' } };
+        return finish({ status: 503, body: { error: 'scanner_unavailable' } });
       }
       if (screened.dropped > 0) log(`[capture] ${screened.dropped} turn(s) held back by the secret scanner: not sent`);
-      if (screened.kept.length === 0) return { status: 200, body: { ok: true, saved: 0, pending_rules: 0 } };
+      if (screened.kept.length === 0) log('[capture] save_path {"reason":"all_turns_screened","saved":0,"pending_rules":0}');
+      if (screened.kept.length === 0) return finish({ status: 200, body: { ok: true, saved: 0, pending_rules: 0 } });
       const messages = screened.kept;
 
       const price: CapturePrice | undefined = ANTHROPIC_CAPTURE_PRICE_PER_MILLION[cfg.model];
-      if (!price) return { status: 503, body: { error: 'model_price_unknown' } };
-      if (now() < cooldownUntil) return { status: 503, body: { error: 'cooling_down' } };
+      if (!price) return finish({ status: 503, body: { error: 'model_price_unknown' } });
+      if (now() < cooldownUntil) return finish({ status: 503, body: { error: 'cooling_down' } });
 
       const day = new Date(now()).toISOString().slice(0, 10);
       const chars = messages.reduce((n, m) => n + m.text.length, 0);
       const reserve = captureMaxUsd(captureUserContent(messages), price);
       if (reserve > cfg.maxUsdCall) {
         log('[capture] per-call cap reached: the call was not made');
-        return { status: 429, body: { error: 'capture_call_cap' } };
+        return finish({ status: 429, body: { error: 'capture_call_cap' } });
       }
       const admission = reserveSpend(spendFile, day, reserve, cfg.maxUsdDay);
-      if (admission === 'busy') return { status: 503, body: { error: 'capture_busy' } };
+      if (admission === 'busy') return finish({ status: 503, body: { error: 'capture_busy' } });
       if (admission === 'over') {
         log('[capture] daily cap reached: the call was not made');
-        return { status: 429, body: { error: 'capture_budget' } };
+        return finish({ status: 429, body: { error: 'capture_budget' } });
       }
       // The reservation is on record before the call, so a call that dies midway still shows up here.
       appendCall(callsFile, {
@@ -257,49 +267,76 @@ export function createCaptureTurns(deps: CaptureTurnsDeps): (body: unknown) => P
         messages: messages.length, chars,
       });
 
-      const result = await extractCapture(messages, cfg, deps.fetchImpl);
+      const result = await extractCapture(messages, cfg, deps.fetchImpl, diagnostics, day);
+      log(`[capture] extraction ${JSON.stringify({ ...diagnostics, upstream: undefined })}`);
       // Settle to the real charge when the usage is known and within the reservation; otherwise the whole reservation stands.
       const charged = result?.usd ?? reserve;
       const usageKnown = result !== null && result.usd !== null;
       settleSpend(spendFile, day, reserve, charged);
       appendCall(callsFile, {
         event: 'settled', ok: result ? 1 : 0, usage_known: usageKnown ? 1 : 0,
-        in_tokens: result?.inTokens ?? 0, out_tokens: result?.outTokens ?? 0,
+        in_tokens: result?.inTokens ?? 0, out_tokens: diagnostics.output_tokens ?? 0,
         cache_write_tokens: result?.cacheWriteTokens ?? 0, cache_read_tokens: result?.cacheReadTokens ?? 0,
         usd_est: charged, messages: messages.length, chars,
       });
       if (!result) {
-        cooldownUntil = now() + CAPTURE_COOLDOWN_MS;
-        return { status: 502, body: { error: 'model_unavailable' } };
+        const contentFailure = ['invalid_json', 'truncated_output'].includes(diagnostics.failure ?? '');
+        consecutiveContentFailures = contentFailure ? consecutiveContentFailures + 1 : 0;
+        if (!contentFailure || consecutiveContentFailures >= CONTENT_FAILURE_LIMIT) {
+          cooldownUntil = now() + CAPTURE_COOLDOWN_MS;
+          consecutiveContentFailures = 0;
+        }
+        return finish({ status: 502, body: diagnostics.upstream ? { error: 'model_unavailable', upstream: diagnostics.upstream } : { error: 'model_unavailable', reason: diagnostics.failure } });
       }
-      if (result.usd === null) return { status: 502, body: { error: 'usage_unknown' } };
-      if (result.usd > reserve) return { status: 502, body: { error: 'cost_over_reserve' } };
+      consecutiveContentFailures = 0;
+      if (result.usd === null) return finish({ status: 502, body: { error: 'usage_unknown' } });
+      if (result.usd > reserve) return finish({ status: 502, body: { error: 'cost_over_reserve' } });
+
+      const candidates = (diagnostics.observation_candidates ?? 0) + (diagnostics.rule_candidates ?? 0);
+      if (candidates > 0 && result.observations.length + result.rules.length === 0) {
+        // The model answered but every entry failed validation: not a provider failure, so 200 with the reason and counts only.
+        log(`[capture] save_path ${JSON.stringify({ ...diagnostics, upstream: undefined, reason: 'no_valid_entries', saved: 0, pending_rules: 0 })}`);
+        return finish({ status: 200, body: { ok: true, saved: 0, pending_rules: 0, reason: 'no_valid_entries', candidates, accepted: 0 } });
+      }
 
       let saved = 0;
+      const counts = { empty: 0, duplicate: 0, secret: 0, note_write_failed: 0, rule_write_failed: 0, rule_not_saved: 0, rules_disabled: 0 };
       for (const observation of result.observations) {
         const key = normalise(observation.text);
-        if (!key || isDuplicate(key)) continue;
+        if (!key) { counts.empty++; continue; }
+        if (isDuplicate(key)) { counts.duplicate++; continue; }
         // The model's output is screened again before it is written.
-        if (scanSecrets(observation.text) !== null) continue;
+        if (scanSecrets(observation.text) !== null) { counts.secret++; continue; }
         try {
           await deps.saveNote(observation.text, observation.date);
           remembered(key);
           saved++;
-        } catch { /* refused by the secret guard, or not written: nothing of it is kept */ }
+        } catch { counts.note_write_failed++; }
       }
 
       let pending = 0;
       if (ruleApprovalsEnabled(deps.env)) {
         for (const rule of result.rules) {
-          if (scanSecrets(rule.text) !== null || scanSecrets(rule.topic) !== null) continue;
+          if (scanSecrets(rule.text) !== null || scanSecrets(rule.topic) !== null) { counts.secret++; continue; }
           try {
             if (await deps.saveRule(rule.topic.replace(/ /g, '_'), rule.text)) pending++;
-          } catch { /* refused or not written */ }
+            else counts.rule_not_saved++;
+          } catch { counts.rule_write_failed++; }
         }
+      } else counts.rules_disabled = result.rules.length;
+      const savePath = {
+        ...diagnostics, upstream: undefined, ...counts, saved, pending_rules: pending,
+        reason: counts.note_write_failed + counts.rule_write_failed > 0 ? 'write_failed'
+          : saved + pending > 0 ? 'saved'
+          : result.observations.length + result.rules.length === 0 ? 'empty_extraction' : 'nothing_persisted',
+      };
+      log(`[capture] save_path ${JSON.stringify(savePath)}`);
+      if (counts.note_write_failed + counts.rule_write_failed > 0) {
+        return finish({ status: 500, body: { error: 'capture_save_failed', saved, pending_rules: pending } });
       }
-      return { status: 200, body: { ok: true, saved, pending_rules: pending } };
+      return finish({ status: 200, body: { ok: true, saved, pending_rules: pending } });
     } catch {
-      return { status: 500, body: { error: 'capture_failed' } };
+      return finish({ status: 500, body: { error: 'capture_failed' } });
     }
   };
 }

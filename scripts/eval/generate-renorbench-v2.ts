@@ -12,7 +12,7 @@ import { EVAL_NOW, jsonl } from './renorbench-common';
  * table below or a hash of a fixed key, so two runs write the same bytes (tests/eval/renorbench-v2-fixture.test.ts
  * regenerates it and compares). Every person, place and number is invented.
  *
- * Why a second fixture. v1 is 30 notes (54 chunks), so the product's default window (top_k 20) holds nearly every
+ * Why a second fixture. v1 is 30 notes (54 chunks), so the product's window when this was written (top_k 20; the default is 50 since 2026-10-27, and the RenorBench product scripts send 20) holds nearly every
  * chunk of the vault and cannot lose anything: turning session expansion off moved the reply's size and no delivery
  * score, a stale value could not crowd out the current one, and the abstention questions sat in a mixed region that
  * moves with the verdict's bar. v1 stays exactly as it is, so its scores stay comparable; v2 is a separate vault with its

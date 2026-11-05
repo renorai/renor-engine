@@ -18,7 +18,7 @@ import { quoteFtsQuery, shownPage } from './queryHelpers';
 import { keywordLedgerHits } from './ledgerPresentation';
 import {
   ENTITY_LANE_BOOST, NEAR_DUP_POOL, contentTerms, factBoostMatches, applyNearDupCap, entityLaneChunkIds, entityLaneEnabled, entityLaneTerms, laneTermShare,
-  queryRewriteEnabled, resolveNearDupCap, rewriteConversationalQuery,
+  queryRewriteEnabled, rerankTopN, resolveNearDupCap, resolveRerankTopN, rewriteConversationalQuery,
 } from './plainWording';
 import { addRankingTerm, attachRankingTerms, currentRankingTrace, newRankingTerms, rankingTermIndex } from './rankingTrace';
 
@@ -623,24 +623,38 @@ export interface RankedExpansion {
   documentStatementTokens: number;
 }
 
-/** The top-K a read asks for by default: the ranked expansion's budget in this file is the one measured for it. */
+/** The top-K the ranked expansion's base budget (SESSION_EXPAND_RANKED_TOKENS) was sized for. */
 export const PAGE_BASE_TOP_K = 20;
 
-/** What each match asked for beyond PAGE_BASE_TOP_K adds to the ranked expansion's budget when RENOR_TOPK_SCALES_BUDGET is armed. */
+/** What each match asked for beyond PAGE_BASE_TOP_K adds to the ranked expansion's budget unless RENOR_TOPK_SCALES_BUDGET is off. */
 export const RANKED_TOKENS_PER_EXTRA_MATCH = 90;
 
 /**
- * RENOR_TOPK_SCALES_BUDGET (default off; `1`, `true`, `yes` or `on` arm it): a read that asks for more than PAGE_BASE_TOP_K matches gets a ranked
- * expansion budget that grows with the ask, SESSION_EXPAND_RANKED_TOKENS plus RANKED_TOKENS_PER_EXTRA_MATCH for each match above 20 (4,000 tokens at
- * 50), so the statements that go with a window of 50 matches are not squeezed into the 1,300 tokens that were sized for 20. RENOR_SESSION_EXPAND_TOKENS
- * still decides when it is set. At a top-K of 20 or less nothing changes, armed or not; off, nothing changes at any top-K.
+ * RENOR_TOPK_SCALES_BUDGET (default ON since the flip of 2026-10-27; `0`, `false`, `no` or `off` restore the former budget): a read that asks for more
+ * than PAGE_BASE_TOP_K matches gets a ranked expansion budget that grows with the ask, SESSION_EXPAND_RANKED_TOKENS plus RANKED_TOKENS_PER_EXTRA_MATCH
+ * for each match above 20 (4,000 tokens at 50), so the statements that go with a window of 50 matches are not squeezed into the 1,300 tokens that were
+ * sized for 20. RENOR_SESSION_EXPAND_TOKENS still decides when it is set. At a top-K of 20 or less nothing changes, on or off; off, nothing changes at any top-K.
  *
  * Measured at one point, 50 (LEDGER section BM, results/top-score-20261026/): the page of `--top-k 50` with the 1,300-token budget completes the
  * evidence of no more questions than the page of 20; the same page with a 4,000-token budget completes more of them. Other asks are interpolated.
  */
 export function topKScalesBudget(env: NodeJS.ProcessEnv = process.env): boolean {
   const v = (env.RENOR_TOPK_SCALES_BUDGET ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+  return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
+}
+
+/** The matches a `search` asks for when its caller names no number: 50 since the flip of 2026-10-27 (it was 20); the hosted tool's own ceiling. */
+export const DEFAULT_SEARCH_TOP_K = 50;
+
+/**
+ * The matches `renor search` and the hosted `search_memory` return when the caller names none. RENOR_SEARCH_TOP_K (a whole number from 1 to 50) sets it
+ * for a deployment: `20` with RENOR_TOPK_SCALES_BUDGET=0 is the page that was the default before the flip, byte for byte. Anything else is 50.
+ * A caller that passes its own top-k (`--top-k`, `top_k`) is never touched.
+ */
+export function defaultSearchTopK(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.RENOR_SEARCH_TOP_K ?? '').trim();
+  const n = Number(raw);
+  return raw !== '' && Number.isInteger(n) && n >= 1 && n <= DEFAULT_SEARCH_TOP_K ? n : DEFAULT_SEARCH_TOP_K;
 }
 
 /** The ranked expansion's token budget for a read of `topK` matches: SESSION_EXPAND_RANKED_TOKENS, grown with the ask when RENOR_TOPK_SCALES_BUDGET is armed. */
@@ -1386,7 +1400,10 @@ function rankWindow(read: {
   ), opts.isLedgerNote);
   const diversityCap = resolveSessionDiversityCap(process.env, opts.noteCapWhenUnset);
   // RENOR_NEAR_DUP_CAP (default off): near-copies are capped before the per-note cap, on the visible text.
-  const windowed = reserveLanePlaces(applySessionDiversity(applyNearDupCap(mixed, nearDupCap, contentfulText), diversityCap, topK), topK, laneTerms);
+  // RENOR_RERANK_TOP_N (default off): the first n of that ranking are reranked by the query words they carry, then cut to topK.
+  const rerankN = resolveRerankTopN();
+  const diversified = applySessionDiversity(applyNearDupCap(mixed, nearDupCap, contentfulText), diversityCap, topK);
+  const windowed = reserveLanePlaces(rerankN > topK ? rerankTopN(diversified, query, rerankN) : diversified, topK, laneTerms);
   // The window's candidates are recorded before they are copied into the plain hits below, which carry no terms.
   if (trace) for (const hit of windowed) trace.touch(hit);
   let hits = windowed.map(h => ({

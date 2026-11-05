@@ -1,10 +1,19 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import config from '../vitest.config';
 
 const engineDir = path.resolve(__dirname, '..');
+
+// Loading globalSetup pulls in the whole `typescript` package; on a loaded gate machine the first
+// load can pass the 5 s default test timeout (#1464, "STACK_TRACE_ERROR" on run 1, pass on rerun).
+// Warm the module once with a generous hook timeout and give each wiring test explicit headroom.
+const SETUP_TIMEOUT_MS = 60_000;
+
+beforeAll(async () => {
+  await import('./globalSetup.js');
+}, SETUP_TIMEOUT_MS);
 
 describe('globalSetup wiring', () => {
   afterEach(() => {
@@ -40,12 +49,12 @@ describe('globalSetup wiring', () => {
     expect(args.slice(1)).toEqual(['-b', path.join(engineDir, 'tsconfig.json')]);
     expect(opts.timeout).toBeGreaterThanOrEqual(120_000);
     expect(opts.maxBuffer).toBeGreaterThanOrEqual(64 * 1024 * 1024);
-  });
+  }, SETUP_TIMEOUT_MS);
 
   it('throws, with the compiler output, on a non-zero exit', async () => {
     const { setup } = await loadWith(2);
     expect(() => setup()).toThrow(/exit 2[\s\S]*diagnostic/);
-  });
+  }, SETUP_TIMEOUT_MS);
 });
 
 describe('pruneOrphanOutputs', () => {

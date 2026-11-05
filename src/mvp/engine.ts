@@ -45,6 +45,7 @@ import {
 } from '../evidence/attach';
 import { createEvidenceExtractor, resolveEvidenceToolOptions, type EvidenceToolOptions } from '../evidence/options';
 import { resolveEvidenceBackground } from '../evidence/background';
+import { observeEnabled, searchObservations } from './observations';
 import type { IdleMonitor } from './idle';
 import type { EvidenceExtractor } from '../evidence/secondPass';
 import { embeddingModelKey } from './contextRelevance';
@@ -498,6 +499,42 @@ function semanticUnavailable(): { ok: false; error: 'semantic-unavailable'; note
   return { ok: false, error: 'semantic-unavailable', note: SEMANTIC_UNAVAILABLE_NOTE, hits: [] };
 }
 
+function observationHits(db: Database.Database, workspace: string, query: string, limit: number, scope?: string): unknown[] {
+  if (!observeEnabled() || isBlankOrInvisible(query) || !Number.isInteger(limit) || limit < 1) return [];
+  try {
+    const hits = searchObservations(db, workspace, query, Math.min(limit, 100), {}, scope);
+    if (hits.length === 0) return [];
+    return hits.filter(hit => {
+      if (scope === undefined) return true;
+      const raw = hit.cwd_scope;
+      try { return normalizeScope(raw) === normalizeScope(scope); }
+      catch { return false; }
+    }).map(hit => ({
+      notePath: hit.notePath,
+      headingPath: hit.title,
+      text: hit.text,
+      score: hit.score,
+      reason: hit.reason,
+      source: hit.source,
+      session_date: hit.session_date,
+      id: hit.id,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function withObservationHits<T>(hits: T[], observations: unknown[], topK: number): Array<T | unknown> {
+  if (observations.length === 0) return hits;
+  const limit = Math.max(0, topK);
+  if (hits.length === 0) return observations.slice(0, limit);
+  // Keep the best explicit memory first, then give matching observations a small lane of their own. Appending before
+  // cutting made that lane unreachable whenever ordinary memories filled the page. Keeping the lanes separate also
+  // makes an explicit memory win score ties rather than letting transient observations displace it.
+  const observationSlots = Math.min(2, observations.length, Math.max(0, limit - 1));
+  return [...hits.slice(0, limit - observationSlots), ...observations.slice(0, observationSlots)];
+}
+
 export async function engineSearchMemory(
   db: Database.Database,
   engine: Engine,
@@ -520,6 +557,8 @@ export async function engineSearchMemory(
   withChunkIds = false,
   /** search_memory under RENOR_SEARCH_BEST_FIRST: the window best match first (retrieval/orchestrator.ts). */
   bestFirst = false,
+  /** Original read scope before the caller normalizes an omitted scope to `global`. */
+  observationScope = scope,
 ): Promise<{ ok: boolean; error?: string; notice?: string; rankedBy?: HitOrder; hits: unknown[]; scope?: string; evidence?: ProductEvidenceAttachment }> {
   // A query with no searchable characters can never truthfully match stored data. Refuse before
   // any embedding call (eval-hash or provider) so whitespace-only input yields no hits instead
@@ -527,12 +566,13 @@ export async function engineSearchMemory(
   if (isBlankOrInvisible(query)) {
     return { ok: true, hits: [] };
   }
+  const observed = () => observationHits(db, memoryDir, query, topK, observationScope);
   if (!engine.provider || !engine.vectorIndex) {
-    return semanticUnavailable();
+    return { ...semanticUnavailable(), hits: observed() };
   }
   // Never search a mixed or unfinished space: the caller falls back to keyword search and is told why.
   if (!semanticReady(engine)) {
-    return { ok: false, error: 'semantic-rebuilding', notice: rebuildNotice(db, engine), hits: [] };
+    return { ok: false, error: 'semantic-rebuilding', notice: rebuildNotice(db, engine), hits: observed() };
   }
   const isLedger = ledgerNoteMatcher({ memoryDir, ledgerRelPath });
   // The query is embedded within the read budget: past it the search says so (below) and the caller answers from
@@ -564,7 +604,7 @@ export async function engineSearchMemory(
     // says why nothing was found by meaning, instead of failing whole.
     log.error('semantic_search_failed', {}, err);
     semanticFailures.set(engine, { at: new Date().toISOString(), reason: failureReason(err, 120) });
-    return { ok: false, error: 'semantic-unavailable', notice: semanticFailureNotice(err), hits: [] };
+    return { ok: false, error: 'semantic-unavailable', notice: semanticFailureNotice(err), hits: observed() };
   }
   semanticFailures.delete(engine);
   // Scope must be enforced before any full-note hydration/evidence extraction.
@@ -642,10 +682,11 @@ export async function engineSearchMemory(
     // its chunk is event markup, and its cosine says little about what it holds (contextRelevance.ts).
     ...(showSimilarity && typeof h.similarity === 'number' && !isLedger(h.notePath) ? { similarity: Math.round(h.similarity * 1000) / 1000 } : {}),
   }));
+  const withObservations = withObservationHits(hits, observed(), topK);
   return {
     ok: true,
     rankedBy: result.rankedBy,
-    hits,
+    hits: withObservations,
     // Present whenever an evidence model is configured, and when the kill switch is off: `state` is how a caller tells
     // an intended "off" from a pass that failed or did not apply.
     ...(attached ? { evidence: productEvidenceReport(attached.evidence) } : {}),
@@ -653,9 +694,13 @@ export async function engineSearchMemory(
   };
 }
 
-export function engineSearchText(db: Database.Database, memoryDir: string, query: string, topK: number, scope?: string, includeHistory = false, ledgerRelPath = DEFAULT_LEDGER_REL, ledgerRecords?: LedgerRecordCache, matchOverride?: string, stem = false) {
+export function engineSearchText(db: Database.Database, memoryDir: string, query: string, topK: number, scope?: string, includeHistory = false, ledgerRelPath = DEFAULT_LEDGER_REL, ledgerRecords?: LedgerRecordCache, matchOverride?: string, stem = false, observationScope = scope) {
+  const observed = () => observationHits(db, memoryDir, query, topK, observationScope);
   const fts = prepareOnce(db, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'`).get();
-  if (!fts) return { ok: false, error: 'fts-unavailable', results: [] as unknown[] };
+  if (!fts) {
+    const found = observed();
+    return found.length > 0 ? { ok: true, results: found } : { ok: false, error: 'fts-unavailable', results: [] as unknown[] };
+  }
   // matchOverride (H11b): an FTS expression built by the caller (an OR over the question's content words); absent, the whole query as one phrase.
   const match = matchOverride ?? quoteFtsQuery(query);
   if (!match) return { ok: true, results: [] as unknown[] };
@@ -699,7 +744,8 @@ export function engineSearchText(db: Database.Database, memoryDir: string, query
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: 'fts-query', detail: message.slice(0, 200), results: [] };
+    const found = observed();
+    return found.length > 0 ? { ok: true, results: found } : { ok: false, error: 'fts-query', detail: message.slice(0, 200), results: [] };
   }
   // Only the prose hits actually returned count as "already have"; scope is applied
   // before the identity limit.
@@ -724,9 +770,10 @@ export function engineSearchText(db: Database.Database, memoryDir: string, query
     const session_date = boundTime(path.resolve(memoryDir, r.notePath), derived);
     return { ...r, session_date };
   }), isLedger, ledgerRecords);
+  const withObservations = withObservationHits(results, observed(), topK);
   return {
     ok: true,
-    results,
+    results: withObservations,
     ...(scopeNorm ? { scope: scopeNorm } : {}),
   };
 }

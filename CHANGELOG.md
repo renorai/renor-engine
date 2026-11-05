@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 1.4.2 - 2026-11-05
+
+### Changed
+
+- Capture: a missing observation date defaults to the request day, and a request with 0 valid entries returns 200 (#1449).
+- Capture: no default thinking on the extraction call, and a 200 with 0 notes is explained (#1433).
+- Capture: `temperature` is no longer sent to Claude 5.x models, and the upstream error is surfaced (#1424).
+- `search` and `search_memory` return 50 matches by default (was 20), with a scaled expansion budget (#1024).
+- Bun compatibility: zod namespace import and byte-mode readdir of bare Buffers (#1452).
+- Node 26 keep-alive pool fix and chokidar 4 (#1126).
+- Removed the unused `RENOR_CONTEXT_SPLIT` and `RENOR_READER_ADVICE_LINES` switches (measured not better, off by default) (#1431).
+- `RENOR_INFER_REPLACES` is on by default (`0` turns it off): a note that reads as a correction (now also "replaced by", "switched to", "changed to") supersedes the earlier note it corrects, so recall no longer shows the old value unmarked (#1460).
+- The engine can store and index zero-LLM capture observations (`renor/observe`); off by default behind `RENOR_OBSERVE` (#1446).
+
 ## 1.4.1 - 2026-11-03
 
 ### Changed

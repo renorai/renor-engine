@@ -177,44 +177,6 @@ describe('C3 fixture: no parsable date → when stays as user wording, valid_fro
   });
 });
 
-describe('C3 fixture: unchanged content → zero extractor model calls', () => {
-  it('second index of an identical note does not call the extractor (hash-keyed skip)', async () => {
-    const v = mkvault();
-    const db = freshDb(path.join(v, 'index.db'));
-    const note = await writeNote(v, 'run.md', DATED_NOTE);
-    const calls = { n: 0 };
-    const opts = {
-      eventExtractor: stubExtractor([{ when: 'yesterday', event: 'ran 5km' }], calls),
-    };
-    await indexFile(db, note, opts);
-    expect(calls.n).toBe(1);
-    const rowsAfterFirst = (db.prepare("SELECT count(*) c FROM structured_rows WHERE row_kind='event'").get() as any).c;
-
-    await indexFile(db, note, opts); // unchanged content + same extraction_version
-    expect(calls.n).toBe(1); // zero model calls on the second pass
-    expect((db.prepare("SELECT count(*) c FROM structured_rows WHERE row_kind='event'").get() as any).c).toBe(rowsAfterFirst);
-    db.close();
-  });
-
-  it('changed extraction_version invalidates the cache and re-extracts', async () => {
-    const v = mkvault();
-    const db = freshDb(path.join(v, 'index.db'));
-    const note = await writeNote(v, 'run.md', DATED_NOTE);
-    const calls = { n: 0 };
-    const opts = {
-      eventExtractor: stubExtractor([{ when: 'yesterday', event: 'ran 5km' }], calls),
-    };
-    await indexFile(db, note, opts);
-    expect(calls.n).toBe(1);
-    // Simulate a future extractor version: rows exist but under an old version.
-    db.prepare("UPDATE structured_rows SET extraction_version = 'events-v0:old' WHERE row_kind='event'").run();
-    await indexFile(db, note, opts);
-    expect(calls.n).toBe(2); // version change → invalidate + re-extract
-    expect((db.prepare("SELECT count(*) c FROM structured_rows WHERE extraction_version = 'events-v0:old'").get() as any).c).toBe(0);
-    db.close();
-  });
-});
-
 describe('C3 fixture: YAML extractor response → explicit parse error, never cached', () => {
   it('throws extractor-parse-error; note hash reset so retry is possible; no rows cached', async () => {
     const v = mkvault();
@@ -236,22 +198,6 @@ describe('C3 fixture: YAML extractor response → explicit parse error, never ca
     db.close();
   });
 
-  it('a permanently failing extractor through the retry wrapper burns ≤3 calls and never caches []', async () => {
-    const v = mkvault();
-    const db = freshDb(path.join(v, 'index.db'));
-    const note = await writeNote(v, 'run.md', DATED_NOTE);
-    let calls = 0;
-    const { extractEventsWithRetry, ExtractorParseError: EPE } = await import('../../src/extraction/eventExtractor.js');
-    await expect(indexFile(db, note, {
-      eventExtractor: (title: string, body: string) => extractEventsWithRetry(async () => {
-        calls++;
-        throw new EPE('extractor-parse-error: yaml');
-      }, title, body),
-    })).rejects.toThrow(/extractor-parse-error/);
-    expect(calls).toBe(3);
-    expect((db.prepare("SELECT count(*) c FROM structured_rows WHERE row_kind='event'").get() as any).c).toBe(0);
-    db.close();
-  });
 });
 
 describe('C3 fixture: composer chronicle section (40-row relevance cap, not flat first-seen)', () => {

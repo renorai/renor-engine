@@ -62,15 +62,20 @@ export function keywordSearch(db: Database.Database, match: string, limit: numbe
 }
 
 
-/** RENOR_KEYWORD_STEM=1 searches a Porter-stemmed copy of the chunk index (log/logging/logger, test/tests). Default off. */
+/** The one off switch for the three keyword defaults (OR query, stemmed index, search_text fallback): exactly `0` restores all three. */
+export function keywordDefaultsOff(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.RENOR_KEYWORD_DEFAULTS ?? '').trim() === '0';
+}
+
+/** Searches a Porter-stemmed copy by default; RENOR_KEYWORD_STEM=0 or RENOR_KEYWORD_DEFAULTS=0 restores the legacy unstemmed index. */
 function stemEnabled(): boolean {
-  return (process.env.RENOR_KEYWORD_STEM ?? '').trim() === '1';
+  return !keywordDefaultsOff() && (process.env.RENOR_KEYWORD_STEM ?? '').trim() !== '0';
 }
 
 const stemReady = new WeakSet<Database.Database>();
 
 /**
- * The FTS table the keyword lane reads. Off (default): `chunks_fts`, untouched. On: `chunks_fts_stem`, an external-content
+ * The FTS table the keyword lane reads. Off (`RENOR_KEYWORD_STEM=0`): `chunks_fts`, untouched. On (default): `chunks_fts_stem`, an external-content
  * FTS5 table over the same chunks with the `porter unicode61` tokenizer, created and filled once per workspace on first use
  * (existing workspaces need no migration) and kept in sync by triggers. If it cannot be built (read-only database), the
  * lane falls back to `chunks_fts`.
@@ -99,6 +104,13 @@ export function keywordIndexTable(db: Database.Database, forceStem = false): str
     stemReady.add(db);
     return 'chunks_fts_stem';
   } catch {
+    // Another connection won the first build: the table exists now, so this handle reads it too instead of the legacy table.
+    try {
+      if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts_stem'`).get()) {
+        stemReady.add(db);
+        return 'chunks_fts_stem';
+      }
+    } catch { /* unreadable: fall back below */ }
     return 'chunks_fts';
   }
 }

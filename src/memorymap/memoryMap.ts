@@ -18,6 +18,7 @@ import { dropEvidenceForStems } from '../evidence/evidenceCache';
 import { forgetImportedNotes } from '../importing/forgetImported';
 import { forgetReplacementsOf } from './replacedJournal';
 import { clampSessionDate, createNoteTimeBound, resolveSessionDate } from '../retrieval/orchestrator';
+import { observeEnabled, observationsForExport, purgeRetiredObservations, setObservationRetired, type ObservationExportRow } from '../mvp/observations';
 
 // ---------------------------------------------------------------------------
 // Memory map: a read model of everything one workspace holds, shaped for a
@@ -112,7 +113,7 @@ export interface MemoryMapContext {
   evidenceCachePath?: string;
 }
 
-export type MemoryKind = 'note' | 'entry';
+export type MemoryKind = 'note' | 'entry' | 'observation';
 
 export interface MapMemory {
   id: string;
@@ -132,6 +133,30 @@ export interface MapMemory {
   tags: string[];
   status: string | null;
   excerpt: string;
+}
+
+function observationTitle(row: ObservationExportRow): string {
+  return `${row.event} · ${row.client}`;
+}
+
+function observationText(row: ObservationExportRow): string {
+  const parts = [row.text, row.tool ? JSON.stringify(row.tool) : null].filter((part): part is string => part !== null && part.length > 0);
+  return parts.join('\n') || `${row.event} event`;
+}
+
+function observationMemory(row: ObservationExportRow): MapMemory {
+  const text = observationText(row);
+  return {
+    id: row.id,
+    kind: 'observation',
+    path: 'observations',
+    title: observationTitle(row),
+    at: row.ts,
+    source: row.client,
+    tags: [],
+    status: row.retired ? 'retired' : null,
+    excerpt: collapse(text, EXCERPT_CHARS),
+  };
 }
 
 export interface MapThing {
@@ -918,12 +943,18 @@ export async function buildMemoryMap(ctx: MemoryMapContext, options: MemoryMapOp
   const { db } = ctx;
   const cap = options.limit ?? DEFAULT_MAP_LIMIT;
   const collected = await collectMemories(ctx);
-  const memories = collected.memories;
+  const observationRows = observeEnabled() ? observationsForExport(db, path.resolve(ctx.memoryDir)) : [];
+  const activeObservations = observationRows.filter((row) => !row.retired).map(observationMemory);
+  const memories = activeObservations.length === 0
+    ? collected.memories
+    : [...collected.memories, ...activeObservations]
+      .sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id))
+      .slice(0, MAX_MEMORIES);
   const mentionText = collected.text;
   const wikilinksOf = collected.wikilinks;
 
   const shown = memories.slice(0, cap);
-  const truncatedMemories = collected.truncated || memories.length > cap;
+  const truncatedMemories = collected.truncated || collected.memories.length + activeObservations.length > MAX_MEMORIES || memories.length > cap;
 
   // Wikilink targets: an exact vault path wins; a bare name or title links only when unambiguous across the whole vault.
   const byPath = new Map<string, string>();
@@ -1203,6 +1234,12 @@ export interface MemoryDetail {
 }
 
 export async function readMemory(ctx: MemoryMapContext, id: string): Promise<MemoryDetail> {
+  if (id.startsWith('observation:') && observeEnabled()) {
+    const row = observationsForExport(ctx.db, path.resolve(ctx.memoryDir)).find((item) => item.id === id);
+    if (!row) throw refusal('memory_not_found', 'memory not found');
+    const memory = observationMemory(row);
+    return { ok: true, memory, text: observationText(row), textTruncated: false, metadata: {}, facts: [] };
+  }
   const ref = parseMemoryId(id);
   const file = await resolveVaultFile(ctx, ref.rel, true);
   await assertNotExcluded(ctx, file);
@@ -1353,6 +1390,15 @@ function newRid(): string {
 }
 
 export function retireMemory(ctx: MemoryMapContext, id: string, expectedHash?: string): Promise<RetireReceipt | FactRetirementReceipt> {
+  if (id.startsWith('observation:') && observeEnabled()) {
+    const row = observationsForExport(ctx.db, path.resolve(ctx.memoryDir)).find((item) => item.id === id);
+    if (!row) return Promise.reject(refusal('memory_not_found', 'memory not found'));
+    if (row.retired) return Promise.reject(refusal('memory_already_retired', 'memory is already retired'));
+    if (!setObservationRetired(ctx.db, path.resolve(ctx.memoryDir), id, true)) {
+      return Promise.reject(refusal('memory_not_found', 'memory not found'));
+    }
+    return Promise.resolve({ ok: true, id, action: 'retired', title: observationTitle(row), at: new Date().toISOString() });
+  }
   if (factEventId(id) !== null) return retireFact(ctx.db, ctx.memoryDir, ctx.ledgerRelPath, id, ctx.source);
   return serialize(async () => {
     await reconcile(ctx);
@@ -1439,8 +1485,20 @@ export function retireMemory(ctx: MemoryMapContext, id: string, expectedHash?: s
 export function restoreMemory(
   ctx: MemoryMapContext,
   id: string,
-  options: { validateAfterWrite?: () => void | Promise<void> } = {},
+  /**
+   * validateAfterWrite measures the storage the restore leaves and throws to refuse it. A note is moved back first and moved
+   * away again on a refusal; a fact is checked before its event is written, with the bytes that event adds (addedBytes).
+   */
+  options: { validateAfterWrite?: (addedBytes?: number) => void | Promise<void> } = {},
 ): Promise<RetireReceipt | FactRetirementReceipt> {
+  if (id.startsWith('observation:') && observeEnabled()) {
+    const row = observationsForExport(ctx.db, path.resolve(ctx.memoryDir)).find((item) => item.id === id);
+    if (!row) return Promise.reject(refusal('memory_not_found', 'memory not found'));
+    if (!setObservationRetired(ctx.db, path.resolve(ctx.memoryDir), id, false)) {
+      return Promise.reject(refusal('memory_not_found', 'memory not found'));
+    }
+    return Promise.resolve({ ok: true, id, action: 'restored', title: observationTitle(row), at: new Date().toISOString() });
+  }
   if (factEventId(id) !== null) return restoreFact(ctx.db, ctx.memoryDir, ctx.ledgerRelPath, id, ctx.source, options.validateAfterWrite);
   return serialize(async () => {
     const before = await readJournal(ctx);
@@ -1650,6 +1708,20 @@ function reportErased(onErased: ((links: ErasedLink[]) => void) | undefined, lin
 }
 
 export async function purgeRetired(ctx: MemoryMapContext, target: string, only?: readonly string[],
+  onErased?: (links: ErasedLink[]) => void): Promise<PurgeReceipt> {
+  const workspace = path.resolve(ctx.memoryDir);
+  if (target.startsWith('observation:')) {
+    const ids = purgeRetiredObservations(ctx.db, workspace, target);
+    if (ids.length === 0) throw refusal('memory_not_found', 'no retired observation with that id');
+    return { ok: true, action: 'deleted', ids, freedBytes: 0, at: new Date().toISOString() };
+  }
+  const receipt = await purgeRetiredJournal(ctx, target, only, onErased);
+  if (target !== 'all') return receipt;
+  const ids = purgeRetiredObservations(ctx.db, workspace, undefined, only);
+  return ids.length === 0 ? receipt : { ...receipt, ids: [...receipt.ids, ...ids] };
+}
+
+async function purgeRetiredJournal(ctx: MemoryMapContext, target: string, only?: readonly string[],
   onErased?: (links: ErasedLink[]) => void): Promise<PurgeReceipt> {
   if (factEventId(target) !== null) {
     const links = factLink(ctx, target);

@@ -93,6 +93,7 @@ describe('read path I/O shape', () => {
   });
 
   it('ranks and limits inside the FTS subquery before reading chunk text, returning the rows of the full ranking', () => {
+    process.env.RENOR_KEYWORD_STEM = '0'; // This test owns the legacy index's exact SQL plan.
     const db = openDb(DB); runMigrations(db);
     // Many chunks with IDENTICAL text -> identical bm25 scores, written in an order that is not their place order.
     const texts: string[] = [];
@@ -132,6 +133,7 @@ describe('read path I/O shape', () => {
     expect(sortAt).toBeGreaterThanOrEqual(0);
     expect(chunkLookupAt).toBeGreaterThan(sortAt);
     db.close();
+    delete process.env.RENOR_KEYWORD_STEM;
   });
 
   it('reads no more chunk rows than the page holds when no row is dropped', () => {

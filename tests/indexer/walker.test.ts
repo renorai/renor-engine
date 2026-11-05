@@ -294,3 +294,24 @@ describe.skipIf(!supportsNonUtf8Names)('walkVault with names that are not valid 
     expect(reported).toEqual([String.raw`back\\xff\xff.md`, String.raw`new\x0aline\xff.md`]);
   });
 });
+
+describe('walkVault on a runtime whose byte-mode readdir returns bare Buffers (Bun)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('walks files and folders the same as with Dirents', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bun-walk-'));
+    fs.mkdirSync(path.join(root, 'sub'));
+    fs.writeFileSync(path.join(root, 'a.md'), 'a');
+    fs.writeFileSync(path.join(root, 'sub', 'b.md'), 'b');
+    fs.writeFileSync(path.join(root, 'c.txt'), 'c');
+    const real = fsp.readdir.bind(fsp) as (...a: unknown[]) => Promise<unknown>;
+    vi.spyOn(fsp, 'readdir').mockImplementation((async (dir: unknown, opts?: { encoding?: string }) => {
+      if (opts?.encoding === 'buffer') return real(dir, { encoding: 'buffer' }); // bare Buffers, no Dirent
+      return real(dir, opts);
+    }) as never);
+    const found: string[] = [];
+    const files = await walkVault(root, { onNonUtf8Markdown: l => found.push(l) });
+    expect(files.map(f => path.relative(root, f)).sort()).toEqual(['a.md', path.join('sub', 'b.md')]);
+    expect(found).toEqual([]);
+  });
+});

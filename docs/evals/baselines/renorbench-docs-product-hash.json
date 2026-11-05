@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "benchmark": "renorbench-docs-product",
-  "reason": "evaluator: reply capture and TOON decode in the product runner (renorai/renor-engine#6); numbers unchanged",
-  "recordedAt": "2026-10-28T22:36:43.332Z",
-  "gitSha": "ba2045c78dcd27366ff95ae62bc95a3c99160c6f",
+  "reason": "keyword OR, stemming, and search-text fallback are now default on",
+  "recordedAt": "2026-11-04T22:10:18.733Z",
+  "gitSha": "61e12f11d9d1658ae5a12f9e449c49c05cab05d4",
   "manifest": {
     "benchmark": "renorbench-docs-product",
     "casesSha256": "d592cd89e3411f1bf1829ddfbbbd87da2f0e6e8554dde971ca369e4ea0c33da2",
@@ -27,7 +27,7 @@
       "transport": "MCP SDK Client over InMemoryTransport",
       "indexTool": "index_memory",
       "searchTool": "search_memory",
-      "searchArguments": "query only: top_k, scope and include_history left at the tool defaults",
+      "searchArguments": "query and top_k=20: scope and include_history left at the tool defaults",
       "contextTool": "get_context",
       "contextArguments": "query and max_tokens=800: scope and the rest left at the tool defaults"
     },
@@ -48,7 +48,7 @@
       "directCases": 40,
       "adjacentDelivered": 0.7,
       "directDelivered": 1,
-      "contextDelivered": 0.3583
+      "contextDelivered": 0.3833
     },
     "byCategory": {
       "adjacent-le100": {
@@ -57,7 +57,7 @@
         "directCases": 0,
         "adjacentDelivered": 0.7813,
         "directDelivered": null,
-        "contextDelivered": 0.0625
+        "contextDelivered": 0.125
       },
       "direct": {
         "cases": 40,
@@ -73,7 +73,7 @@
         "directCases": 0,
         "adjacentDelivered": 0.8438,
         "directDelivered": null,
-        "contextDelivered": 0.125
+        "contextDelivered": 0.1563
       },
       "adjacent-201-400": {
         "cases": 16,

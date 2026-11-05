@@ -40,6 +40,27 @@ async function vaultIgnorePatterns(vaultPath: string, extra: string[] = []): Pro
   return patterns;
 }
 
+/**
+ * `readdir(folder, { withFileTypes: true, encoding: 'buffer' })`. Node returns Dirents whose name is a Buffer; Bun returns
+ * the bare Buffers instead, with no type. Those are wrapped as Dirents typed by `lstat` (as a Dirent is: a link is not
+ * followed), so the walk reads the same on both runtimes. Node's answer is returned untouched.
+ */
+async function readDirentsAsBytes(folder: string | Buffer): Promise<Array<fsSync.Dirent<Buffer>>> {
+  const entries = await fs.readdir(folder, { withFileTypes: true, encoding: 'buffer' }) as unknown as Array<fsSync.Dirent<Buffer> | Buffer>;
+  if (!entries.some(e => Buffer.isBuffer(e))) return entries as Array<fsSync.Dirent<Buffer>>;
+  const base = Buffer.isBuffer(folder) ? folder : Buffer.from(folder);
+  return Promise.all(entries.map(async e => {
+    if (!Buffer.isBuffer(e)) return e;
+    const st = await fs.lstat(Buffer.concat([base, Buffer.from(path.sep), e]) as unknown as string);
+    return {
+      name: e, parentPath: '', path: '',
+      isFile: () => st.isFile(), isDirectory: () => st.isDirectory(), isSymbolicLink: () => st.isSymbolicLink(),
+      isBlockDevice: () => st.isBlockDevice(), isCharacterDevice: () => st.isCharacterDevice(),
+      isFIFO: () => st.isFIFO(), isSocket: () => st.isSocket(),
+    } as fsSync.Dirent<Buffer>;
+  }));
+}
+
 export async function walkVault(vaultPath: string, options: WalkOptions = {}): Promise<string[]> {
   const ignored = compileIgnore(await vaultIgnorePatterns(vaultPath, options.ignorePatterns));
 
@@ -54,7 +75,7 @@ export async function walkVault(vaultPath: string, options: WalkOptions = {}): P
     // Names are read as bytes only to report the ones that are not UTF-8; otherwise as strings, which Node decodes
     // the same way. Every save walks the vault, so this and the join below are paid per file per save.
     const entries: Array<fsSync.Dirent<string> | fsSync.Dirent<Buffer>> = options.onNonUtf8Markdown
-      ? await fs.readdir(raw ?? dir, { withFileTypes: true, encoding: 'buffer' })
+      ? await readDirentsAsBytes(raw ?? dir)
       : await fs.readdir(dir, { withFileTypes: true });
     // `path.join(dir, name)` for a name read from a folder (one segment, never `.` or `..`): the folder as join
     // writes it, joined once per folder rather than once per entry.

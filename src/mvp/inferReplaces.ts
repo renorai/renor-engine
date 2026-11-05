@@ -2,18 +2,19 @@ import { headerSource } from '../memory/sourceName.js';
 import { notePathMatchesScope, type NormalizedScope } from './scope.js';
 
 /**
- * RENOR_INFER_REPLACES (default off): at save time, a new note that reads as a correction of an earlier one in the same
- * scope and from the same client gets `replaces` set automatically. Off, nothing here runs and every reply is unchanged.
+ * RENOR_INFER_REPLACES (default ON; 0/off/false/no switches it off): at save time, a new note that reads as a correction of an
+ * earlier one in the same scope gets `replaces` set automatically, so recall marks the old value superseded. Off, nothing
+ * here runs and every reply is the previous one.
  */
 export function inferReplacesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return /^(1|on|true|yes)$/i.test(env.RENOR_INFER_REPLACES?.trim() ?? '');
+  return !/^(0|off|false|no)$/i.test(env.RENOR_INFER_REPLACES?.trim() ?? '');
 }
 
 export interface ReplaceCandidate { id: string; path: string; excerpt: string; source: string | null; at: string }
 
 /** Cues that mark a save as a correction: a leading/inline "actually", "instead", "correction", "not X but Y", "no longer". */
-const CUE = /\b(actually|instead|correction|corrected|not\s+[^,.;]{1,60}?\s*,?\s+but|no longer|rather than|should be|is now|are now|was wrong|wrong:)\b/i;
-const CUE_WORDS = new Set(['actually', 'instead', 'correction', 'corrected', 'not', 'but', 'no', 'longer', 'rather', 'than', 'should', 'be', 'is', 'now', 'are', 'was', 'wrong']);
+const CUE = /\b(actually|instead|correction|corrected|not\s+[^,.;]{1,60}?\s*,?\s+but|no longer|rather than|replaced (?:by|with)|switched to|changed to|should be|is now|are now|was wrong|wrong:)\b/i;
+const CUE_WORDS = new Set(['actually', 'instead', 'correction', 'corrected', 'not', 'but', 'no', 'longer', 'rather', 'than', 'replaced', 'by', 'with', 'switched', 'to', 'changed', 'should', 'be', 'is', 'now', 'are', 'was', 'wrong']);
 const STOP = new Set(['the', 'a', 'an', 'to', 'of', 'in', 'on', 'for', 'and', 'or', 'it', 'this', 'that', 'we', 'i', 'you', 'use', 'run', 'with', 'at', 'as', 'by']);
 
 export function readsAsCorrection(text: string): boolean {

@@ -244,6 +244,7 @@ describe('keywordSearch orders equal BM25 scores by place', () => {
   });
 
   it('reads only the page when its last place is not tied, and answers what the ranking before ties were ordered did', () => {
+    process.env.RENOR_KEYWORD_STEM = '0'; // The hand-written comparator below intentionally names the legacy table.
     const { db } = build([
       { note: '/v/a.md', startLine: 0, text: 'invoice' },
       { note: '/v/b.md', startLine: 0, text: 'invoice invoice and more' },
@@ -264,6 +265,7 @@ describe('keywordSearch orders equal BM25 scores by place', () => {
       `SELECT c.id as chunkId, c.note_path as notePath, c.heading_path as headingPath, c.text, bm25(chunks_fts) as score
        FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid WHERE chunks_fts MATCH ? ORDER BY score LIMIT ?`,
     ).all('"invoice"', 10));
+    delete process.env.RENOR_KEYWORD_STEM;
   });
 
   it('returns a chunk indexed after the same search, and not a hit a caller changed', () => {
