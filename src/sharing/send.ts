@@ -2,7 +2,7 @@ import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import { learningDbPath, learningRetentionDays } from '../learning/settings';
 import { LearningLog } from '../learning/store';
-import { ExampleStore } from './examples';
+import { ExampleStore, closeExampleStore } from './examples';
 import {
   CLI_WORDING_VERSION, DEFAULT_FIELD, DEFAULT_WORDING_VERSION, MAX_ROWS_PER_BATCH, SHARING_PROTOCOL, TERMINAL_REFUSALS, levelRank,
   validateRow, type SharingLevel,
@@ -14,6 +14,18 @@ import {
 } from './state';
 import path from 'node:path';
 import { noticeRecorded } from './notice';
+
+/** Removes the example store's files, after closing this process's handle on them (Windows: EBUSY otherwise, #1563). */
+function removeExamples(dir: string): void {
+  closeExampleStore(dir);
+  for (const name of [EXAMPLES_FILE, `${EXAMPLES_FILE}-wal`, `${EXAMPLES_FILE}-shm`]) fs.rmSync(path.join(dir, name), { force: true });
+}
+
+/** removeLocalSharingData, after closing this process's handle on the example store it removes. */
+function removeLocalData(dir: string, now?: number): void {
+  closeExampleStore(dir);
+  removeLocalSharingData(dir, now);
+}
 
 /**
  * The sender, and the changes to the choice. Everything that leaves the machine leaves through `post` below, and only from
@@ -548,7 +560,7 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     // Off was chosen while the request was out: it may have landed after the deletion off asked for, so ask again.
     if (effectiveLevel(options.dir, env) === 'off') {
       const removal = await requestDelete(options.dir, state, { env, fetch: options.fetch, hosted: options.hosted });
-      if (removal.ok) removeLocalSharingData(options.dir, now);
+      if (removal.ok) removeLocalData(options.dir, now);
       return { ...stopped(), reason: 'off was chosen during the run; the endpoint was asked to delete what it holds' };
     }
     if (failure !== null || status === null) {
@@ -776,12 +788,12 @@ export async function chooseLevel(options: ChooseOptions): Promise<ChooseResult>
     // so a process that dies here leaves it pending (with the secret it needs) for settlePendingDelete.
     const owed = readState(options.dir);
     if (owed !== null && owed.everSent && !owed.deletePending) writeState(options.dir, { ...owed, deletePending: true });
-    for (const name of [EXAMPLES_FILE, `${EXAMPLES_FILE}-wal`, `${EXAMPLES_FILE}-shm`]) fs.rmSync(path.join(options.dir, name), { force: true });
+    removeExamples(options.dir);
     const result: RemoteDeleteResult = options.deferRemoteDelete === true
       ? { ok: false, requested: false }
       : await deleteRemote({ dir: options.dir, env: options.env, fetch: options.fetch, hosted: options.hosted });
     // The secret is removed only once the endpoint holds nothing; until then the state keeps it, with the deletion pending.
-    if (result.ok) removeLocalSharingData(options.dir, now);
+    if (result.ok) removeLocalData(options.dir, now);
     const deleted = result.requested || result.owedUnderDoNotTrack ? result.ok : null;
     return {
       level: 'off', changed: previous?.level !== 'off', record, remoteDeleted: deleted, reason: result.reason,
@@ -806,7 +818,7 @@ export async function chooseLevel(options: ChooseOptions): Promise<ChooseResult>
   if (numbersOff && options.level === 'signals') {
     const off: ConsentRecord = { version: 1, level: 'off', changedAt: new Date(now).toISOString(), wording: options.wording, adult: true, source: options.source, numbersOff: true };
     writeConsent(options.dir, off, options.env);
-    for (const name of [EXAMPLES_FILE, `${EXAMPLES_FILE}-wal`, `${EXAMPLES_FILE}-shm`]) fs.rmSync(path.join(options.dir, name), { force: true });
+    removeExamples(options.dir);
     let remoteDeleted: boolean | null = null;
     if (hostedWas) remoteDeleted = await leaveText();
     return { level: 'off', changed: previous?.level !== 'off', record: off, remoteDeleted };
@@ -829,7 +841,7 @@ export async function chooseLevel(options: ChooseOptions): Promise<ChooseResult>
   ensureState(options.dir);
   let remoteDeleted: boolean | null = null;
   if (levelRank(options.level) < levelRank('data')) {
-    for (const name of [EXAMPLES_FILE, `${EXAMPLES_FILE}-wal`, `${EXAMPLES_FILE}-shm`]) fs.rmSync(path.join(options.dir, name), { force: true });
+    removeExamples(options.dir);
     // A hosted workspace whose owner switched text for training off: what the training contributor sent goes, the numbers stay (under a new id).
     if (hostedWas) remoteDeleted = await leaveText();
   }
@@ -851,7 +863,7 @@ export interface DeleteAllResult {
 export async function deleteAllShared(options: Pick<SenderOptions, 'dir' | 'env' | 'fetch' | 'hosted' | 'now'>): Promise<DeleteAllResult> {
   const remote = await deleteRemote(options);
   if (!remote.ok) return { remote, localRemoved: false };
-  removeLocalSharingData(options.dir, (options.now ?? Date.now)());
+  removeLocalData(options.dir, (options.now ?? Date.now)());
   return { remote, localRemoved: true };
 }
 
@@ -870,5 +882,5 @@ export async function settlePendingDelete(options: Pick<SenderOptions, 'dir' | '
   }
   if (!state.deletePending) return;
   const result = await deleteRemote(options);
-  if (result.ok) removeLocalSharingData(options.dir, (options.now ?? Date.now)());
+  if (result.ok) removeLocalData(options.dir, (options.now ?? Date.now)());
 }

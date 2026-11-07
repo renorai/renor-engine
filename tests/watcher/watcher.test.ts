@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest';
 import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
-import fs from 'fs';
 
 const DB = tmpPath('test-watcher.db');
 
@@ -24,13 +23,14 @@ import chokidar from 'chokidar';
 import { tmpPath } from '../helpers/tmpPath';
 import { indexFile } from '../../src/indexer/pipeline';
 import { captureConsole, errorNaming } from '../helpers/consoleCapture';
+import { removeDb } from '../helpers/removeDb';
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockOn.mockReturnThis();
 });
 
-afterEach(() => { if (fs.existsSync(DB)) fs.unlinkSync(DB); });
+afterEach(() => removeDb(DB));
 
 describe('startWatcher', () => {
   it('registers add, change, and unlink handlers', () => {

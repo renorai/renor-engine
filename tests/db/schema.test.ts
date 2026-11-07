@@ -5,9 +5,10 @@ import fs from 'fs';
 import { tmpPath } from '../helpers/tmpPath';
 import { indexFile } from '../../src/indexer/pipeline';
 import { factsFor } from '../../src/memory/lifecycle';
+import { removeDb } from '../helpers/removeDb';
 
 const DB_PATH = tmpPath('test-schema.db');
-afterEach(() => { if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH); });
+afterEach(() => removeDb(DB_PATH));
 
 describe('runMigrations', () => {
   it('creates all required tables', () => {

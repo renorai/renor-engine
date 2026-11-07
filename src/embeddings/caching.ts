@@ -132,28 +132,35 @@ export class CachingEmbeddingProvider implements EmbeddingProvider {
     this.serving = options.serving === true;
     fs.mkdirSync(path.dirname(options.cachePath), { recursive: true });
     this.db = new Database(options.cachePath);
-    this.db.pragma('journal_mode = WAL');
-    // A serving read waits a moment for a lock, not ten seconds: past that the provider is the faster answer.
-    this.db.pragma(`busy_timeout = ${this.serving ? 100 : 10000}`);
-    this.db.exec(
-      `CREATE TABLE IF NOT EXISTS embeddings (
-         key TEXT PRIMARY KEY,
-         dims INTEGER NOT NULL,
-         vec BLOB NOT NULL,
-         namespace TEXT NOT NULL,
-         created_at TEXT NOT NULL
-       )`,
-    );
-    this.lookup = this.db.prepare('SELECT vec, dims FROM embeddings WHERE key = ? AND namespace = ?');
-    this.insert = this.db.prepare('INSERT OR IGNORE INTO embeddings (key, dims, vec, namespace, created_at) VALUES (?, ?, ?, ?, ?)');
-    // rowid is insertion order (nothing but the oldest row is ever deleted), so eviction is deterministic.
-    this.oldest = this.db.prepare('SELECT rowid AS id, LENGTH(vec) AS n FROM embeddings ORDER BY rowid LIMIT 32');
-    this.remove = this.db.prepare('DELETE FROM embeddings WHERE rowid = ?');
-    if (this.bounded) {
-      const held = this.db.prepare('SELECT COUNT(*) AS entries, COALESCE(SUM(LENGTH(vec)), 0) AS bytes FROM embeddings').get() as { entries: number; bytes: number };
-      this.entries = held.entries;
-      this.bytes = held.bytes;
-      this.evict();
+    try {
+      this.db.pragma('journal_mode = WAL');
+      // A serving read waits a moment for a lock, not ten seconds: past that the provider is the faster answer.
+      this.db.pragma(`busy_timeout = ${this.serving ? 100 : 10000}`);
+      this.db.exec(
+        `CREATE TABLE IF NOT EXISTS embeddings (
+           key TEXT PRIMARY KEY,
+           dims INTEGER NOT NULL,
+           vec BLOB NOT NULL,
+           namespace TEXT NOT NULL,
+           created_at TEXT NOT NULL
+         )`,
+      );
+      this.lookup = this.db.prepare('SELECT vec, dims FROM embeddings WHERE key = ? AND namespace = ?');
+      this.insert = this.db.prepare('INSERT OR IGNORE INTO embeddings (key, dims, vec, namespace, created_at) VALUES (?, ?, ?, ?, ?)');
+      // rowid is insertion order (nothing but the oldest row is ever deleted), so eviction is deterministic.
+      this.oldest = this.db.prepare('SELECT rowid AS id, LENGTH(vec) AS n FROM embeddings ORDER BY rowid LIMIT 32');
+      this.remove = this.db.prepare('DELETE FROM embeddings WHERE rowid = ?');
+      if (this.bounded) {
+        const held = this.db.prepare('SELECT COUNT(*) AS entries, COALESCE(SUM(LENGTH(vec)), 0) AS bytes FROM embeddings').get() as { entries: number; bytes: number };
+        this.entries = held.entries;
+        this.bytes = held.bytes;
+        this.evict();
+      }
+    } catch (err) {
+      // A cache file that is not a database fails here; the caller then removes it and starts again (withQueryCache), and
+      // Windows refuses to remove a file SQLite still holds open (EBUSY, #1563). Close it first, on every platform.
+      this.db.close();
+      throw err;
     }
   }
 

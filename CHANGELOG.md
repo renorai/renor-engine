@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 1.4.4 - 2026-11-07
+
+### Fixed
+
+- Windows: the engine works again. It skips the directory fsync, which Windows does not support, and closes databases before deleting their files; it had been broken on Windows since 13 Oct (#1565, fixes #1563).
+
 ## 1.4.3 - 2026-11-06
 
 ### Changed

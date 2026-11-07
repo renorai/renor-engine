@@ -3,11 +3,11 @@ import { semanticSearch } from '../../src/retrieval/semantic';
 import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
 import { VectorIndex } from '../../src/embeddings/vectorIndex';
-import fs from 'fs';
 import { tmpPath } from '../helpers/tmpPath';
+import { removeDb } from '../helpers/removeDb';
 
 const DB = tmpPath('test-semantic.db');
-afterEach(() => { if (fs.existsSync(DB)) fs.unlinkSync(DB); });
+afterEach(() => removeDb(DB));
 
 describe('semanticSearch', () => {
   it('returns chunks ranked by similarity', async () => {

@@ -111,6 +111,17 @@ export function closeExampleStores(): void {
   open.clear();
 }
 
+/**
+ * Closes the handle this process holds on `dir`'s example store, if any, so its files can be removed: Windows refuses to
+ * remove a file SQLite still holds open (EBUSY, #1563), and on POSIX a held handle would keep writing to a removed file.
+ * The next example opens a fresh store.
+ */
+export function closeExampleStore(dir: string): void {
+  const key = path.resolve(dir, EXAMPLES_FILE);
+  open.get(key)?.close();
+  open.delete(key);
+}
+
 /** The hook for one sharing folder. `now` is for tests. */
 export function sharingHook(dir: string, env: NodeJS.ProcessEnv = process.env, now: () => number = Date.now): SharingHook {
   const store = (): ExampleStore => {

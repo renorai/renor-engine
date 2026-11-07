@@ -9,7 +9,10 @@ import path from 'path';
  */
 const PLUGIN = path.join(__dirname, '../../cursor-plugin');
 const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, '.cursor-plugin/plugin.json'), 'utf8'));
-const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../../src/mvp/server.ts'), 'utf8');
+// Tools are registered in server.ts and, since it was split, in one module each under src/mvp/tools/.
+const MVP_DIR = path.join(__dirname, '../../src/mvp');
+const SERVER_SRC = [path.join(MVP_DIR, 'server.ts'), ...fs.readdirSync(path.join(MVP_DIR, 'tools')).filter((f) => f.endsWith('.ts')).map((f) => path.join(MVP_DIR, 'tools', f))]
+  .map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const HOSTED_TOOLS = new Set([...SERVER_SRC.matchAll(/registerTool\(\s*'([a-z_]+)'/g)].map((m) => m[1]));
 
 // HOSTED_TOOLS is read from the engine source (the hosted server's registry on main), not from the live endpoint.

@@ -2,11 +2,11 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { lookupEntity } from '../../src/retrieval/entityLookup';
 import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
-import fs from 'fs';
 import { tmpPath } from '../helpers/tmpPath';
+import { removeDb } from '../helpers/removeDb';
 
 const DB = tmpPath('test-entity.db');
-afterEach(() => { if (fs.existsSync(DB)) fs.unlinkSync(DB); });
+afterEach(() => removeDb(DB));
 
 function seedEntity(db: any) {
   db.prepare("INSERT INTO notes VALUES ('/v/john.md','John Doe','person','h','2026-01-01','{}')").run();

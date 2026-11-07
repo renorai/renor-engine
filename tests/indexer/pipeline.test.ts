@@ -5,10 +5,11 @@ import { runMigrations } from '../../src/db/schema';
 import path from 'path';
 import fs from 'fs';
 import { tmpPath } from '../helpers/tmpPath';
+import { removeDb } from '../helpers/removeDb';
 
 const DB = tmpPath('test-pipeline.db');
 const VAULT = path.resolve('fixtures/vault');
-afterEach(() => { if (fs.existsSync(DB)) fs.unlinkSync(DB); });
+afterEach(() => removeDb(DB));
 
 describe('indexFile', () => {
   it('inserts note and chunks', async () => {

@@ -15,6 +15,7 @@ declare module '*/setup/durationSequencer.mjs';
 declare module '*/scripts/gate/test-inventory.mjs';
 declare module '*/scripts/gate/landing-train.mjs';
 declare module '*/scripts/gate/post-full-gate-status.mjs';
+declare module '*/scripts/gate/open-flake-issues.mjs';
 // The shard split and the shard combine the landing train applies, which its tests hold to plan-shard's own split.
 declare module '*/hosted-full-gate/plan-shard.mjs';
 declare module '*/hosted-full-gate/summarize.mjs';

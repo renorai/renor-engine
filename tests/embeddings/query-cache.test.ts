@@ -261,3 +261,22 @@ describe('query cache: a fault falls through to the provider', () => {
     cache.close();
   });
 });
+
+/** The paths this process holds open (Linux: /proc/self/fd); null where there is no /proc to ask. */
+function openPaths(): string[] | null {
+  if (!fs.existsSync('/proc/self/fd')) return null;
+  return fs.readdirSync('/proc/self/fd').flatMap(fd => { try { return [fs.readlinkSync(`/proc/self/fd/${fd}`)]; } catch { return []; } });
+}
+
+describe('a cache file the cache cannot use (#1563)', () => {
+  it.skipIf(openPaths() === null)('is closed when the constructor fails, so the caller can remove it (Windows refuses an open file: EBUSY)', () => {
+    const cachePath = tmpCache();
+    // A database, but its `embeddings` table is not the cache's: the open succeeds and the first statement fails.
+    const other = new Database(cachePath);
+    other.exec('CREATE TABLE embeddings (unrelated TEXT)');
+    other.close();
+    expect(() => new CachingEmbeddingProvider(counting(), { cachePath, serving: true })).toThrow();
+    const real = fs.realpathSync(cachePath);
+    expect(openPaths()!.filter(p => p.startsWith(real))).toEqual([]);
+  });
+});

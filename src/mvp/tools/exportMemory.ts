@@ -1,0 +1,56 @@
+import { observeEnabled } from '../observations.js';
+import * as z from 'zod';
+import { EXPORT_SECTIONS, exportEverything } from '../exportAll.js';
+import { escapeInvisibleControls } from '../sanitize.js';
+import { nullAsOmitted, toolError } from './shared.js';
+import type { ToolContext } from './setup.js';
+
+/** Registers export_memory. */
+export function registerExportMemoryTool(ctx: ToolContext): void {
+  const { withSchemas, server, mapContext } = ctx;
+  server.registerTool('export_memory', {
+    title: 'Export everything this workspace holds',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    description: 'Returns everything the workspace holds, as portable Markdown (format renor-export/v1): the fact ledger exactly as stored (every fact with its subject, predicate, object, your words, source, scope, timestamps and event id, retired ones included), every daily-log entry (remember, remember_note) with its timestamp, source and scope, every other note (imports and your own notes) in full with its metadata, and everything retired and not restored (notes, entries, facts) with when it was retired. '
+      + 'The reply is two blocks: a JSON manifest (counts per kind for a whole export, the sections it carries, whether it is complete) and the document. A workspace too large for one reply is paged, never cut: while the manifest says truncated, or has nextSection/nextItem, call again with section (ledger, daily-entries, notes, retired) and offset (the item to continue from) until neither is set. '
+      + 'Not exported, and listed by kind in the manifest\'s notExported: the search index and embeddings (rebuilt from this), agent requests, import receipts, activity, agent connection state, the promoted history directory, and non-Markdown files.',
+    inputSchema: {
+      section: nullAsOmitted((observeEnabled() ? z.enum([...EXPORT_SECTIONS, 'observations']) : z.enum(EXPORT_SECTIONS)).optional()).describe('Continue with this section only (from the manifest\'s nextSection)'),
+      offset: nullAsOmitted(z.number().int().min(0).optional()).describe('The item of that section to continue from (from the manifest\'s nextItem); default 0'),
+    },
+    outputSchema: z.looseObject({
+      file: z.string(),
+      format: z.string(),
+      formatVersion: z.string(),
+      bytes: z.number().nullable(),
+      counts: z.record(z.string(), z.unknown()),
+      sections: z.array(z.object({ name: z.string(), items: z.number().nullable(), events: z.number().nullable().optional() })),
+      notExported: z.array(z.object({ kind: z.string(), what: z.string(), reason: z.string() })),
+      learningLog: z.union([z.null(), z.object({ file: z.string(), data: z.record(z.string(), z.unknown()) })]),
+      included: z.array(z.string()),
+      truncated: z.boolean(),
+      nextSection: z.string().nullable(),
+      nextItem: z.number().optional(),
+      documentChars: z.number(),
+      section: z.string().optional(),
+      offset: z.number().optional(),
+    }),
+  }, async (args) => {
+    try {
+      const { manifest, document } = await exportEverything(mapContext(), { section: args.section, offset: args.offset });
+      return {
+        content: [
+          // The manifest is metadata an agent reads: escape invisible controls as in every other JSON reply.
+          // The document is the portable archive and stays byte-faithful, so it is not rewritten here.
+          { type: 'text' as const, text: escapeInvisibleControls(JSON.stringify(manifest)) },
+          { type: 'text' as const, text: document },
+        ],
+        // The structured result (output schemas on) is the manifest: JSON.parse of the first block, the value a client parses
+        // from it. The second block (the portable document) is not structured data.
+        ...(withSchemas ? { structuredContent: JSON.parse(escapeInvisibleControls(JSON.stringify(manifest))) as Record<string, unknown> } : {}),
+      };
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+}

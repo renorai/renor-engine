@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 
 /**
@@ -12,13 +13,53 @@ import path from 'path';
  * whole; a restart sets that tail aside (replay).
  */
 
-/** Flush a directory so that a file created in it is still there after a power cut. */
+/**
+ * Windows cannot fsync a directory (#1563): opening one gives a handle, and FlushFileBuffers on it fails, which Node reports
+ * as EPERM (EISDIR or EINVAL on some versions and file systems). NTFS journals its metadata, so a create or rename there is
+ * already durable without that flush, and there is nothing else to call. So on win32, and only for a directory, those codes
+ * mean "not supported here" and the write goes on. Everywhere else (POSIX: Linux, macOS) a failed directory fsync is still
+ * an error: there it is what makes a created or renamed name survive a power cut, and the guarantee is unchanged. A file's
+ * own fsync is never tolerated, on any platform.
+ */
+export function isUnsupportedDirectorySync(err: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  if (platform !== 'win32') return false;
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code === 'EPERM' || code === 'EISDIR' || code === 'EINVAL';
+}
+
+/** Flush a directory so that a file created or renamed in it is still there after a power cut. */
 export async function syncDirectory(dir: string): Promise<void> {
-  const handle = await fs.open(dir, 'r');
+  let handle: fs.FileHandle;
+  try {
+    handle = await fs.open(dir, 'r');
+  } catch (err) {
+    if (isUnsupportedDirectorySync(err)) return;
+    throw err;
+  }
   try {
     await handle.sync();
+  } catch (err) {
+    if (!isUnsupportedDirectorySync(err)) throw err;
   } finally {
     await handle.close();
+  }
+}
+
+/** `syncDirectory` for synchronous writers, with the same platform rule. */
+export function syncDirectorySync(dir: string): void {
+  let fd: number;
+  try {
+    fd = fsSync.openSync(dir, 'r');
+  } catch (err) {
+    if (isUnsupportedDirectorySync(err)) return;
+    throw err;
+  }
+  try {
+    fsSync.fsyncSync(fd);
+  } catch (err) {
+    if (!isUnsupportedDirectorySync(err)) throw err;
+  } finally {
+    fsSync.closeSync(fd);
   }
 }
 

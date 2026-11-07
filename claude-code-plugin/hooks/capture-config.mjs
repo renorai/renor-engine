@@ -79,3 +79,16 @@ export function captureEnvironment(base = process.env) {
   const skip = Array.isArray(config.skipWhenEnv) ? config.skipWhenEnv : [];
   return { env, skip: skip.some(name => typeof name === 'string' && name && base[name] !== undefined) };
 }
+
+/** Observation capture is opt-in; unsafe or missing owner config is off. */
+export function observeEnabled(env = process.env) {
+  const home = realHome(env);
+  if (!home) return false;
+  const dir = path.join(home, '.renor');
+  try {
+    const st = fs.lstatSync(dir);
+    if (!st.isDirectory() || !ownedByMe(st)) return false;
+    const raw = readOwnedFile(path.join(dir, 'capture.json'), { privateOnly: true });
+    return raw !== null && JSON.parse(raw).observe === true;
+  } catch { return false; }
+}

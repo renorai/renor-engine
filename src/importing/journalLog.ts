@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { refusal } from '../toolRefusal';
+import { syncDirectorySync } from '../memory/durableAppend';
 
 /**
  * The import journal's sidecar: `.renor-imports/<batchId>.jsonl`, one line per note a batch created or re-asserted.
@@ -52,8 +53,8 @@ function openLog(file: string): number {
   const fd = fs.openSync(file, flags, 0o600);
   if (isNew) {
     // The new name is durable before its first line is acknowledged.
-    const dirFd = fs.openSync(path.dirname(file), 'r');
-    try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+    // On Windows a directory cannot be fsynced and NTFS already journals the new name: syncDirectorySync says so (#1563).
+    syncDirectorySync(path.dirname(file));
   }
   return fd;
 }

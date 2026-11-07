@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { hiveIdentity } from '../memory/sourceName';
+import { syncDirectorySync } from '../memory/durableAppend';
 
 /**
  * Persistent OAuth client registry (CLIENT-PERSISTENCE fix).
@@ -414,13 +415,8 @@ export class ClientRegistry {
       fs.closeSync(fd);
       fd = undefined;
       fs.renameSync(tmp, this.filePath);
-      // durable directory entry for the renamed store file
-      const dirFd = fs.openSync(dir, fs.constants.O_RDONLY);
-      try {
-        fs.fsyncSync(dirFd);
-      } finally {
-        fs.closeSync(dirFd);
-      }
+      // durable directory entry for the renamed store file (a no-op where directories cannot be fsynced: Windows, #1563)
+      syncDirectorySync(dir);
     } catch (err) {
       if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* best effort */ } }
       try { fs.unlinkSync(tmp); } catch { /* best effort */ }
