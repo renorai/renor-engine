@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 1.4.3 - 2026-11-06
+
+### Changed
+
+- `RENOR_INFER_REPLACES` is on by default (`0` turns it off): a note that reads as a correction (now also "replaced by", "switched to", "changed to") supersedes the earlier note it corrects, so recall no longer shows the old value unmarked (#1460).
+- The engine can store and index zero-LLM capture observations (`renor/observe`); off by default behind `RENOR_OBSERVE` (#1446).
+- The hosted server gives coding agents the lean tool surface per connection with `?tools=coding` (get_context, search_text, retrieve_memory, remember, plus memory_status); `RENOR_MCP_TOOLS=all` turns it off (#1377).
+- Keyword search matches any word (OR), with stemming, and `search_text` falls back to an any-word match when the exact phrase finds nothing; on by default (#1454).
+- `remember` with an empty statement but a subject, predicate and object fills the statement from them (`RENOR_BLANK_STATEMENT`, on by default) (#1478).
+- Hosted workspaces get higher default memory limits (`MemoryHigh` 640M, `MemoryMax` 768M) so a large workspace is not throttled (#1110).
+- Every hosted workspace, including named ones, reports usage to PostHog unless telemetry is disabled (#838).
+- The dreamer cost cap now counts billable failures and retries (#1505).
+- Reading the agent-task answer file no longer follows symlinks and accepts only bounded regular files (#1500).
+- A hosted workspace shared with everyone recovers when its training id changes (#1128).
+
+### Added
+
+- `RENOR_RECALL_FILE_TREE` shows a folder tree in `memory_map` (off by default) (#1375).
+- `RENOR_FACT_VALIDITY_WINDOWS` records validity windows on structured rows (off by default) (#1373).
+- `RENOR_RETRIEVE_AGGREGATE_K` widens the top-k for aggregate questions (off by default) (#1370).
+
 ## 1.4.2 - 2026-11-05
 
 ### Changed
@@ -18,8 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bun compatibility: zod namespace import and byte-mode readdir of bare Buffers (#1452).
 - Node 26 keep-alive pool fix and chokidar 4 (#1126).
 - Removed the unused `RENOR_CONTEXT_SPLIT` and `RENOR_READER_ADVICE_LINES` switches (measured not better, off by default) (#1431).
-- `RENOR_INFER_REPLACES` is on by default (`0` turns it off): a note that reads as a correction (now also "replaced by", "switched to", "changed to") supersedes the earlier note it corrects, so recall no longer shows the old value unmarked (#1460).
-- The engine can store and index zero-LLM capture observations (`renor/observe`); off by default behind `RENOR_OBSERVE` (#1446).
 
 ## 1.4.1 - 2026-11-03
 

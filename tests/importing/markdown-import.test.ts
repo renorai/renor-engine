@@ -99,7 +99,8 @@ describe('Markdown folder import', () => {
     const bundle = path.join(root, 'selected.jsonl');
     expect(await run(['--from', `markdown:${vault}`, '--to', destination, '--exclude', 'Private', '--emit-bundle', bundle, '--json'])).toBe(0);
     expect(fs.existsSync(destination)).toBe(false);
-    expect(fs.statSync(bundle).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits: stat reports 0o666/0o777 whatever was asked, and chmod only toggles read-only.
+    if (process.platform !== 'win32') expect(fs.statSync(bundle).mode & 0o777).toBe(0o600);
     expect(fs.readFileSync(bundle, 'utf8')).not.toContain('Do not carry this.');
     const args = ['--from', `bundle:${bundle}`, '--to', destination, '--namespace', 'Imported/vault', '--apply', '--json'];
     expect(await run(args)).toBe(0);

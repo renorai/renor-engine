@@ -291,7 +291,11 @@ export function deleteStructuredRowsForSourceKind(
  * longer resolves to a live note is never returned (provenance guard), even if
  * a connection without the FK pragma leaked orphans into the table.
  */
-export function readCurrentRowsForNotes(db: Database.Database, notePaths: string[]): StoredStructuredRow[] {
+export function readCurrentRowsForNotes(
+  db: Database.Database,
+  notePaths: string[],
+  opts: { includeSuperseded?: boolean } = {},
+): StoredStructuredRow[] {
   if (notePaths.length === 0) return [];
   const placeholders = notePaths.map(() => '?').join(', ');
   const rows = db.prepare(
@@ -300,7 +304,7 @@ export function readCurrentRowsForNotes(db: Database.Database, notePaths: string
             r.confirm_count, n.modified_at
      FROM structured_rows r
      JOIN notes n ON n.path = r.source_path
-     WHERE r.valid_to IS NULL AND r.source_path IN (${placeholders})
+     WHERE ${opts.includeSuperseded ? '1 = 1' : 'r.valid_to IS NULL'} AND r.source_path IN (${placeholders})
      ORDER BY r.id`
   ).all(...notePaths) as Array<Record<string, unknown>>;
   return rows.map((r) => ({

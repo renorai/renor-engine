@@ -29,43 +29,47 @@ const DEFAULT_HOST = 'https://us.i.posthog.com';
 const loadPosthogNode = (): typeof import('posthog-node') => require('posthog-node');
 const loadPosthogMcp = (): typeof import('@posthog/mcp') => require('@posthog/mcp');
 
-/** Property keys that may carry args/results/content — always stripped. */
-const STRIP_EXACT = new Set([
-  '$mcp_parameters',
-  '$mcp_response',
-  '$mcp_intent',
-  '$mcp_error_message',
-  '$mcp_feedback_details',
-  '$mcp_feedback_summary',
-  '$mcp_feedback_suggested_improvement',
-  '$mcp_feedback_friction_points',
-  '$mcp_tool_description',
-  'args',
-  'arguments',
-  'params',
-  'parameters',
-  'result',
-  'response',
-  'content',
-  'query',
-  'statement',
-  'text',
-  'body',
-  'message',
-]);
+/**
+ * The properties an @posthog/mcp event may keep, and nothing else: a property nobody listed is dropped, so a field a later
+ * release of the library adds never leaves the process unreviewed. Each one is a value the SERVER decides (its own tool
+ * and server names), a number or a boolean, or a closed set. What an MCP client declares about itself (clientInfo.name,
+ * its version, its user agent) is the client's own free text and can be a person's name or email, so it never leaves as
+ * written: the name is reduced to a client family below and the rest is dropped.
+ */
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const KEEP_IF: Record<string, (value: unknown) => boolean> = {
+  $mcp_tool_name: (v) => typeof v === 'string' && IDENTIFIER.test(v),
+  $mcp_is_error: (v) => typeof v === 'boolean',
+  $mcp_duration_ms: (v) => typeof v === 'number' && Number.isFinite(v),
+  $mcp_server_name: (v) => typeof v === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(v),
+  $mcp_server_version: (v) => typeof v === 'string' && /^\d+(\.\d+){0,3}$/.test(v),
+  $mcp_protocol_version: (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v),
+  $mcp_listed_tool_names: (v) => Array.isArray(v) && v.length <= 64 && v.every((n) => typeof n === 'string' && IDENTIFIER.test(n)),
+  $mcp_source: (v) => v === 'posthog_mcp_analytics',
+  $process_person_profile: (v) => v === false,
+  service: (v) => v === 'renor-core',
+  $groups: (v) => {
+    if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+    const entries = Object.entries(v);
+    return entries.length === 1 && entries[0][0] === 'tenant' && typeof entries[0][1] === 'string' && /^[0-9a-f]{24}$/.test(entries[0][1]);
+  },
+};
 
-const STRIP_SUBSTRING = [
-  'parameter',
-  'argument',
-  'response',
-  'content',
-  'query',
-  'statement',
-  'memory',
-  'prompt',
-  'exception_message',
-  'exception_stack',
-];
+/**
+ * The client families `$mcp_client_name` may say, matched on the start of the lowercased name. Anything else, a person's
+ * name or email included, is `other`; a name that is not a string is dropped.
+ */
+const CLIENT_FAMILIES = [
+  'claude-code', 'claude-ai', 'claude', 'codex', 'cursor', 'windsurf', 'vscode', 'visual-studio-code', 'zed', 'cline',
+  'roo-code', 'continue', 'gemini', 'chatgpt', 'openai', 'goose', 'opencode', 'jetbrains', 'warp', 'amp', 'kiro',
+  'mcp-remote', 'mcp-inspector', 'renor-dashboard',
+] as const;
+
+export function clientFamily(name: unknown): string | undefined {
+  if (typeof name !== 'string') return undefined;
+  const lower = name.trim().toLowerCase().replace(/[\s_]+/g, '-');
+  return CLIENT_FAMILIES.find((family) => lower === family || lower.startsWith(`${family}-`) || lower.startsWith(`${family}/`)) ?? 'other';
+}
 
 let client: PostHog | null | undefined;
 let shutdownHookInstalled = false;
@@ -86,7 +90,7 @@ function pseudonymousDistinctId(instance: string): string {
     .slice(0, 24);
 }
 
-/** Testable privacy filter — strips args/results/content; keeps tool/ok/duration. */
+/** Testable privacy filter: keeps only the properties KEEP_IF lists, and the client name as its family. */
 export function redactMcpAnalyticsEvent(
   event: McpAnalyticsCaptureEvent,
 ): McpAnalyticsCaptureEvent | null {
@@ -94,35 +98,13 @@ export function redactMcpAnalyticsEvent(
   // Exception siblings can embed stack/message text — drop entirely.
   if (event.event === '$exception') return null;
 
-  const properties = { ...(event.properties ?? {}) };
-  for (const key of Object.keys(properties)) {
-    const lower = key.toLowerCase();
-    if (STRIP_EXACT.has(key) || STRIP_EXACT.has(lower)) {
-      delete properties[key];
-      continue;
-    }
-    if (STRIP_SUBSTRING.some((needle) => lower.includes(needle))) {
-      // Keep known-safe metadata keys even if they contain a substring match.
-      if (
-        key === '$mcp_is_error' ||
-        key === '$mcp_duration_ms' ||
-        key === '$mcp_tool_name' ||
-        key === '$mcp_client_name' ||
-        key === '$mcp_client_version' ||
-        key === '$mcp_server_name' ||
-        key === '$mcp_server_version' ||
-        key === '$mcp_protocol_version' ||
-        key === '$mcp_listed_tool_names' ||
-        key === '$mcp_source' ||
-        key === '$groups' ||
-        key === '$process_person_profile' ||
-        key === 'service'
-      ) {
-        continue;
-      }
-      delete properties[key];
-    }
+  const given = event.properties ?? {};
+  const properties: Record<string, unknown> = {};
+  for (const [key, check] of Object.entries(KEEP_IF)) {
+    if (Object.prototype.hasOwnProperty.call(given, key) && check(given[key])) properties[key] = given[key];
   }
+  const family = clientFamily(given.$mcp_client_name);
+  if (family !== undefined) properties.$mcp_client_name = family;
 
   return {
     distinct_id: event.distinct_id,

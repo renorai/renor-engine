@@ -1,3 +1,4 @@
+import { readUntilWrite } from '../db/readCache';
 import type Database from '../db/sqlite';
 import { prepareOnce } from '../db/statements';
 import { encodeTokens } from '../indexer/tokenizer';
@@ -165,12 +166,26 @@ function lineOf(inVault: string, row: Row): { day: string; line: string; body: s
   return entry;
 }
 
-/** The newest OUTLINE_POOL daily-log entries the read may see, as outline candidates (lines not yet cut to a budget). */
+/**
+ * The newest OUTLINE_POOL daily-log entries the read may see, as outline candidates (lines not yet cut to a budget).
+ * The list is a pure function of the index, so it is kept per connection until anything is written to the database (a
+ * save, retire, import or reindex, by this connection or another: db/readCache.ts `readUntilWrite`) and shared between
+ * calls; inside an open write transaction it is computed fresh. Callers must not change the returned list or its items.
+ */
 export function listOutlineCandidates(
   db: Database.Database,
   memoryDir: string,
   scope: NormalizedScope | undefined,
   limit = OUTLINE_POOL,
+): OutlineCandidate[] {
+  return readUntilWrite(db, `datedOutline\0${memoryDir}\0${scope ?? ''}\0${limit}`, () => readOutlineCandidates(db, memoryDir, scope, limit));
+}
+
+function readOutlineCandidates(
+  db: Database.Database,
+  memoryDir: string,
+  scope: NormalizedScope | undefined,
+  limit: number,
 ): OutlineCandidate[] {
   const under = scope === undefined || scope === 'global' ? null : scopeSqlPredicate(scope, 'note_path');
   const rows = prepareOnce(db, `

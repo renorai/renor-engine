@@ -8,7 +8,7 @@ import { loadMvpConfig } from '../../src/mvp/config';
 import { resolveEvidenceMode } from '../../src/evidence/gate';
 
 /**
- * Anti-drift guard for docs/ENVIRONMENT-VARIABLES.md.
+ * Anti-drift guard for docs/ENVIRONMENT-VARIABLES.md and docs/ENVIRONMENT-VARIABLES-REFERENCE.md.
  *
  * The engine reads far more environment variables than `grep process.env.NAME` finds (a count of those alone was 57;
  * the source reads 153): a parameter named `env` that defaults to process.env, `process.env[name]` behind a helper,
@@ -26,7 +26,8 @@ import { resolveEvidenceMode } from '../../src/evidence/gate';
 
 const ENGINE = path.resolve(__dirname, '../..');
 const SRC = path.join(ENGINE, 'src');
-const PAGE = path.join(ENGINE, 'docs', 'ENVIRONMENT-VARIABLES.md');
+/** The settings a person running Renor may want, and the operator and experiment reference. Together they list every variable. */
+const PAGES = ['ENVIRONMENT-VARIABLES.md', 'ENVIRONMENT-VARIABLES-REFERENCE.md'].map(name => path.join(ENGINE, 'docs', name));
 
 const NAME = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
 const WRITTEN_LIKE_A_VARIABLE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
@@ -89,7 +90,7 @@ interface Row {
 
 /** The rows of the page's tables: the names in backticks in the first column, and the three cells. */
 function documentedRows(): Row[] {
-  return fs.readFileSync(PAGE, 'utf8').split('\n')
+  return PAGES.flatMap(page => fs.readFileSync(page, 'utf8').split('\n'))
     .filter(line => line.startsWith('|'))
     .map(line => line.slice(1, line.lastIndexOf('|')).split('|').map(cell => cell.trim()))
     .filter(cells => cells[0] !== 'Variable' && !/^-+$/.test(cells[0]))
@@ -103,7 +104,7 @@ function documentedNames(): string[] {
 /** The default cell of a variable's row. */
 function documentedDefault(name: string): string {
   const row = documentedRows().find(candidate => candidate.names.includes(name));
-  if (!row) throw new Error(`${name} has no row in ${path.relative(ENGINE, PAGE)}`);
+  if (!row) throw new Error(`${name} has no row in ${'docs/ENVIRONMENT-VARIABLES*.md'}`);
   return row.cells[1];
 }
 
@@ -125,14 +126,14 @@ function withEnv<T>(vars: Record<string, string>, fn: () => T): T {
   }
 }
 
-describe('docs/ENVIRONMENT-VARIABLES.md', () => {
+describe('docs/ENVIRONMENT-VARIABLES*.md', () => {
   it('lists every environment variable src/ reads, and no other', () => {
     const read = envReads();
     const documented = new Set(documentedNames());
     const missing = [...read.keys()].filter(name => !documented.has(name)).sort();
     expect(
       missing,
-      'src/ reads these variables and the page has no row for them: add a row to docs/ENVIRONMENT-VARIABLES.md. '
+      'src/ reads these variables and the page has no row for them: add a row to docs/ENVIRONMENT-VARIABLES.md (a setting a user may want) or docs/ENVIRONMENT-VARIABLES-REFERENCE.md (an operator or experiment switch). '
       + 'If a name is only a string written like a variable, add it to NOT_ENV in this test with what it is.\n'
       + missing.map(name => `  ${name}  (${[...read.get(name)!].join(', ')})`).join('\n'),
     ).toEqual([]);
@@ -143,6 +144,12 @@ describe('docs/ENVIRONMENT-VARIABLES.md', () => {
       expect(read.has(known), known).toBe(true);
     }
   }, 120_000); // it parses every file under src/, which takes seconds on a loaded machine
+
+  it('keeps the user page short, and leaves the experiment switches to the reference', () => {
+    const rowsOf = (page: string) => fs.readFileSync(page, 'utf8').split('\n').filter(line => /^\| `[A-Z]/.test(line)).length;
+    expect(rowsOf(PAGES[0]), 'the user page is for settings a person running Renor may want: move the rest to the reference').toBeLessThanOrEqual(30);
+    expect(rowsOf(PAGES[1])).toBeGreaterThan(rowsOf(PAGES[0]));
+  });
 
   it('gives each variable one row, with a default and a description', () => {
     const rows = documentedRows();

@@ -29,6 +29,7 @@ export function openDb(dbPath: string): Database.Database {
   if (onDisk) {
     // The index holds every remembered statement in plain text. A new one is created owner-only whatever the
     // umask; SQLite gives its -wal and -shm files the main file's mode. An existing file keeps its mode.
+    // Windows has no POSIX mode bits: there both modes are ignored and the file is created writable.
     fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });
     fs.closeSync(fs.openSync(dbPath, fs.constants.O_CREAT | fs.constants.O_WRONLY, 0o600));
   }

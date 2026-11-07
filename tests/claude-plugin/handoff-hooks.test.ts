@@ -107,4 +107,31 @@ describe('Stop', () => {
     const wrote = transcript([toolUse('Edit'), toolUse('mcp__renor__handoff_note', { action: 'write', repo: 'r', branch: 'main', note: 'n' })]);
     expect(run('stop', { session_id: 'p4', cwd: repo, transcript_path: wrote })).toBeNull();
   });
+
+  it('refuses an attacker-precreated state directory and never writes through a symlinked state file', () => {
+    const victim = path.join(root, 'victim.txt');
+    fs.writeFileSync(victim, 'keep me');
+    const open = path.join(root, 'open-dir');
+    fs.mkdirSync(open, { mode: 0o777 });
+    fs.chmodSync(open, 0o777);
+    // The tmpdir fallback is strict: a pre-existing open directory is refused.
+    const tmp = path.join(root, 'tmp');
+    fs.mkdirSync(path.join(tmp, `renor-handoff-${process.getuid!()}`), { recursive: true, mode: 0o777 });
+    fs.chmodSync(path.join(tmp, `renor-handoff-${process.getuid!()}`), 0o777);
+    const noPlugin = { CLAUDE_PLUGIN_DATA: '', TMPDIR: tmp };
+    expect(run('session-start', { session_id: 'x1', cwd: repo, source: 'startup' }, noPlugin)).toBeNull();
+    expect(fs.readdirSync(path.join(tmp, `renor-handoff-${process.getuid!()}`))).toEqual([]);
+
+    // The host-created CLAUDE_PLUGIN_DATA is usually 0755: still works.
+    const host = path.join(root, 'host-dir');
+    fs.mkdirSync(host, { mode: 0o755 });
+    fs.chmodSync(host, 0o755);
+    expect(run('session-start', { session_id: 'x0', cwd: repo, source: 'startup' }, { CLAUDE_PLUGIN_DATA: host })?.hookSpecificOutput).toBeTruthy();
+
+    const mine = path.join(root, 'mine-dir');
+    fs.mkdirSync(mine, { mode: 0o700 });
+    fs.symlinkSync(victim, path.join(mine, 'x2.start.json'));
+    run('session-start', { session_id: 'x2', cwd: repo, source: 'startup' }, { CLAUDE_PLUGIN_DATA: mine });
+    expect(fs.readFileSync(victim, 'utf8')).toBe('keep me');
+  });
 });

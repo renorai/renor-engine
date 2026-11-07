@@ -53,7 +53,8 @@ async function referenceWalk(vaultPath: string, ignorePatterns: string[] = []): 
   async function walk(dir: string) {
     for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      const rel = path.relative(vaultPath, full);
+      // Patterns are written with `/`; on Windows path.relative answers with `\`.
+      const rel = path.relative(vaultPath, full).split(path.sep).join('/');
       if (patterns.some(p => {
         const clean = p.replace(/\/$/, '');
         return rel === clean || rel.startsWith(clean + '/') || rel.includes('/' + clean + '/') || rel.endsWith('/' + clean);
@@ -92,6 +93,11 @@ describe('walkVault agrees with the reference walk, and walkVaultStats lists the
     fs.writeFileSync(path.join(dir, '.semanticignore'), '# comment\nPrivate/\nSystem/\n\n  Notes/b.md  \n');
     fs.symlinkSync(path.join(dir, 'top.md'), path.join(dir, 'link.md'));
     fs.symlinkSync(path.join(dir, 'Keep'), path.join(dir, 'linkdir'));
+
+    // Pinned by hand, so a reference walk that drifts from the rules (as it did on Windows) cannot pass by agreeing.
+    const plain = (await walkVault(dir)).map(f => path.relative(dir, f).split(path.sep).join('/')).sort();
+    expect(plain).toEqual(['Keep/a.md', 'privates/not-ignored.md', 'top.md']);
+    expect((await referenceWalk(dir)).map(f => path.relative(dir, f).split(path.sep).join('/')).sort()).toEqual(plain);
 
     for (const [label, root] of [
       ['plain', dir],
@@ -313,5 +319,27 @@ describe('walkVault on a runtime whose byte-mode readdir returns bare Buffers (B
     const files = await walkVault(root, { onNonUtf8Markdown: l => found.push(l) });
     expect(files.map(f => path.relative(root, f)).sort()).toEqual(['a.md', path.join('sub', 'b.md')]);
     expect(found).toEqual([]);
+  });
+});
+
+describe('walkVault with onNonUtf8Markdown', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('finishes without a file that vanishes between the listing and the stat', async () => {
+    const dir = vault(['a.md', 'gone.md', 'b.md']);
+    const realReaddir = fsp.readdir.bind(fsp) as (...a: unknown[]) => Promise<unknown>;
+    vi.spyOn(fsp, 'readdir').mockImplementation((async (d: unknown, opts?: { encoding?: string }) => {
+      if (opts?.encoding === 'buffer') return realReaddir(d, { encoding: 'buffer' }); // bare Buffers, as Bun returns them
+      return realReaddir(d, opts);
+    }) as never);
+    const real = fsp.lstat.bind(fsp);
+    vi.spyOn(fsp, 'lstat').mockImplementation(((p: unknown, ...rest: unknown[]) => {
+      if (Buffer.from(p as Buffer).toString('utf8').endsWith('gone.md')) {
+        return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      }
+      return (real as (...a: unknown[]) => unknown)(p, ...rest);
+    }) as never);
+    const files = await walkVault(dir, { onNonUtf8Markdown: () => {} });
+    expect(files.map(f => path.basename(f)).sort()).toEqual(['a.md', 'b.md']);
   });
 });

@@ -95,6 +95,11 @@ export interface SharingState {
   trainingDeletePending?: boolean;
   /** Training rows were sent at some time, so the endpoint may hold some for the training contributor. */
   trainingEverSent?: boolean;
+  /**
+   * The endpoint refused the training contributor's batch as `unmapped` (ms): its id is not tied to this workspace, so the platform has to tie it
+   * again (it does when the dashboard reads the workspace). Cleared by the next accepted training batch, and when the secret rotates.
+   */
+  trainingUnmappedAt?: number;
   /** Rows were sent at some time, so the endpoint may hold some for this contributor. */
   everSent: boolean;
   /** A removal is owed to the endpoint (it could not be reached when it was asked for). Retried before anything else. */
@@ -423,6 +428,7 @@ export function readState(dir: string): SharingState | null {
       ? { retiredTrainingBearers: raw.retiredTrainingBearers.filter((item): item is string => typeof item === 'string' && item.length >= 32).slice(-50) }
       : {}),
     ...(raw.trainingEverSent === true ? { trainingEverSent: true } : {}),
+    ...(typeof raw.trainingUnmappedAt === 'number' ? { trainingUnmappedAt: raw.trainingUnmappedAt } : {}),
     ...(raw.trainingDeletePending === true ? { trainingDeletePending: true } : {}),
     ...(typeof raw.token === 'string' && /^[A-Za-z0-9_-]{86}$/.test(raw.token) ? { token: raw.token } : {}),
     ...pausedOf(raw.paused),
@@ -453,7 +459,7 @@ export function trainingBearer(secret: string): string {
  */
 export function rotateSecret(dir: string): SharingState {
   const state = ensureState(dir);
-  const { trainingEverSent: _t, trainingDeletePending: _d, trainingWatermarks: _w, ...rest } = state;
+  const { trainingEverSent: _t, trainingDeletePending: _d, trainingWatermarks: _w, trainingUnmappedAt: _u, ...rest } = state;
   // The training contributor is derived from the secret being retired, so a training deletion still owed (or rows ever sent to it) must keep its bearer.
   const trainingOwed = state.trainingEverSent === true || state.trainingDeletePending === true;
   const retiredTraining = [...new Set([...(state.retiredTrainingBearers ?? []), ...(trainingOwed ? [trainingBearer(state.secret)] : [])])].slice(-50);

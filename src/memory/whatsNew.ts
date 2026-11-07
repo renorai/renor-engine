@@ -5,14 +5,17 @@ import { listRequestsPage, REQUEST_PAGE_LIMIT } from './requests';
 /** How many items one call returns. A full page comes with a cursor for the rest. */
 export const WHATS_NEW_LIMIT = 50;
 
+/** The page a call returns when it names no `limit` and RENOR_WHATS_NEW_PAGE is unset. A full page carries a cursor for the rest. */
+export const WHATS_NEW_DEFAULT_PAGE = 5;
+
 /**
- * The page a call returns when it names no `limit`: RENOR_WHATS_NEW_PAGE, 1 to 50. Unset, it is 50 (WHATS_NEW_LIMIT), so a
- * workspace that does not set it reads exactly as before. A value that is not a whole number from 1 to 50 fails the call
+ * The page a call returns when it names no `limit`: RENOR_WHATS_NEW_PAGE, 1 to 50. Unset, it is 5 (WHATS_NEW_DEFAULT_PAGE);
+ * RENOR_WHATS_NEW_PAGE=50 restores the earlier 50-item page. A value that is not a whole number from 1 to 50 fails the call
  * rather than quietly reading 50: an arm must never run with a lever silently off.
  */
 export function whatsNewPageFromEnv(env: NodeJS.ProcessEnv = process.env): number {
   const raw = (env.RENOR_WHATS_NEW_PAGE ?? '').trim();
-  if (raw === '') return WHATS_NEW_LIMIT;
+  if (raw === '') return WHATS_NEW_DEFAULT_PAGE;
   const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
   if (!(n >= 1 && n <= WHATS_NEW_LIMIT)) throw new Error(`RENOR_WHATS_NEW_PAGE takes a whole number from 1 to ${WHATS_NEW_LIMIT}, not ${raw}`);
   return n;

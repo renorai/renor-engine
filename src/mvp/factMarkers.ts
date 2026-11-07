@@ -3,6 +3,7 @@ import { listStatement, paddedList } from '../db/statements';
 import { authorMarker, isImportSource, isReservedSource, type AuthorMarker } from '../memory/sourceName';
 import { ledgerEventIds } from '../retrieval/ledgerLiveness';
 import { DAILY_FILE_RE, parseEntryHeader } from '../memory/dailyNote';
+import { authorityLabelsEnabled, authorityOfChunk, authorityOfSource, lowestAuthority } from '../memory/authority';
 
 /**
  * The author of each saved fact among these ledger events, by event id. Ids are lower-case in and out (ledgerEventIds);
@@ -63,4 +64,25 @@ export function claimsReservedEntrySource(notePath: unknown, text: unknown): boo
     const header = parseEntryHeader(line);
     return header !== null && isReservedSource(header.source);
   });
+}
+
+/**
+ * With RENOR_AUTHORITY_LABELS on, stamps each search hit with where it came from (memory/authority.ts): a fact or ledger
+ * event by its author, a hit that carries an `author` by that author, any other chunk by its note path and entry headers.
+ * Run it before markFactHits, which takes `author` off the hit. Off: no hit is touched.
+ */
+export function markAuthority(
+  db: Database.Database,
+  hits: Array<{ notePath?: string; headingPath?: string; text: string; author?: string | null; authority?: string }>,
+  isLedger: (notePath: string) => boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (!authorityLabelsEnabled(env)) return;
+  const authors = factAuthorsByEvent(db, hits.filter(hit => isLedger(hit.notePath ?? '')).flatMap(hit => ledgerEventIds(hit)));
+  for (const hit of hits) {
+    if ('author' in hit) hit.authority = authorityOfSource(hit.author);
+    else if (isLedger(hit.notePath ?? '')) {
+      hit.authority = lowestAuthority(ledgerEventIds(hit).filter(id => authors.has(id)).map(id => authorityOfSource(authors.get(id))));
+    } else hit.authority = authorityOfChunk(hit.notePath, hit.text);
+  }
 }

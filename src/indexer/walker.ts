@@ -21,13 +21,18 @@ interface WalkOptions {
 /**
  * The vault's ignore test, built once per walk instead of rebuilt for every entry: a relative path is
  * ignored when a pattern names it, a directory above it, a directory anywhere inside it, or its last segment.
+ * Patterns are written with `/`, so a path that Windows spells with `\` is turned into `/` first; without that a
+ * nested `node_modules/` was not ignored on Windows.
  */
 function compileIgnore(patterns: string[]): (rel: string) => boolean {
   const rules = patterns.map(p => {
     const clean = p.replace(/\/$/, '');
     return { clean, dir: clean + '/', inside: '/' + clean + '/', tail: '/' + clean };
   });
-  return rel => rules.some(r => rel === r.clean || rel.startsWith(r.dir) || rel.includes(r.inside) || rel.endsWith(r.tail));
+  return rel => {
+    if (path.sep !== '/') rel = rel.split(path.sep).join('/');
+    return rules.some(r => rel === r.clean || rel.startsWith(r.dir) || rel.includes(r.inside) || rel.endsWith(r.tail));
+  };
 }
 
 /** The default ignore patterns, then `extra`, then the lines of the vault's .semanticignore (blank and `#` lines skipped). */
@@ -49,9 +54,16 @@ async function readDirentsAsBytes(folder: string | Buffer): Promise<Array<fsSync
   const entries = await fs.readdir(folder, { withFileTypes: true, encoding: 'buffer' }) as unknown as Array<fsSync.Dirent<Buffer> | Buffer>;
   if (!entries.some(e => Buffer.isBuffer(e))) return entries as Array<fsSync.Dirent<Buffer>>;
   const base = Buffer.isBuffer(folder) ? folder : Buffer.from(folder);
-  return Promise.all(entries.map(async e => {
+  const resolved = await Promise.all(entries.map(async e => {
     if (!Buffer.isBuffer(e)) return e;
-    const st = await fs.lstat(Buffer.concat([base, Buffer.from(path.sep), e]) as unknown as string);
+    let st: fsSync.Stats;
+    try {
+      st = await fs.lstat(Buffer.concat([base, Buffer.from(path.sep), e]) as unknown as string);
+    } catch (err) {
+      // Gone between the listing and the stat: a Dirent would have listed it, the walk just skips it.
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
     return {
       name: e, parentPath: '', path: '',
       isFile: () => st.isFile(), isDirectory: () => st.isDirectory(), isSymbolicLink: () => st.isSymbolicLink(),
@@ -59,6 +71,7 @@ async function readDirentsAsBytes(folder: string | Buffer): Promise<Array<fsSync
       isFIFO: () => st.isFIFO(), isSocket: () => st.isSocket(),
     } as fsSync.Dirent<Buffer>;
   }));
+  return resolved.filter((e): e is fsSync.Dirent<Buffer> => e !== null);
 }
 
 export async function walkVault(vaultPath: string, options: WalkOptions = {}): Promise<string[]> {

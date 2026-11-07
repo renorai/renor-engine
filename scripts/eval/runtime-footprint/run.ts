@@ -19,6 +19,7 @@
  *
  * Writes <out>/runtime-footprint.json and <out>/runtime-footprint.md.
  */
+import { withNoSharing } from '../../lib/no-sharing.cjs';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -61,7 +62,7 @@ const rm = (d: string) => fs.rmSync(d, { recursive: true, force: true });
 const cleanEnv = (extra: Record<string, string>): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {};
   for (const k of ['PATH', 'HOME', 'LANG', 'TMPDIR']) if (process.env[k]) env[k] = process.env[k];
-  return { ...env, RENOR_TELEMETRY: 'off', ...extra };
+  return { ...withNoSharing(env), RENOR_TELEMETRY: 'off', ...extra };
 };
 
 async function stdioRun(rt: string, vault: string, calls: number): Promise<Record<string, number>> {

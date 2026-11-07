@@ -7,7 +7,8 @@ import fs from 'node:fs';
  *
  *   RENOR_MCP_TOOLS              comma-separated tool names: only these are listed and run (the others are disabled in
  *                                the SDK's registry, as a directory client's hidden tools are). `lean` / `coding` name the
- *                                LEAN_TOOLS / CODING_TOOLS presets instead;
+ *                                LEAN_TOOLS / CODING_TOOLS presets instead; `all` is the full set, and also stops a
+ *                                connection's `?tools=coding` (via the gateway) from narrowing it;
  *   RENOR_MCP_DESCRIPTIONS_FILE  a JSON object {tool: description}: those tools are listed with that description;
  *   RENOR_MCP_INSTRUCTIONS_FILE  a UTF-8 file: its text replaces the server instructions an agent is given;
  *   RENOR_MCP_RESPONSE           `lines`: get_context, search_memory and search_text answer one line per fact or memory
@@ -81,7 +82,8 @@ export function searchMemoryKeywordFallbackEnabled(env: NodeJS.ProcessEnv = proc
 export function contextProfileFromEnv(env: NodeJS.ProcessEnv = process.env): ContextProfile {
   const profile: ContextProfile = {};
   const tools = env.RENOR_MCP_TOOLS?.trim();
-  if (tools === 'lean') profile.tools = new Set(LEAN_TOOLS);
+  if (tools === 'all') { /* the full set: no restriction, and the off switch for a connection's ?tools=coding */ }
+  else if (tools === 'lean') profile.tools = new Set(LEAN_TOOLS);
   else if (tools === 'coding') {
     profile.tools = new Set(CODING_TOOLS);
     profile.descriptions = { ...CODING_DESCRIPTIONS };

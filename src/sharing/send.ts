@@ -592,11 +592,25 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
           : 'Renor refused the consent record; nothing is sent until a level is chosen again',
       };
     }
+    // The training id is not tied to this workspace (it changed, or was never tied): nothing was stored, the rows stay unsent, and the state says so
+    // until the platform ties it again (it does when the dashboard reads the workspace, memory-inventory). The numbers stay paused meanwhile: resuming
+    // them over rows the text stream will still send would let the two ids be matched, which is the point of pausing them.
+    if (status === 403 && code === 'unmapped' && training) {
+      state.trainingUnmappedAt = now;
+      writeState(options.dir, state);
+      return {
+        status: 'failed', level, rows: sent, batches: sentBatches, skipped,
+        reason: 'the endpoint answered 403 unmapped: this workspace\'s training id is not tied to it yet; the platform ties it again when the dashboard next reads the workspace',
+      };
+    }
     if (status < 200 || status >= 300) {
-      return { status: 'failed', level, rows: sent, batches: sentBatches, skipped, reason: `the endpoint answered ${status}` };
+      return { status: 'failed', level, rows: sent, batches: sentBatches, skipped, reason: `the endpoint answered ${status}${code !== null ? ` ${code}` : ''}` };
     }
     marks[key] = Math.max(marks[key], last);
-    if (training) state.trainingEverSent = true; else state.everSent = true;
+    if (training) {
+      state.trainingEverSent = true;
+      delete state.trainingUnmappedAt;
+    } else state.everSent = true;
     writeState(options.dir, state);
     sent += batch.rows.length;
     sentBatches += 1;

@@ -6,7 +6,7 @@ name: engine-public-ci
 #
 # The private monorepo proves the same steps from .github/workflows/engine-public-ci.yml
 # with a `working-directory` of engine, on ubuntu with Node 22 only. This file runs them
-# on three legs (below). The exclude list is the same in both files.
+# on five legs (below). The exclude list is the same in both files.
 # No secrets, no second install, no paid model, no LongMemEval, no agent gate.
 
 on:
@@ -31,6 +31,11 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # Every step is written for bash. Windows runners default to PowerShell, so name bash for every leg; on Linux and
+    # macOS it was already the shell (now also with pipefail, and no step pipes).
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +53,16 @@ jobs:
           - name: public-engine-node24
             os: ubuntu-latest
             node: '24'
+          # Windows runners are free for a public repository. Windows has no POSIX mode bits, so the tests that assert
+          # owner-only modes skip there, as the engine's own owner-only checks do.
+          - name: public-engine-windows
+            os: windows-latest
+            node: '22'
+          # npm 12 is npm's latest major; Node 22 ships npm 10. Same install from the same lockfile.
+          - name: public-engine-npm12
+            os: ubuntu-latest
+            node: '22'
+            npm: '12'
     steps:
       # RenorBench baseline tests compare the committed baseline with origin/main.
       # A shallow checkout does not have that ref.
@@ -66,6 +81,10 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: package-lock.json
+
+      - name: Use npm ${{ matrix.npm }}
+        if: matrix.npm
+        run: npm install -g npm@${{ matrix.npm }} && npm --version
 
       - name: Install
         run: npm ci

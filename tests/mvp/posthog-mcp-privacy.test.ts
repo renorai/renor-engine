@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gunzipSync } from 'node:zlib';
 import {
+  clientFamily,
   redactMcpAnalyticsEvent,
   resetPosthogMcpForTests,
   instrumentMcpServer,
@@ -67,6 +68,45 @@ describe('PostHog MCP privacy beforeSend', () => {
     expect(JSON.stringify(out)).not.toMatch(/SECRET|Memory leaked|private stuff/i);
   });
 
+  it('never sends the client name as the client wrote it: a person\'s email becomes `other`', () => {
+    const out = redactMcpAnalyticsEvent(sampleEvent({ properties: { $mcp_client_name: 'alice@example.com' } }));
+    expect(JSON.stringify(out)).not.toContain('alice@example.com');
+    expect(out!.properties.$mcp_client_name).toBe('other');
+  });
+
+  it('keeps a known client family, and nothing of the rest of the name', () => {
+    expect(clientFamily('claude-code')).toBe('claude-code');
+    expect(clientFamily('Cursor')).toBe('cursor');
+    expect(clientFamily('codex-mcp-client')).toBe('codex');
+    expect(clientFamily('claude-code-alice@example.com')).toBe('claude-code');
+    expect(clientFamily('Alice Example')).toBe('other');
+    expect(clientFamily(42)).toBeUndefined();
+  });
+
+  it('drops every client-supplied string and every property it does not list', () => {
+    const out = redactMcpAnalyticsEvent(sampleEvent({
+      properties: {
+        $mcp_tool_name: 'remember',
+        $mcp_client_version: 'alice@example.com',
+        $mcp_client_user_agent: 'alice@example.com',
+        $mcp_vendor_client: 'alice@example.com',
+        $mcp_input_keys: ['alice@example.com'],
+        $mcp_input_aliases_used: ['alice@example.com'],
+        $mcp_resource_name: 'alice@example.com',
+        $mcp_llm_model: 'alice@example.com',
+        $mcp_conversation_id: 'alice@example.com',
+        $mcp_error_type: 'alice@example.com',
+        $mcp_missing_capability: 'alice@example.com',
+        $mcp_protocol_version: 'alice@example.com',
+        $session_id: 'alice@example.com',
+        $set: { email: 'alice@example.com' },
+        a_field_no_one_listed: 'alice@example.com',
+      },
+    }));
+    expect(JSON.stringify(out)).not.toContain('alice');
+    expect(out!.properties).toEqual({ $mcp_tool_name: 'remember' });
+  });
+
   it('drops $exception siblings', () => {
     expect(
       redactMcpAnalyticsEvent(
@@ -107,7 +147,7 @@ describe('PostHog MCP analytics: the workspace leaves only as its hashed id', ()
   }
 
   /** One tool call through an instrumented server, with every request the PostHog client makes kept. */
-  async function callOneToolAndCollect(): Promise<{ raw: string[]; events: PostedEvent[] }> {
+  async function callOneToolAndCollect(clientName = 'renor-test-client'): Promise<{ raw: string[]; events: PostedEvent[] }> {
     const raw: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init?: RequestInit) => {
       raw.push(await bodyText(init?.body));
@@ -120,7 +160,7 @@ describe('PostHog MCP analytics: the workspace leaves only as its hashed id', ()
     server.registerTool('probe', { description: 'probe' }, async () => ({ content: [{ type: 'text' as const, text: 'ran' }] }));
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     await server.connect(serverSide);
-    const client = new Client({ name: 'renor-test-client', version: '0.0.0' });
+    const client = new Client({ name: clientName, version: '0.0.0-alice' });
     await client.connect(clientSide);
     await client.callTool({ name: 'probe', arguments: {} });
     await client.close();
@@ -159,6 +199,17 @@ describe('PostHog MCP analytics: the workspace leaves only as its hashed id', ()
     }
     // Nothing the client posts, in any field, spells the name or a piece of it.
     expect(raw.join('\n')).not.toMatch(/jane/i);
+  });
+
+  it('posts nothing of a client that names itself with an email', async () => {
+    configure('jane-doe');
+    const { raw, events } = await callOneToolAndCollect('alice@example.com');
+
+    // Not vacuous: the tool call was captured, and it says the client only as its family.
+    const calls = events.filter((e) => e.event === '$mcp_tool_call');
+    expect(calls.length).toBeGreaterThan(0);
+    for (const e of calls) expect(e.properties.$mcp_client_name).toBe('other');
+    expect(raw.join('\n')).not.toMatch(/alice/i);
   });
 
   it('files no group at all when the process does not know which workspace it serves', async () => {

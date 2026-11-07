@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
-import { readWhatsNew } from '../../src/memory/whatsNew';
+import { readWhatsNew, whatsNewPageFromEnv } from '../../src/memory/whatsNew';
 
 const NOW = new Date('2026-10-08T12:00:00.000Z');
 const dirs: string[] = [];
@@ -68,6 +68,19 @@ describe('whats_new', () => {
     expect(rest.cursor).toBeNull();
     const again = readWhatsNew(database, { agent: 'firstmate', now: new Date('2026-10-08T13:00:00.000Z') });
     expect(again.items).toEqual([]);
+  });
+
+  it('with no limit named, the default page is 5 items and the rest come by cursor', () => {
+    const database = db();
+    for (let i = 1; i <= 7; i++) save(database, `2026-10-08T0${i}:00:00.000Z`, 'richard', 'global', 'store', `item ${i}`);
+    const limit = whatsNewPageFromEnv({});
+    expect(limit).toBe(5);
+    const page = readWhatsNew(database, { agent: 'firstmate', now: NOW, limit });
+    expect(page.items.map((item) => item.summary)).toEqual(['item 7', 'item 6', 'item 5', 'item 4', 'item 3']);
+    expect(page.cursor).toBeTruthy();
+    const rest = readWhatsNew(database, { agent: 'firstmate', now: NOW, limit, cursor: page.cursor! });
+    expect(rest.items.map((item) => item.summary)).toEqual(['item 2', 'item 1']);
+    expect(rest.cursor).toBeNull();
   });
 
   it('a scope sees only that scope', () => {

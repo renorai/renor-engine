@@ -61,7 +61,7 @@ import { emitTelemetry, isPlatformInitialize, isRecallTool } from './telemetry';
 import { ReadUsefulness, contextItems, searchItems, retrieveItems } from './readUsefulness';
 import { instrumentMcpServer } from './posthogMcp';
 import { countSchemaRejections } from './schemaRejections';
-import { ObserveRequestSchema, observeEnabled, storeObservation } from './observations';
+import { ObserveRequestSchema, observeEnabled, startObservationIdleSweep, storeObservation } from './observations';
 import { buildSessionIndex, DEFAULT_SESSION_INDEX_TOKENS, SESSION_INDEX_METHOD, sessionIndexEnabled } from './sessionIndex';
 import { pinnedRulesEnabled } from './pinnedRules';
 import { approvedRuleKeys, ruleApprovalsEnabled, ruleKey, updateRuleApprovals } from './ruleApprovals';
@@ -70,7 +70,7 @@ import { captureServerOn } from '../extraction/captureModel';
 import { buildAgentContext, factQueryTerms, headingForReply, keywordOrMatch, scoreForReply, searchRelevance, searchTextFallbackEnabled } from './agentMemory';
 import { replyCeiling } from './datedOutline';
 import { indexNotice, withFactHits } from './factsLane';
-import { claimsReservedEntrySource, markFactHits } from './factMarkers';
+import { claimsReservedEntrySource, markAuthority, markFactHits } from './factMarkers';
 import { withHitDates } from './hitDates';
 import { assertReplaceable, recordReplacement, replacementIndex, withReplacements } from '../memorymap/replacements';
 import { CONTEXT_BUDGET_KEEPS_NEWEST, CONTEXT_RELEVANCE_GUIDANCE, CONTEXT_RELEVANCE_KEEPS_MATCH, SEARCH_RELEVANCE_GUIDANCE, contextRelevanceArmed } from './contextRelevance';
@@ -90,13 +90,13 @@ import { SHARING_LEVELS } from '../sharing/fields';
 import { chooseLevel, deleteAllShared } from '../sharing/send';
 import { AGENT_LEVELS, SHARING_TOOL_DESCRIPTION, runSharingTool, type AskHuman } from '../sharing/agentTool';
 import { AGENT_NOTICE_INSTRUCTION, showNotice } from '../sharing/notice';
-import { contributorId, defaultInForce, effectiveLevel, ensureState, readConsent, trainingBearer } from '../sharing/state';
+import { contributorId, defaultInForce, effectiveLevel, ensureState, readConsent, readState, trainingBearer } from '../sharing/state';
 import { hostHeaderValidation } from '@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js';
 import { LOCAL_API_HOSTNAMES } from '../api/apiAuth';
 import { ensureOwnerOnlyFile, ensureOwnerOnlyMemoryDir } from './memoryDir';
 import { previewImport, applyHostedImport, undoHostedImport, importPreviewSchema, importBatchSchema } from '../importing/hosted';
 import { exportEverything, EXPORT_SECTIONS } from './exportAll';
-import { DEFAULT_MAP_LIMIT, buildMemoryMap, findMemories, purgeRetired, readMemory, retireMemory, restoreMemory } from '../memorymap/memoryMap';
+import { DEFAULT_MAP_LIMIT, buildMemoryMap, findMemories, memoryPathTree, recallFileTreeOn, purgeRetired, readMemory, retireMemory, restoreMemory } from '../memorymap/memoryMap';
 import { IdleMonitor } from './idle';
 import { createDreamer, type Dreamer } from '../memory/dreamer/dreamer';
 import { ACTIVITY_PATH, ActivityGauge } from './activity';
@@ -110,8 +110,9 @@ import { CallPhases, isPhasedTool, markRetrieved } from '../callPhases';
 import { saveMomentInstructions, saveMomentMode, saveMomentTool } from './saveMoment';
 import { requestTiming, serverTimingFor } from './serverTiming';
 import { createLogger } from './log';
-import { checkProfileTools, contextProfileFromEnv, searchMemoryKeywordFallbackEnabled, whatsNewFirst, LINE_TOOLS, renderLines, type ContextProfile } from './contextProfile';
+import { CODING_TOOLS, checkProfileTools, contextProfileFromEnv, searchMemoryKeywordFallbackEnabled, whatsNewFirst, LINE_TOOLS, renderLines, type ContextProfile } from './contextProfile';
 import { renderToon } from './toonResponse';
+import { authorityLabelsEnabled } from '../memory/authority';
 import { OUT_ASK_AGENT, OUT_HANDOFF, OUT_HIT, OUT_LIST_REQUESTS, OUT_REQUEST, OUT_WHATS_NEW, pageOutputSchemasEnabled, toolCarriesStructured, toolOutputSchemasEnabled } from './outputSchemas';
 import { statusLedgerInstructions } from './statusLedger';
 
@@ -120,7 +121,7 @@ const log = createLogger('engine');
 /** The hook's index request (sessionIndex.ts); not in tools/list. */
 const SessionIndexRequest = z.object({
   method: z.literal(SESSION_INDEX_METHOD),
-  params: z.object({ max_tokens: z.number().int().min(128).max(4000).optional() }).passthrough().optional(),
+  params: z.object({ max_tokens: z.number().int().min(128).max(4000).optional(), scope: z.string().max(200).optional() }).passthrough().optional(),
 });
 
 /**
@@ -348,6 +349,16 @@ function nullAsOmitted<T extends z.ZodType>(schema: T) {
  * read as omitted, so a save never needs the exact set of keys. Only the check of the value changes; the schema the
  * tool lists is the wrapped one's, a string.
  */
+/** RENOR_BLANK_STATEMENT (default ON): off/0/false/no restores the schema minimum on `statement`. */
+function blankStatementFilled(): boolean {
+  return !['off', '0', 'false', 'no'].includes((process.env.RENOR_BLANK_STATEMENT ?? '').trim().toLowerCase());
+}
+
+/** `statement` as advertised (minLength 1, bytes unchanged). With RENOR_BLANK_STATEMENT on, the empty string skips the minimum check and the handler fills or refuses it. */
+function statementSchema() {
+  return z.string().check(z.minLength(1, { when: (payload: { value: unknown }) => typeof payload.value === 'string' && !(blankStatementFilled() && payload.value === '') } as Parameters<typeof z.minLength>[1]), z.maxLength(MAX_STATEMENT_LENGTH));
+}
+
 function omittedWhenBlank<T extends z.ZodType>(schema: T) {
   return z.preprocess((value) => (value === null || (typeof value === 'string' && value.trim() === '') ? undefined : value), schema);
 }
@@ -443,7 +454,7 @@ function markStoredHit<T extends { notePath?: unknown; text?: unknown; untrusted
  * A search_memory or search_text hit as the engine returns it (engineSearchMemory / engineSearchText type them `unknown`):
  * the fields the marking, the facts lane and the page read.
  */
-type SearchHit = { notePath: string; chunkId?: number; headingPath?: string; text: string; score?: number; reason?: string; author?: string | null; untrusted?: true };
+type SearchHit = { authority?: string; notePath: string; chunkId?: number; headingPath?: string; text: string; score?: number; reason?: string; author?: string | null; untrusted?: true };
 
 /** A hit's score as an agent is shown it: six decimals. The 17 digits of a double cost about 4 tokens a hit and say nothing the order does not. */
 function shortScore<T extends { score?: unknown }>(hit: T): T {
@@ -496,6 +507,14 @@ function trustedIdentity(raw: string, clientChosen: boolean): string {
  * punctuation) names no one (memory/sourceName.ts).
  */
 function sourceOf(sent: string | undefined, extra: CallExtra | undefined, config: MvpConfig): string | undefined {
+  const source = sourceOfRaw(sent, extra, config);
+  // With authority labels on, `owner` is the dashboard's connect-token name. No other call may write under it, whatever it
+  // typed, sent as a User-Agent or named its connection (a key or OAuth client_name that normalises to it).
+  if (authorityLabelsEnabled() && source === 'dashboard-inventory-read' && !isDashboardCall(extra?.requestInfo?.headers, config)) return 'unnamed';
+  return source;
+}
+
+function sourceOfRaw(sent: string | undefined, extra: CallExtra | undefined, config: MvpConfig): string | undefined {
   // The gateway sets this from the connection key's name and overwrites a client-sent copy, so on a named
   // connection it is the author: a `source` the client types cannot write as another agent.
   // A present name that canonicalizes to no identity (punctuation-only, or `unnamed`) cannot take a typed source.
@@ -556,6 +575,15 @@ function isDashboardCall(headers: Record<string, unknown> | undefined, config: M
  * listed (no hive tool); it changes nothing a call may do.
  */
 export const DIRECTORY_HEADER = 'x-renor-directory';
+/**
+ * The tool profile a connection chose through its MCP URL (`?tools=coding`). The gateway reads that query value, allowlists
+ * it and sets this header itself, dropping any copy the client sent; like DIRECTORY_HEADER it is trusted only behind the
+ * gateway, and it only narrows the tools listed. Absent, or any other value, is the full set.
+ */
+export const TOOL_PROFILE_HEADER = 'x-renor-tool-profile';
+function toolProfileOf(headers: Record<string, unknown> | undefined, config: MvpConfig): 'coding' | null {
+  return Boolean(config.gatewaySecret) && headerText(headers, TOOL_PROFILE_HEADER) === 'coding' ? 'coding' : null;
+}
 function isDirectoryCall(headers: Record<string, unknown> | undefined, config: MvpConfig): boolean {
   return Boolean(config.gatewaySecret) && headerText(headers, DIRECTORY_HEADER) === '1';
 }
@@ -609,7 +637,7 @@ function captureFlagsOn(): boolean {
     || ruleApprovalsEnabled() || sessionIndexEnabled() || captureServerOn();
 }
 
-function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine, idle: Pick<IdleMonitor, 'track'> | null, digests: EngineDigests | null, usefulness: ReadUsefulness, connection: ConnectionStatus | null, announceFirst: boolean, telemetrySession: string | null = null, dashboard = false, directory = false, dreamer: Dreamer | null = null): McpServer {
+function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine, idle: Pick<IdleMonitor, 'track'> | null, digests: EngineDigests | null, usefulness: ReadUsefulness, connection: ConnectionStatus | null, announceFirst: boolean, telemetrySession: string | null = null, dashboard = false, directory = false, dreamer: Dreamer | null = null, toolProfile: 'coding' | null = null): McpServer {
   // RENOR_TOOL_OUTPUT_SCHEMAS, read once for this server: its tools list an outputSchema exactly when its answers carry
   // structuredContent.
   const withSchemas = toolOutputSchemasEnabled();
@@ -636,7 +664,11 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
   const statusLedger = statusLedgerInstructions(); // RENOR_STATUS_LEDGER (statusLedger.ts, default off)
   // RENOR_MCP_* (contextProfile.ts, every lever off by default): a benchmark arm's tool subset, descriptions, instructions and
   // reply shape. A directory client keeps the surface the directory rules fix.
-  const profile: ContextProfile = directory ? {} : contextProfileFromEnv();
+  // RENOR_MCP_TOOLS=all is the operator's off switch: every connection gets the full set whatever profile its URL asked for.
+  if (directory || process.env.RENOR_MCP_TOOLS?.trim() === 'all') toolProfile = null;
+  const profile: ContextProfile = directory ? {} : contextProfileFromEnv(toolProfile === 'coding' ? { ...process.env, RENOR_MCP_TOOLS: 'coding' } : process.env);
+  // A connection on the coding profile keeps memory_status beside the four preset tools: it is how an agent (or its user) sees which profile is active.
+  if (toolProfile === 'coding' && !directory) profile.tools = new Set([...(profile.tools ?? CODING_TOOLS), 'memory_status']);
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION, icons: SERVER_ICONS },
     { instructions: directory ? DIRECTORY_INSTRUCTIONS : profile.instructions ?? ('Renor single-owner memory. ' + (whatsNewFirst(profile) ? 'At the start of every task, call whats_new before anything else. Open requests addressed to you are first in that reply; answering or closing one records the reply and never runs anything by itself. ' : '') + recallInstructions()
@@ -792,7 +824,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       + ' To correct one specific earlier note or log entry (not a fact), also pass `replaces`, its id (from memory_map with a query, or an earlier save\'s receipt): that memory is then marked replaced, with a pointer to this save, in every recall, and this save is listed before it. Nothing is deleted; retire_memory on this save undoes it, and the receipt says `replaced` (or `replacesIgnored` when linking would make a loop, as when the save is the same line as the memory it replaces). '
       + 'Sent with subject, predicate and object as well, replaces naming a note or entry makes the save that plain-words correction (`factFieldsIgnored`), and replaces naming a fact is dropped while the fact is saved (`replacesIgnored`).',
     inputSchema: {
-      statement: z.string().min(1).max(MAX_STATEMENT_LENGTH).describe('The thing to remember, in plain words.'),
+      statement: statementSchema().describe('The thing to remember, in plain words.'),
       subject: omittedWhenBlank(z.string().optional()).describe('With predicate and object: who or what the value is about, e.g. "Fjord".'),
       predicate: omittedWhenBlank(z.string().optional()).describe('With subject and object: the attribute, snake_case, spelled the same every time, e.g. "database".'),
       object: omittedWhenBlank(z.string().optional()).describe('With subject and predicate: the current value, on one line, e.g. "SQLite".'),
@@ -829,6 +861,14 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     try {
       const structured = [args.subject, args.predicate, args.object];
       const present = structured.filter(v => typeof v === 'string' && v.trim().length > 0).length;
+      // A blank statement with a full subject/predicate/object (what a small model sends when it fills only the fact fields) is
+      // filled from them, so the save lands on the first try; RENOR_BLANK_STATEMENT=off restores the refusal.
+      if (blankStatementFilled() && args.statement === '' && present === 3) {
+        args.statement = `${args.subject} ${args.predicate}: ${args.object}`.slice(0, MAX_STATEMENT_LENGTH);
+      }
+      if (args.statement === '') {
+        throw refusal('invalid_argument', 'remember needs `statement`: the thing to remember, in plain words (or subject, predicate and object together)');
+      }
       if (present !== 0 && present !== 3) {
         throw refusal('invalid_argument', 'remember requires subject, predicate, and object together, or none of them: to save plain words pass only statement');
       }
@@ -944,6 +984,9 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
     server.server.setRequestHandler(SessionIndexRequest, async (request, extra) => {
       const replaced = await replacementIndex(mapContext());
       const index = buildSessionIndex(db, {
+        workspace: path.resolve(config.memoryDir),
+        // The request scope is only read with RENOR_OBSERVE on; with it off the index is byte-for-byte what it was.
+        ...(observeEnabled() && request.params?.scope ? { scope: request.params.scope } : {}),
         reader: readerOf(extra),
         // The index is at most DEFAULT_SESSION_INDEX_TOKENS, and leaves the requested reply budget 96 tokens for its framing.
         maxTokens: Math.min(DEFAULT_SESSION_INDEX_TOKENS, Math.max(32, (request.params?.max_tokens ?? DEFAULT_SESSION_INDEX_TOKENS) - 96)),
@@ -955,6 +998,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
   }
   // Owner requires the write-side eval to win first; #1441 owns the default flip.
   if (observeEnabled()) {
+    startObservationIdleSweep(db, path.resolve(config.memoryDir));
     server.server.setRequestHandler(ObserveRequestSchema, async request => {
       try {
         return { ...storeObservation(db, path.resolve(config.memoryDir), request.params) };
@@ -1324,6 +1368,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       let result: Record<string, unknown> = body;
       if (body.ok) {
         // Who saved each fact among the hits, marked before anything reads them (the verdict, the page, the floor).
+        markAuthority(db, body.hits as SearchHit[], ledgerNoteMatcher(config));
         markFactHits(db, body.hits as SearchHit[], readerOf(extra), ledgerNoteMatcher(config));
         // Judged over the index's own hits, before the facts lane adds any, with top_k: the fact the verdict is judged
         // on is then listed by that lane when the page has room for it, so a relevant verdict always names a match the
@@ -1406,6 +1451,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
           return any.ok && (any.results as unknown[]).length > 0 ? { ...any, fallback: 'any-word' } : exact;
         })()
         : exact;
+      if (body.ok) markAuthority(db, body.results as SearchHit[], ledgerNoteMatcher(config));
       if (body.ok) markFactHits(db, body.results as SearchHit[], readerOf(extra), ledgerNoteMatcher(config));
       const result = body.ok
         ? {
@@ -1686,7 +1732,9 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
         // answer for every scope.
         if (args.scope !== undefined) throw refusal('invalid_argument', 'memory_map takes a scope only with a query (words the memories contain): the whole map is not cut by scope');
         const map = await buildMemoryMap(mapContext(), { limit: args.limit });
-        return jsonResult({ ...map, memories: map.memories.map(markStoredMemory) });
+        const memories = map.memories.map(markStoredMemory);
+        // RENOR_RECALL_FILE_TREE (research lever, default off): a folder tree next to the list. Off, the reply is unchanged.
+        return jsonResult(recallFileTreeOn() ? { ...map, memories, tree: memoryPathTree(map.memories) } : { ...map, memories });
       }
       // Read the way the facts lane reads a query: stop words count only when nothing else is left.
       const terms = factQueryTerms(args.query);
@@ -1848,6 +1896,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       noticeVersion: z.string().nullable(),
       remoteDeleted: z.boolean().nullable(),
       trainingContributorId: z.string().nullable(),
+      trainingUnmapped: z.boolean(),
     }),
   }, async (args, extra) => {
     try {
@@ -1879,6 +1928,8 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
         ok: true,
         action: args.action,
         trainingContributorId: training ? contributorId(trainingBearer(ensureState(dir).secret)) : null,
+        // True while the endpoint refused the training id as unmapped: the platform ties it again (memory-inventory) when it sees this.
+        trainingUnmapped: training && readState(dir)?.trainingUnmappedAt !== undefined,
         // An earlier explicit Off that the text switch was toggled on and off over reads as `signals` (the switch off), as the platform's record says;
         // the engine keeps the numbers off (ConsentRecord.numbersOff).
         level: record?.numbersOff === true && record.level === 'off' ? 'signals' : (record?.level ?? 'off'),
@@ -1960,7 +2011,7 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       include_own: z.boolean().optional().describe('Also return what this connection wrote. Default false.'),
       cursor: omittedWhenBlank(z.string().optional()).describe('The cursor from the previous reply, when that reply was full.'),
       limit: z.number().int().min(1).max(WHATS_NEW_LIMIT).optional().describe(
-        'How many items this reply holds, 1 to 50. Unset, it is the workspace page (RENOR_WHATS_NEW_PAGE, 50 when unset). A full page carries a cursor for the rest.'),
+        'How many items this reply holds, 1 to 50. Unset, it is the workspace page (RENOR_WHATS_NEW_PAGE, 5 when unset). A full page carries a cursor for the rest.'),
     },
     outputSchema: OUT_WHATS_NEW,
   }, async (args, extra) => {
@@ -2124,6 +2175,8 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
       }).optional(),
       degraded: z.object({ keyword: z.string().optional(), semantic: z.string().optional() }).optional(),
       renor: z.string(),
+      // In the schema only for a connection on the coding profile, so the full set's tools/list is byte-identical to before.
+      ...(toolProfile === 'coding' ? { tool_profile: z.string().optional() } : {}),
       digests: OUT_HIT.optional(),
     }),
   }, async (_args, extra) => {
@@ -2142,6 +2195,8 @@ function buildMcpServer(db: Database.Database, config: MvpConfig, engine: Engine
         // Present only where a server capture feature is switched on, so a workspace without them reports what it always did (the same rule as digests below).
         ...(captureOn ? { capture_features: captureFeatures } : {}),
         renor: identityLine(extra?.requestInfo?.headers),
+        // Named only on a connection that chose the coding profile (?tools=coding): the full set reports what it always did.
+        ...(toolProfile === 'coding' ? { tool_profile: 'coding' } : {}),
       };
       // Present only where write-time digests are switched on, so a workspace without them reports what it always did.
       return jsonResult(digests ? { ...body, digests: digests.worker.status() } : body);
@@ -2692,7 +2747,7 @@ export function createMvpApp(config: MvpConfig, engineOverride?: EmbeddingProvid
       sessionIdGenerator: undefined, // stateless: this transport serves this one request
       enableJsonResponse: false,
     });
-    const sessionServer = buildMcpServer(db, config, engine, activity, digests, usefulness, connection, false, null, isDashboardCall(req.headers, config), isDirectoryCall(req.headers, config));
+    const sessionServer = buildMcpServer(db, config, engine, activity, digests, usefulness, connection, false, null, isDashboardCall(req.headers, config), isDirectoryCall(req.headers, config), null, toolProfileOf(req.headers, config));
     res.once('close', () => { void transport.close(); void sessionServer.close(); });
     await sessionServer.connect(transport);
     await transport.handleRequest(req, res, req.body);
@@ -2829,7 +2884,7 @@ export function createMvpApp(config: MvpConfig, engineOverride?: EmbeddingProvid
           sessionIdGenerator: undefined, // stateless: one transport per request
           enableJsonResponse: true,
         });
-        const requestServer = buildMcpServer(db, config, engine, activity, digests, usefulness, connection, false, null, isDashboardCall(req.headers, config), isDirectoryCall(req.headers, config));
+        const requestServer = buildMcpServer(db, config, engine, activity, digests, usefulness, connection, false, null, isDashboardCall(req.headers, config), isDirectoryCall(req.headers, config), null, toolProfileOf(req.headers, config));
         res.on('close', () => { void transport.close(); void requestServer.close(); });
         await requestServer.connect(transport);
         await transport.handleRequest(req, res, req.body);
@@ -2896,7 +2951,7 @@ export function createMvpApp(config: MvpConfig, engineOverride?: EmbeddingProvid
       // calls, isPlatformInitialize) gets no id: it still counts as a connection, but it writes no first call and its mcp_init
       // carries no id for the recall share to join, so the share counts agents only.
       const telemetrySession = isPlatformInitialize(req.body) ? null : crypto.randomBytes(8).toString('hex');
-      const sessionServer = buildMcpServer(db, config, engine, activity, digests, usefulness, connection, true, telemetrySession, isDashboardCall(req.headers, config), isDirectoryCall(req.headers, config), dreamer);
+      const sessionServer = buildMcpServer(db, config, engine, activity, digests, usefulness, connection, true, telemetrySession, isDashboardCall(req.headers, config), isDirectoryCall(req.headers, config), dreamer, toolProfileOf(req.headers, config));
       transport.onclose = () => {
         sseSessions.delete(sessionId);
         emitTelemetry({ event: 'session', kind: 'mcp_close' });

@@ -12,6 +12,7 @@ import { contextDistinctEnabled, distinctMemories } from './contextDistinct';
 import { contextNewerFirstEnabled, newerFirstMemories } from './contextNewerFirst';
 import { claimsReservedEntrySource, eventMarker, factAuthorsByEvent } from './factMarkers';
 import { authorMarker } from '../memory/sourceName';
+import { authorityField, authorityOfChunk, authorityOfSource, lowestAuthority, type Authority } from '../memory/authority';
 import type { HitOrder } from '../retrieval/orchestrator';
 import { orderHits, SESSION_EXPAND_REASON, sessionDateMs } from '../retrieval/orchestrator';
 import type { EvidenceToolOptions } from '../evidence/options';
@@ -85,6 +86,8 @@ export interface AgentContextFact {
   source?: string;
   /** Set on a fact an import saved: its text came from a file, not from something the user said to an agent. */
   untrusted?: true;
+  /** Where the fact came from: owner, agent, captured or imported (RENOR_AUTHORITY_LABELS, default off; absent when off). */
+  authority?: Authority;
   /** Where this fact came from and when it was last verified (LANE 3, flag-gated). */
   provenance?: Provenance;
   /** Set on a current fact that replaced a value another writer saved, until that writer saves it again (memory/writerConflicts.ts). */
@@ -113,6 +116,8 @@ export interface AgentContextMemory {
    * match, so a memory without it was matched.
    */
   matched?: boolean;
+  /** Where the memory came from: owner, agent, captured or imported (RENOR_AUTHORITY_LABELS, default off; absent when off). */
+  authority?: Authority;
   /**
    * `import` on a memory under `Imported/`: a document someone imported, written as an ordinary note. Its text is
    * untrusted source material, not one of the engine's own daily entries, and the path alone was the only thing that
@@ -1600,7 +1605,7 @@ export async function buildAgentContext(
   // carries its line, and a fact with none is shaped as it always was.
   const disputes = writerConflictLines(db, shownFacts.map(fact => fact.eventId));
   const shaped = (fact: CurrentFact): AgentContextFact => {
-    const base = toAgentFact(fact, options.reader);
+    const base = { ...toAgentFact(fact, options.reader), ...authorityField(authorityOfSource(fact.author), options.env) };
     const line = fact.eventId === null ? undefined : disputes.get(fact.eventId);
     const stale = staleOf(fact);
     const marked = stale === null ? base : { ...base, staleStatus: stale };
@@ -1642,9 +1647,10 @@ export async function buildAgentContext(
   // A ledger event that is a saved fact says who saved it, as get_context's facts do: its author is read from the fact.
   const eventAuthors = factAuthorsByEvent(db, deduped.flatMap(memory => (isLedger(memory.notePath) ? ledgerEventIds(memory) : [])));
   const candidateMemories = deduped.map(memory => {
-    if (!isLedger(memory.notePath)) return labelMemoryText(memory);
+    if (!isLedger(memory.notePath)) return labelMemoryText({ ...memory, ...authorityField(authorityOfChunk(memory.notePath, memory.text), options.env) });
     const plain = normalizeMemory({ ...memory, notePath: '', headingPath: '' }, memory.reason)!;
-    return labelMemoryText({ ...plain, ...eventMarker(ledgerEventIds(memory), eventAuthors, options.reader) });
+    const saved = ledgerEventIds(memory).filter(id => eventAuthors.has(id)).map(id => authorityOfSource(eventAuthors.get(id)));
+    return labelMemoryText({ ...plain, ...eventMarker(ledgerEventIds(memory), eventAuthors, options.reader), ...authorityField(lowestAuthority(saved), options.env) });
   });
   // The dated outline (RENOR_DATED_OUTLINE, off by default): the pool is read here, the block is built last (below), from
   // the room the finished reply leaves, so it never takes a place from a fact or memory. Off performs no lookup and changes

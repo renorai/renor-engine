@@ -55,6 +55,7 @@ beforeEach(() => {
   }
   process.env.RENOR_TELEMETRY_DISABLED = 'true';
   process.env.MVP_INSTANCE_ID = 'rejected-test';
+  process.env.RENOR_BLANK_STATEMENT = 'off'; // this file pins the schema refusal of an empty statement (the off switch); the default is tested in remember-blank-statement-mcp.test.ts
   resetPosthogMcpForTests();
 });
 

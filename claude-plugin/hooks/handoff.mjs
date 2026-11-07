@@ -42,20 +42,41 @@ export function repoAndBranch(cwd) {
 }
 
 function stateFile(env, sessionId, event) {
-  const dir = env.CLAUDE_PLUGIN_DATA || path.join(os.tmpdir(), 'renor-handoff');
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 'u';
+  const dir = env.CLAUDE_PLUGIN_DATA || path.join(os.tmpdir(), `renor-handoff-${uid}`);
+  const strict = !env.CLAUDE_PLUGIN_DATA;
   const safe = String(sessionId || 'no-session').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
-  return { dir, file: path.join(dir, `${safe}.${event}.json`) };
+  return { dir, strict, file: path.join(dir, `${safe}.${event}.json`) };
+}
+
+/** True only for a real directory (not a symlink) that this user owns; with strictMode, also one nobody else can read or write.
+ *  The host creates CLAUDE_PLUGIN_DATA (often 0755), so only the tmpdir fallback needs strictMode. */
+function privateDir(dir, strictMode = true) {
+  const st = fs.lstatSync(dir);
+  if (!st.isDirectory()) return false;
+  if (typeof process.getuid === 'function' && (st.uid !== process.getuid() || (strictMode && (st.mode & 0o077) !== 0))) return false;
+  return true;
 }
 
 function readState(env, sessionId, event) {
-  try { return JSON.parse(fs.readFileSync(stateFile(env, sessionId, event).file, 'utf8')); } catch { return null; }
+  try {
+    const { dir, file, strict } = stateFile(env, sessionId, event);
+    if (!privateDir(dir, strict) || !fs.lstatSync(file).isFile()) return null;
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch { return null; }
 }
 
 function writeState(env, sessionId, event, value) {
-  const { dir, file } = stateFile(env, sessionId, event);
+  const { dir, file, strict } = stateFile(env, sessionId, event);
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(file, JSON.stringify(value), { mode: 0o600 });
+    if (!privateDir(dir, strict)) return false;
+    // Write a fresh file that refuses symlinks, then rename it over the state file: rename replaces a planted symlink
+    // itself and never writes through it.
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    const fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
+    try { fs.writeSync(fd, JSON.stringify(value)); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, file);
     return true;
   } catch {
     return false;

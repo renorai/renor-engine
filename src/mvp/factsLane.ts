@@ -12,6 +12,7 @@ import { factText } from '../retrieval/ledgerPresentation';
 import { normalizeScope, scopeSqlPredicate, type NormalizedScope } from './scope';
 import { leadingSummaryHits } from '../digests/digests';
 import { authorMarker, type AuthorMarker } from '../memory/sourceName';
+import { authorityField, authorityOfSource } from '../memory/authority';
 
 /**
  * The facts lane of search: current lifecycle facts read straight from the `facts` table.
@@ -70,6 +71,7 @@ function factHit(row: CurrentFact, ledger: LedgerLocation, date?: (at: string) =
     ...(date ? { session_date: date(row.validFrom) } : {}),
     // Who saved it, as get_context's facts show it: another agent's name, and untrusted for an import.
     ...authorMarker(row.author, reader),
+    ...authorityField(authorityOfSource(row.author)),
     // The values another writer replaced that stay open against it (memory/writerConflicts.ts), when there are any.
     ...(conflict !== undefined ? { writerConflict: conflict } : {}),
   };

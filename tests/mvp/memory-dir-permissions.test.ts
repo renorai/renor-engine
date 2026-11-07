@@ -29,6 +29,8 @@ const tmp = (): string => {
   return d;
 };
 const mode = (p: string): number => fs.statSync(p).mode & 0o777;
+/** Windows has no POSIX mode bits: stat reports 0o666/0o777 whatever was asked, and chmod only toggles read-only. The engine skips its owner-only checks there (no process.getuid). */
+const WINDOWS = process.platform === 'win32';
 
 /** Run with a permissive umask, as a default shell has, so a mode that comes out owner-only is the engine's doing. */
 async function withUmask<T>(mask: number, run: () => Promise<T> | T): Promise<T> {
@@ -40,7 +42,7 @@ async function withUmask<T>(mask: number, run: () => Promise<T> | T): Promise<T>
   }
 }
 
-describe('memory directory policy', () => {
+describe.skipIf(WINDOWS)('memory directory policy', () => {
   /** A directory as `mkdir -p` leaves it on a normal umask, with notes in it: nested, a symlink and a foreign-looking file. */
   function readableMemory(m: number): string {
     const dir = path.join(tmp(), 'memory');
@@ -181,7 +183,7 @@ describe('memory directory policy', () => {
 });
 
 describe('index database', () => {
-  it('is created 0600 in a 0700 directory under umask 000, and an existing file keeps its mode', async () => {
+  it.skipIf(WINDOWS)('is created 0600 in a 0700 directory under umask 000, and an existing file keeps its mode', async () => {
     const root = tmp();
     const dbPath = path.join(root, 'nested', '.semantic-memory', 'index.db');
     await withUmask(0o000, () => {

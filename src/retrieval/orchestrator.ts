@@ -1018,12 +1018,22 @@ interface RetrieveOptions {
   bestFirst?: boolean;
 }
 
+/**
+ * RENOR_RETRIEVE_AGGREGATE_K (default off, a research lever): a positive whole number widens every read to at least that many
+ * matches; the session-diversity cap still merges the window per session. Unset, empty, 0 or not a number: the ask is unchanged.
+ */
+export function aggregateTopK(topK: number, env: NodeJS.ProcessEnv = process.env): number {
+  const k = Number((env.RENOR_RETRIEVE_AGGREGATE_K ?? '').trim());
+  return Number.isInteger(k) && k > 0 && k > topK ? k : topK;
+}
+
 export async function retrieveContext(
   db: Database.Database, vectorIndex: VectorIndex | undefined, provider: ProviderLike | undefined,
   query: string, topK = 20, priorityPaths: string[] = [],
   clock: { nowMs?: number } = {},
   opts: RetrieveOptions = {},
 ): Promise<RetrievalResult> {
+  topK = aggregateTopK(topK);
   contentfulHeld.clear(); // what another read worked out is not this read's
   const factHits = factsFirstHits(db, query, Math.min(3, topK), opts.scope?.shows);
   const queryProbe: RetrievalProbe = opts.probe ?? {}; // the query vector, for the expansion's ranking

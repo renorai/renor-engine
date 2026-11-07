@@ -62,6 +62,21 @@ export class DreamerBudget {
     return this.spentToday() + usd <= this.config.maxUsdPerDay;
   }
 
+  /** Charge a call's worst case before it is made. */
+  reserve(usd: number): void {
+    this.store.set(this.key(), String(this.spentToday() + usd));
+  }
+
+  /**
+   * Replace a reservation with the real charge: the usage when the provider reported any, else `fallbackUsd`.
+   */
+  settle(reserved: number, usage: { promptTokens?: number; completionTokens?: number }, fallbackUsd: number): void {
+    const cost = usage.promptTokens === undefined && usage.completionTokens === undefined
+      ? fallbackUsd
+      : ((usage.promptTokens ?? 0) * this.config.priceInPerM + (usage.completionTokens ?? 0) * this.config.priceOutPerM) / 1e6;
+    this.store.set(this.key(), String(Math.max(0, this.spentToday() - reserved) + cost));
+  }
+
   /** Add what a call cost, from its usage; `fallbackUsd` stands in when the provider reported none. */
   record(usage: { promptTokens?: number; completionTokens?: number }, fallbackUsd: number): number {
     const cost = usage.promptTokens === undefined && usage.completionTokens === undefined
@@ -72,6 +87,9 @@ export class DreamerBudget {
   }
 }
 
+/** The transport's own errors (provider status, missing content): anything else (a timeout, a dropped socket) may have been billed. */
+const isProviderError = (err: unknown): boolean => err instanceof Error && /^extractor provider (returned|response)/.test(err.message);
+
 /** A chat that checks the cap before each call and charges its usage after. `onCap` is told when a call was refused. */
 export function meteredChat(chat: EvidenceChat, budget: DreamerBudget, onCap: () => void): EvidenceChat {
   return async request => {
@@ -81,8 +99,20 @@ export function meteredChat(chat: EvidenceChat, budget: DreamerBudget, onCap: ()
       onCap();
       throw new DreamerCapError();
     }
-    const response = await chat(request);
-    budget.record(response, worst);
-    return response;
+    // Reserve the worst case durably before the first byte leaves, so a call that fails or is cut off still counts.
+    budget.reserve(worst);
+    try {
+      const response = await chat(request);
+      budget.settle(worst, response, worst);
+      return response;
+    } catch (err) {
+      const e = err as { billedUsage?: { promptTokens?: number; completionTokens?: number }; billingAmbiguous?: boolean };
+      // Billed usage the provider reported is charged as reported; a failure that may have been billed unseen keeps the whole
+      // reservation; a rejection that cannot have been billed gives it back.
+      if (e?.billingAmbiguous === true || !isProviderError(err)) budget.settle(worst, {}, worst);
+      else if (e?.billedUsage) budget.settle(worst, e.billedUsage, 0);
+      else budget.settle(worst, {}, 0);
+      throw err;
+    }
   };
 }

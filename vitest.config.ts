@@ -12,10 +12,13 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     // The suite's fictional owner: identity aliases come from RENOR_OWNER_NAMES, which is unset by default.
-    // The sharing default (src/sharing/state.ts) is the shipped one: anonymous usage numbers on until chosen otherwise, so every test that
-    // starts a service runs with it. The only thing pinned is WHERE the install's own state (the first-run notice record, `renor setup`'s
+    // The shipped sharing default (src/sharing/state.ts) is anonymous usage numbers on until chosen otherwise. That stays the product's
+    // default, and the sharing tests still prove it (they pass their own env). But OUR test runs are not users: an engine a test starts
+    // without an explicit opt-in must send nothing, or every run is one more "install" in the sharing data. So the whole suite runs with
+    // RENOR_SHARING=off (the engine's own override, which can only lower the level); a test that wants sharing on sets its own env.
+    // Also pinned is WHERE the install's own state (the first-run notice record, `renor setup`'s
     // answer, the install's id that binds a consent record to it) lives: a folder of this run's own, so a test never reads or writes the developer's ~/.config/renor.
-    env: { RENOR_OWNER_NAMES: 'Rowan,Rowan Vale,Rowan Vale Holm', XDG_CONFIG_HOME: suiteConfigHome, XDG_STATE_HOME: suiteConfigHome },
+    env: { RENOR_SHARING: 'off', RENOR_OWNER_NAMES: 'Rowan,Rowan Vale,Rowan Vale Holm', XDG_CONFIG_HOME: suiteConfigHome, XDG_STATE_HOME: suiteConfigHome },
     // Start the slowest files first (vitest's own cache, else the seconds recorded in tests/setup/test-durations.json), so no worker is
     // left holding the longest file after the others are done. It only orders; it selects and skips nothing.
     sequence: { sequencer: DurationSequencer },
@@ -29,6 +32,11 @@ export default defineConfig({
     // Every worker gets the backstop that kills process groups a suite left behind when the
     // runner is signalled (gate timeout, Ctrl-C) — the per-file afterEach cannot run in that case.
     setupFiles: ['tests/setup/childTreeBackstop.ts'],
+    // tests/release: each fake release world is a fresh copy of the repository, and its release script must be imported from
+    // that copy (the preflight refuses a script outside the checkout it releases). Transformed by vitest, each import compiled
+    // the whole release module tree again (~200 ms of CPU per world), which pushed the release cases past their 5 s on a busy
+    // gate host. Loaded by Node as they are, the same modules take ~20 ms, still from each world's own copy.
+    server: { deps: { external: [/renor-release-world-/] } },
     // Scratch first: a temp directory on a disk moves to RAM when RAM can spare the room, so a run
     // does not write its fixtures to the SSD (tests/setup/ramScratch.ts). Then compile the tree
     // under test; then the run fails if any child this run started is still alive once the

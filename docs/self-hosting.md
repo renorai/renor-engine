@@ -43,13 +43,15 @@ node scripts/smoke-self-hosted.mjs
 | `openai` | Embeds with OpenAI; needs `OPENAI_API_KEY`, and the text of your notes is sent to OpenAI. Search by meaning. |
 | `eval-hash` | Deterministic offline stand-in used by the tests. Makes no quality claim. |
 
-After you change the provider on a folder that already holds notes, run `node dist/cli.js rebuild` so they are embedded again; a plain `index` skips notes that have not changed. [ENVIRONMENT-VARIABLES.md](ENVIRONMENT-VARIABLES.md) lists every setting and its default.
+After you change the provider on a folder that already holds notes, run `node dist/cli.js rebuild` so they are embedded again; a plain `index` skips notes that have not changed. [ENVIRONMENT-VARIABLES.md](ENVIRONMENT-VARIABLES.md) lists the settings you may want and their defaults; [the reference](ENVIRONMENT-VARIABLES-REFERENCE.md) lists every other variable.
 
 ## Checking a folder
 
 `node scripts/smoke-self-hosted.mjs` makes a temporary folder, removes it afterwards and ignores `VAULT_PATH`, so it never adds anything to your notes. It makes the MCP calls `tools/list`, `tools/call` for `remember_fact` with `{"subject":"Ada","predicate":"favorite_color","object":"cerulean"}`, then `search` with each of `What is Ada's favorite color?`, `Ada favorite color cerulean` and `cerulean`; it exits non-zero if a call fails or `cerulean` is missing. To check one folder instead, name it with an absolute path: `node scripts/smoke-self-hosted.mjs "$VAULT_PATH"`. The test fact then stays in that folder's memory.
 
 ## HTTP server
+
+**Shortest route: Docker.** The [image](#docker-and-one-click-hosts) fills in the folders, the port and the URL, so it needs only `MVP_OWNER_EMAIL` and `MVP_OWNER_PASSWORD` (plus `MVP_ALLOWED_CALLBACK_URIS` to connect a client). Run the server without Docker only when you want to choose the folders yourself, as below.
 
 A second process with its own folder. It serves the product tools over HTTP on `127.0.0.1`, with OAuth sign-in for one owner. It needs macOS, Linux, or WSL2 on Windows: native Windows fails at startup because the OAuth client store reads a POSIX user id that Windows does not have. It does not read `VAULT_PATH`. `MVP_EMBEDDING_PROVIDER=none` uses no embedding model.
 

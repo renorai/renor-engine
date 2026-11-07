@@ -431,7 +431,9 @@ describe('memory import — the bundle is a round-trippable interface', () => {
     expect(exit).toBe(0);
 
     // The bundle is private material on disk: 0600, including on overwrite.
-    expect(fs.statSync(bundleFile).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits: stat reports 0o666/0o777 whatever was asked, and chmod only toggles read-only.
+    const posixModes = process.platform !== 'win32';
+    if (posixModes) expect(fs.statSync(bundleFile).mode & 0o777).toBe(0o600);
     fs.chmodSync(bundleFile, 0o644);
     await runCli([
       '--from', `renor-index:${source.dbPath}`,
@@ -442,7 +444,7 @@ describe('memory import — the bundle is a round-trippable interface', () => {
       '--emit-bundle', bundleFile,
       '--json',
     ]);
-    expect(fs.statSync(bundleFile).mode & 0o777).toBe(0o600);
+    if (posixModes) expect(fs.statSync(bundleFile).mode & 0o777).toBe(0o600);
 
     const bundle = readBundleSource(bundleFile);
     expect(bundle.notes).toHaveLength(2);

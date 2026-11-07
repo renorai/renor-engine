@@ -17,7 +17,8 @@ function loadIgnorePatterns(vaultPath: string): string[] {
 }
 
 function isIgnored(filePath: string, vaultPath: string, patterns: string[]): boolean {
-  const rel = path.relative(vaultPath, filePath);
+  // Patterns are written with `/`; on Windows path.relative answers with `\`.
+  const rel = path.relative(vaultPath, filePath).split(path.sep).join('/');
   return patterns.some(p => {
     const clean = p.replace(/\/$/, '');
     return rel === clean || rel.startsWith(clean + '/') || rel.includes('/' + clean + '/') || rel.endsWith('/' + clean);

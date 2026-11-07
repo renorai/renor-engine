@@ -1894,3 +1894,22 @@ export async function retiredForExport(ctx: MemoryMapContext): Promise<ExportRet
   }
   return out;
 }
+
+/** One folder of the vault with how many listed memories sit directly in it. */
+export interface MemoryPathTreeNode { dir: string; memories: number }
+
+/** True only where RENOR_RECALL_FILE_TREE is set to an on value (`1`, `true`, `yes`, `on`). Default off. */
+export function recallFileTreeOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return ['1', 'true', 'yes', 'on'].includes((env.RENOR_RECALL_FILE_TREE ?? '').trim().toLowerCase());
+}
+
+/** The browsable folder tree of the listed memories: each folder once, sorted by path, with its direct memory count. */
+export function memoryPathTree(memories: ReadonlyArray<{ path: string }>): MemoryPathTreeNode[] {
+  const counts = new Map<string, number>();
+  for (const m of memories) {
+    const i = m.path.lastIndexOf('/');
+    const dir = i < 0 ? '.' : m.path.slice(0, i);
+    counts.set(dir, (counts.get(dir) ?? 0) + 1);
+  }
+  return [...counts].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([dir, memories]) => ({ dir, memories }));
+}

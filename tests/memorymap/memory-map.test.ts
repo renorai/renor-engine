@@ -10,6 +10,8 @@ import { remember, DEFAULT_LEDGER_REL } from '../../src/memory/lifecycle';
 import { appendDailyMemory } from '../../src/memory/writer';
 import {
   buildMemoryMap,
+  memoryPathTree,
+  recallFileTreeOn,
   readMemory,
   retireMemory,
   restoreMemory,
@@ -619,5 +621,15 @@ describe('memory map', () => {
       await restoreMemory(ctx, entry.id);
     }
     await check();
+  });
+});
+
+describe('RENOR_RECALL_FILE_TREE lever', () => {
+  it('groups memories by folder, sorted, and is off unless set', () => {
+    expect(memoryPathTree([{ path: 'b/x.md' }, { path: 'a/y.md' }, { path: 'a/z.md' }, { path: 'top.md' }]))
+      .toEqual([{ dir: '.', memories: 1 }, { dir: 'a', memories: 2 }, { dir: 'b', memories: 1 }]);
+    expect(recallFileTreeOn({})).toBe(false);
+    expect(recallFileTreeOn({ RENOR_RECALL_FILE_TREE: '0' })).toBe(false);
+    expect(recallFileTreeOn({ RENOR_RECALL_FILE_TREE: '1' })).toBe(true);
   });
 });

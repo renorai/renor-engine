@@ -88,6 +88,17 @@ export function structuredContextEnabled(env: NodeJS.ProcessEnv = process.env): 
 }
 
 /**
+ * RENOR_FACT_VALIDITY_WINDOWS (default OFF; research lever temporal-fact-validity).
+ * Opt in with 1/true/yes/on. Renders each structured row with its validity window
+ * (valid from / until) and also reads rows a newer value superseded, so knowledge-update
+ * and temporal questions can see what was true and when. Off = byte-identical output.
+ */
+export function factValidityWindowsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.RENOR_FACT_VALIDITY_WINDOWS ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+/**
  * RENOR_QUERY_SCOPED_ROWS (default OFF; C5 rollback flag — never flipped here).
  * Opt in with 1/true/yes/on. Enables read-path query-term-overlap filtering of
  * structured-row tables before composition (efficiency only; gold-blind).
@@ -156,7 +167,12 @@ function rankRows(rows: StoredStructuredRow[], terms: string[]): StoredStructure
   return counted.map((c) => c.row);
 }
 
-function provenanceSuffix(row: StoredStructuredRow): string {
+function provenanceSuffix(row: StoredStructuredRow, windows = false): string {
+  if (windows) {
+    const from = row.validFrom ? `valid from ${row.validFrom}` : 'valid from unknown';
+    const window = row.validTo ? `${from} until ${row.validTo}, superseded` : `${from}, current`;
+    return ` (source: ${row.sourcePath}, ${window})`;
+  }
   return ` (source: ${row.sourcePath}${row.validFrom ? `, ${row.validFrom}` : ', date unknown'})`;
 }
 
@@ -194,21 +210,21 @@ export function filterRowsByQueryTerms(
   });
 }
 
-function renderRow(row: StoredStructuredRow): string {
+function renderRow(row: StoredStructuredRow, windows = false): string {
   const p = row.payload;
   switch (row.rowKind) {
     case 'fact': {
       const f = p as FactPayload;
       const value = [f.value, f.unit].filter(Boolean).join(' ');
-      return `- ${[f.verb, f.object].filter(Boolean).join(' ')}: ${value}${provenanceSuffix(row)}`;
+      return `- ${[f.verb, f.object].filter(Boolean).join(' ')}: ${value}${provenanceSuffix(row, windows)}`;
     }
     case 'event': {
       const e = p as EventPayload;
-      return `- ${e.when}: ${e.event}${provenanceSuffix(row)}`;
+      return `- ${e.when}: ${e.event}${provenanceSuffix(row, windows)}`;
     }
     case 'preference': {
       const pr = p as PreferencePayload;
-      return `- ${pr.statement}${provenanceSuffix(row)}`;
+      return `- ${pr.statement}${provenanceSuffix(row, windows)}`;
     }
   }
 }
@@ -230,10 +246,11 @@ const FALLBACKS: Record<'facts' | 'chronicle' | 'prefs', string> = {
 function renderStructuredSection(
   name: 'facts' | 'chronicle' | 'prefs',
   rows: StoredStructuredRow[],
+  windows = false,
 ): RenderedSection | null {
   if (rows.length === 0) return null;
   const lines = [`## ${name === 'prefs' ? 'Preferences' : name[0].toUpperCase() + name.slice(1)}`, '', FALLBACKS[name], ''];
-  for (const row of rows) lines.push(renderRow(row));
+  for (const row of rows) lines.push(renderRow(row, windows));
   const text = lines.join('\n');
   return { name, text, tokens: estimateTokens(text), rowCount: rows.length };
 }
@@ -318,9 +335,10 @@ export function composeQueryContext(input: ComposerInput, options: ComposerOptio
     return rankRows(scopedRows, terms).slice(0, cap);
   };
 
-  const factsSection = renderStructuredSection('facts', byKind('fact'));
-  const chronicleSection = renderStructuredSection('chronicle', byKind('event'));
-  const prefsSection = renderStructuredSection('prefs', byKind('preference'));
+  const windows = factValidityWindowsEnabled(options.env);
+  const factsSection = renderStructuredSection('facts', byKind('fact'), windows);
+  const chronicleSection = renderStructuredSection('chronicle', byKind('event'), windows);
+  const prefsSection = renderStructuredSection('prefs', byKind('preference'), windows);
   const evidenceSection = evidence ? renderEvidence(evidence) : null;
   const excerptsSection = renderExcerpts(hits);
 
@@ -397,6 +415,8 @@ export function composeQueryContextFromDb(
   input: Omit<ComposerInput, 'rows'>,
   options: ComposerOptions = {},
 ): ComposedContext {
-  const rows = readCurrentRowsForNotes(db, input.hits.map((h) => h.notePath));
+  const rows = readCurrentRowsForNotes(db, input.hits.map((h) => h.notePath), {
+    includeSuperseded: factValidityWindowsEnabled(options.env),
+  });
   return composeQueryContext({ ...input, rows }, options);
 }

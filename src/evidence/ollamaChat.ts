@@ -27,6 +27,11 @@ export interface OllamaChatOptions {
 /** The endpoint called when no base URL is given: Ollama Cloud. */
 export const DEFAULT_CHAT_BASE_URL = 'https://ollama.com/v1';
 
+/** Tokens a provider billed on attempts that returned no usable answer. */
+export interface BilledUsage { promptTokens?: number; completionTokens?: number }
+/** A failed call's error, carrying what the provider billed for it (see the dreamer's cost cap). */
+export type BilledError = Error & { billedUsage?: BilledUsage; billingAmbiguous?: boolean };
+
 export function createOllamaChat(opts: OllamaChatOptions): EvidenceChat {
   const baseUrl = (opts.baseUrl ?? DEFAULT_CHAT_BASE_URL).replace(/\/+$/, '');
   const keys = opts.keys.filter(k => k && k.trim());
@@ -50,6 +55,15 @@ export function createOllamaChat(opts: OllamaChatOptions): EvidenceChat {
       ...(request.reasoning_effort !== undefined ? { reasoning_effort: request.reasoning_effort } : {}),
     });
     let lastError: Error | undefined;
+    // Usage the provider reported on attempts that were billed but returned nothing usable, and whether any attempt may have
+    // been billed without a report (timeout, 5xx, network). The dreamer's cost cap charges both.
+    const billed: BilledUsage = {};
+    let ambiguous = false;
+    const fail = (err: Error): never => {
+      if (billed.promptTokens !== undefined || billed.completionTokens !== undefined) (err as BilledError).billedUsage = { ...billed };
+      if (ambiguous) (err as BilledError).billingAmbiguous = true;
+      throw err;
+    };
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       opts.beforeAttempt?.();
       let retryable = true;
@@ -66,6 +80,7 @@ export function createOllamaChat(opts: OllamaChatOptions): EvidenceChat {
         });
         if (resp.status === 429 || resp.status >= 500) {
           lastError = new Error(`extractor provider returned ${resp.status}`);
+          if (resp.status >= 500) ambiguous = true;
           await resp.text().catch(() => '');
           throw lastError;
         }
@@ -83,25 +98,31 @@ export function createOllamaChat(opts: OllamaChatOptions): EvidenceChat {
         const content = data.choices?.[0]?.message?.content;
         const finishReason = data.choices?.[0]?.finish_reason;
         if (typeof content !== 'string') {
+          if (data.usage) {
+            billed.promptTokens = (billed.promptTokens ?? 0) + (data.usage.prompt_tokens ?? 0);
+            billed.completionTokens = (billed.completionTokens ?? 0) + (data.usage.completion_tokens ?? 0);
+          } else ambiguous = true;
           // `length` here is a reasoning model that spent its whole budget thinking.
           throw new Error(`extractor provider response missing choices[0].message.content${typeof finishReason === 'string' ? ` (finish_reason=${finishReason})` : ''}`);
         }
+        const earlier = billed.promptTokens !== undefined || billed.completionTokens !== undefined;
         return {
           content,
-          promptTokens: data.usage?.prompt_tokens,
-          completionTokens: data.usage?.completion_tokens,
+          promptTokens: earlier ? (billed.promptTokens ?? 0) + (data.usage?.prompt_tokens ?? 0) : data.usage?.prompt_tokens,
+          completionTokens: earlier ? (billed.completionTokens ?? 0) + (data.usage?.completion_tokens ?? 0) : data.usage?.completion_tokens,
           totalTokens: data.usage?.total_tokens,
           latencyMs: Date.now() - started,
           ...(typeof finishReason === 'string' ? { finishReason } : {}),
         };
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
+        if (!(err instanceof Error && /^extractor provider (returned|response)/.test(err.message))) ambiguous = true;
         if (!retryable || attempt >= maxRetries) break;
         await new Promise(resolve => setTimeout(resolve, 2 ** attempt * backoffMs));
       } finally {
         clearTimeout(timer);
       }
     }
-    throw lastError ?? new Error('extractor call failed');
+    return fail(lastError ?? new Error('extractor call failed'));
   };
 }

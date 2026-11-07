@@ -29,7 +29,7 @@ FROM ${NODE_IMAGE}
 LABEL org.opencontainers.image.title="renor-engine" \
       org.opencontainers.image.description="Renor: one shared, durable memory for your coding agents, over MCP" \
       org.opencontainers.image.source="https://github.com/renorai/renor-engine" \
-      org.opencontainers.image.licenses="AGPL-3.0-only"
+      org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /app
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/node_modules ./node_modules

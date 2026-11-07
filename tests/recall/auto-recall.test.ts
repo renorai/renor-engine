@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { replyTokens } from '../../src/mvp/agentMemory';
 import {
-  autoRecall, DEFAULT_MIN_SIMILARITY, DEFAULT_URL, httpGetContext, parseFloor, loadRecallConfig, presentRecall, recallRequest, runHook, scopeFromCwd, trivialReason,
+  autoRecall, DEFAULT_MIN_SIMILARITY, DEFAULT_TIMEOUT_MS, DEFAULT_URL, HOSTED_TIMEOUT_MS, httpGetContext, parseFloor, loadRecallConfig, presentRecall, recallRequest, runHook, scopeFromCwd, trivialReason,
   type GetContextCaller, type RecallConfig,
 } from '../../src/recall/autoRecall';
 
@@ -128,6 +128,16 @@ describe('auto-recall: the floor default and its parsing (review of #898)', () =
     expect(loadRecallConfig({ ...ON, RENOR_AUTO_RECALL_URL: DEFAULT_URL }).minSimilarity).toBe(0.68);
     expect(loadRecallConfig(SELF_HOSTED).minSimilarity).toBeUndefined();
     expect(loadRecallConfig({ ...SELF_HOSTED, RENOR_AUTO_RECALL_MIN_SIMILARITY: '0.5' }).minSimilarity).toBe(0.5);
+  });
+
+  it('the lookup limit is 3.5 s for the hosted endpoint, 1.5 s elsewhere, and the env override wins', () => {
+    expect(HOSTED_TIMEOUT_MS).toBe(3500);
+    expect(loadRecallConfig(ON).timeoutMs).toBe(3500);
+    expect(loadRecallConfig(SELF_HOSTED).timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
+    expect(loadRecallConfig({ ...ON, RENOR_AUTO_RECALL_TIMEOUT_MS: '900' }).timeoutMs).toBe(900);
+    expect(loadRecallConfig({ ...SELF_HOSTED, RENOR_AUTO_RECALL_TIMEOUT_MS: '4000' }).timeoutMs).toBe(4000);
+    // Under the 5 s Claude Code timeout the hook is installed with (hooks.json, and the CLI's UserPromptSubmit entry).
+    expect(HOSTED_TIMEOUT_MS).toBeLessThan(5000);
   });
 
   it('a self-hosted engine without a verdict still gets its keyword-only replies', async () => {

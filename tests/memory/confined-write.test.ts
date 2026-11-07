@@ -99,7 +99,8 @@ describe('a daily log', () => {
     // The bytes the writer has always stored: the engine's header once, then each entry behind a line break.
     expect(fs.readFileSync(first.filePath, 'utf8'))
       .toBe(`${engineDailyHeader(TODAY)}\n- [11:33:20] (vfs) ATTACKER-LINE\n- [11:33:20] (vfs) second`);
-    expect(fs.statSync(first.filePath).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits: stat reports 0o666/0o777 whatever was asked, and chmod only toggles read-only.
+    if (process.platform !== 'win32') expect(fs.statSync(first.filePath).mode & 0o777).toBe(0o600);
   });
 
   it('is written into a folder whose name merely starts with two dots (the post-open check is not fooled by it)', async () => {

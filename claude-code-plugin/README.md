@@ -32,7 +32,7 @@ Node built-ins):
 1. exits at once, reading nothing, unless `RENOR_AUTO_RECALL=1` (this costs about 25 ms of Node startup per prompt);
 2. skips trivial prompts: empty, fewer than 3 words, slash commands, `!` shell lines, steering replies such as "ok" or "yes go ahead";
 3. calls `get_context` over MCP Streamable HTTP with the prompt (at most 1000 characters), the configured scope, and
-   `max_tokens` set to twice the injection budget, with a bearer key and a 1.5 s limit on the whole lookup;
+   `max_tokens` set to twice the injection budget, with a bearer key and a limit on the whole lookup: 3.5 s for the hosted URL, 1.5 s for any other endpoint (`RENOR_AUTO_RECALL_TIMEOUT_MS` overrides both; the hook's Claude Code timeout is 5 s). Measured on 2 Nov 2026 against `mcp.renor.cloud` from Brazil, a lookup with injection took 1.8-1.9 s, so the old 1.5 s limit injected nothing there and 3.5 s injected 2-3 items;
 4. injects nothing when the reply says `relevance.relevant: false`, when `relevance.similarity` is under the floor,
    when a floor is set and the reply has no similarity to compare, or when there is no matched memory. The floor is
    `RENOR_AUTO_RECALL_MIN_SIMILARITY` (below);
@@ -68,8 +68,10 @@ the model reads): `Renor recalled 3: 2 notes (Oct 18, Oct 19), 1 fact`. It holds
 memory or a fact, because whatever the user saved would otherwise be on screen and in stream-json logs. No injection, no
 line (`src/recall/receipt.ts`).
 
+**One-command setup.** `npx renor setup --auto-recall` installs this hook as a `UserPromptSubmit` entry (5 s Claude Code timeout) in `~/.claude/settings.json`, merged with your hooks and with a backup; `npx renor setup --auto-recall --uninstall` removes it. The key is read from `~/.renor/key` and the switch from `autoRecall` in `~/.renor/capture.json` by `hooks/recall-run.mjs`, so no key is written into settings. Off unless you run it.
+
 Settings are environment variables, which Claude Code passes to hooks from the `env` block of `~/.claude/settings.json`.
-They are listed in [docs/ENVIRONMENT-VARIABLES.md](../docs/ENVIRONMENT-VARIABLES.md#automatic-recall-claude-code-hook).
+The main ones are in [docs/ENVIRONMENT-VARIABLES.md](../docs/ENVIRONMENT-VARIABLES.md#automatic-recall-claude-code-hook); the tuning ones are in [docs/ENVIRONMENT-VARIABLES-REFERENCE.md](../docs/ENVIRONMENT-VARIABLES-REFERENCE.md#automatic-recall-claude-code-hook).
 
 ```json
 { "env": { "RENOR_AUTO_RECALL": "1", "RENOR_AUTO_RECALL_TOKEN": "<a Renor API key>" } }
@@ -244,7 +246,7 @@ the transcript's cache fields only: never text. `npx renor capture log --since 7
 cache-hit share (`cache_read / (cache_read + cache_creation)`) per arm, so a mode that lowers the user's cache hits shows.
 
 Variables: `RENOR_CAPTURE_MODE` (`off`, `user`, `server`, `alternate`, `trial`), `RENOR_CAPTURE_EVERY_TURNS` (default 5),
-`RENOR_CAPTURE_LOG` (the log path). The workspace side is in [`ENVIRONMENT-VARIABLES.md`](../docs/ENVIRONMENT-VARIABLES.md).
+`RENOR_CAPTURE_LOG` (the log path). The workspace side is in [`ENVIRONMENT-VARIABLES-REFERENCE.md`](../docs/ENVIRONMENT-VARIABLES-REFERENCE.md).
 
 On `Stop`, `hooks/stop-save.mjs` looks for what the user explicitly said to keep this session and Renor does not hold
 yet. Alongside the original keep leads ("remember", "from now on", "going forward"), it recognizes a conservative fixed

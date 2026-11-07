@@ -66,6 +66,7 @@ export function captureEnvironment(base = process.env) {
   }
   if (env.RENOR_SAVE_HOOK === undefined && on(config.saveHook)) env.RENOR_SAVE_HOOK = '1';
   if (env.RENOR_STANDING_RULES_HOOK === undefined && on(config.rulesHook)) env.RENOR_STANDING_RULES_HOOK = '1';
+  if (env.RENOR_AUTO_RECALL === undefined && on(config.autoRecall)) env.RENOR_AUTO_RECALL = '1';
   if (env.RENOR_CAPTURE_MODE === undefined && ['off', 'user', 'server', 'alternate', 'trial'].includes(config.mode)) env.RENOR_CAPTURE_MODE = config.mode;
   if (env.RENOR_CAPTURE_EVERY_TURNS === undefined && Number.isInteger(config.everyTurns) && config.everyTurns > 0) env.RENOR_CAPTURE_EVERY_TURNS = String(config.everyTurns);
   if (env.RENOR_CONNECT_TOKEN === undefined && renorIsDir) {
