@@ -2,12 +2,12 @@ import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import { learningDbPath, learningRetentionDays } from '../learning/settings';
 import { LearningLog } from '../learning/store';
-import { ExampleStore, closeExampleStore } from './examples';
+import { ExampleStore, closeExampleStore, type ExampleReader } from './examples';
 import {
   CLI_WORDING_VERSION, DEFAULT_FIELD, DEFAULT_WORDING_VERSION, MAX_ROWS_PER_BATCH, SHARING_PROTOCOL, TERMINAL_REFUSALS, levelRank,
   validateRow, type SharingLevel,
 } from './fields';
-import { LABEL_WINDOW_MS, projectRows, type ProjectedKind, type ProjectedRow } from './project';
+import { LABEL_WINDOW_MS, projectFromLog, type ProjectedKind, type ProjectedRow } from './project';
 import {
   EXAMPLES_FILE, contributorId, rotateSecret, trainingBearer, consentFor, effectiveLevel, ensureState, freshState, readConsent, readCutoff, readState, removeLocalSharingData,
   writeConsent, writeState, type ConsentRecord, type SharingState,
@@ -429,14 +429,11 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
   const file = learningDbPath(options.memoryDir);
   if (!fs.existsSync(file)) return empty('no-log', { reason: `no learning log at ${file}` });
 
-  const log = LearningLog.open(file, { retentionDays: learningRetentionDays(env), rawQueries: false, create: false, now: () => now });
-  if (log === null) return empty('no-log', { reason: `no learning log at ${file}` });
-  let exported;
-  try {
-    exported = log.exportLog();
-  } finally {
-    log.close();
-  }
+  const openLog = (): LearningLog | null =>
+    LearningLog.open(file, { retentionDays: learningRetentionDays(env), rawQueries: false, create: false, now: () => now });
+  const probe = openLog();
+  if (probe === null) return empty('no-log', { reason: `no learning log at ${file}` });
+  probe.close();
 
   // Debug reads the state if there is one and never makes it; a real send makes it on first use.
   const state = debug ? (readState(options.dir) ?? freshState(readCutoff(options.dir))) : ensureState(options.dir);
@@ -449,32 +446,64 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
   // Read at each send: an install is issued its credential (state.token) after this point, and the numbers go out under it.
   const currentBearer = (): string => (training ? trainingBearer(state.secret) : bearerOf(state, options.hosted));
   const idSecret = training ? trainingBearer(state.secret) : state.secret;
-  const examples = level === 'data' ? ExampleStore.open(options.dir, false) : null;
-  let projected: ProjectedRow[];
-  try {
-    projected = projectRows(exported, { level, now, windowMs: options.windowMs, watermarks: marks, examples });
-  } finally {
-    examples?.close();
-  }
-
+  // The log is read a slice at a time (project.ts projectFromLog), never whole: reading the whole log every hour is what ran a hosted
+  // workspace out of heap. The log and the example store are open only while a slice is projected, never while a request is out.
+  let store: ExampleStore | null | undefined;
+  const openStore = (): ExampleStore | null => (store === undefined ? (store = ExampleStore.open(options.dir, false)) : store);
+  const examples: ExampleReader | null = level === 'data'
+    ? { query: key => openStore()?.query(key) ?? null, memory: key => openStore()?.memory(key) ?? null }
+    : null;
+  const slices = projectFromLog(() => {
+    const log = openLog();
+    if (log === null) throw new Error(`the learning log at ${file} went away during the run`);
+    return log;
+  }, { level, now, windowMs: options.windowMs, watermarks: { ...marks }, examples });
   let skipped = 0;
-  const valid = projected.filter(item => {
-    try {
-      validateRow(item.row, level);
-      return true;
-    } catch {
-      skipped += 1;
-      return false;
+  // The batches of one slice after another. The next slice is read only when the caller asks for the batch after the last one of this
+  // slice, which it does only once that batch was sent: so the rows of a slice that fail their own contract move the watermark (they are
+  // never sent, and must not block the rest) only after the slice's valid rows, which may be older, were sent.
+  const sliceBatches = function* (): Generator<{ kind: ProjectedKind; rows: ProjectedRow[] }> {
+    for (;;) {
+      let next: IteratorResult<ProjectedRow[]>;
+      try {
+        next = slices.next();
+      } finally {
+        store?.close();
+        store = undefined;
+      }
+      if (next.done === true) return;
+      const projected = next.value;
+      const valid = new Set<ProjectedRow>();
+      for (const item of projected) {
+        try {
+          validateRow(item.row, level);
+          valid.add(item);
+        } catch {
+          skipped += 1;
+        }
+      }
+      const byKind = new Map<ProjectedKind, ProjectedRow[]>();
+      for (const item of valid) {
+        const list = byKind.get(item.kind);
+        if (list) list.push(item);
+        else byKind.set(item.kind, [item]);
+      }
+      for (const [kind, rows] of byKind) {
+        rows.sort((a, b) => a.at - b.at);
+        for (const part of chunk(rows, MAX_ROWS_PER_BATCH)) yield { kind, rows: part };
+      }
+      if (!debug && valid.size < projected.length) {
+        for (const item of projected) if (!valid.has(item)) marks[item.kind] = Math.max(marks[item.kind], item.at);
+        writeState(options.dir, state);
+      }
     }
-  });
-  // A row that fails its own contract is never sent. Its time still passes the watermark (below), so it cannot block the rest.
-  const byKind = new Map<ProjectedKind, ProjectedRow[]>();
-  for (const item of valid) byKind.set(item.kind, [...(byKind.get(item.kind) ?? []), item]);
-  const batches: Array<{ kind: ProjectedKind; rows: ProjectedRow[] }> = [];
-  for (const [kind, rows] of byKind) {
-    rows.sort((a, b) => a.at - b.at);
-    for (const part of chunk(rows, MAX_ROWS_PER_BATCH)) batches.push({ kind, rows: part });
-  }
+  };
+  const pending = sliceBatches();
+  const firstBatch = pending.next();
+  const batches = firstBatch.done === true ? [] : (function* () {
+    yield firstBatch.value;
+    yield* pending;
+  })();
   // Every row older than the label window is final, so it is sent once the run sends all it has; the texts only such rows use
   // are no longer needed. A text a later event still needs was put again at that event, which keeps it.
   const forgetSentExamples = (): void => {
@@ -486,7 +515,7 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
       store?.close();
     }
   };
-  if (batches.length === 0) {
+  if (firstBatch.done === true) {
     if (!debug) forgetSentExamples();
     return empty('nothing', { skipped });
   }
@@ -512,8 +541,9 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
   });
 
   if (debug) {
-    const payloads = batches.map(batch => body(batch.kind, batch.rows));
-    return { status: 'debug', level, rows: valid.length, batches: payloads.length, skipped, payloads };
+    const payloads = [...batches].map(batch => body(batch.kind, batch.rows));
+    const rows = payloads.reduce((n, payload) => n + (payload.rows as unknown[]).length, 0);
+    return { status: 'debug', level, rows, batches: payloads.length, skipped, payloads };
   }
 
   // An install proves itself with the credential Renor issued it; one that has none (a first send, or one Renor refused) asks now, after every
@@ -627,15 +657,7 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     sent += batch.rows.length;
     sentBatches += 1;
   }
-  // Rows that failed the contract also move the watermark, so they are not recomputed forever.
-  if (skipped > 0) {
-    for (const item of projected) {
-      if (valid.includes(item)) continue;
-      const key = item.kind;
-      marks[key] = Math.max(marks[key], item.at);
-    }
-    writeState(options.dir, state);
-  }
+  // Rows that failed the contract also moved the watermark (sliceBatches), so they are not recomputed forever.
   forgetSentExamples();
   return { status: 'sent', level, rows: sent, batches: sentBatches, skipped };
 }

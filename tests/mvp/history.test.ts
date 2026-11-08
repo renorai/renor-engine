@@ -11,6 +11,7 @@ import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server';
 import { searchHistory } from '../../src/mvp/history';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * search_history — local history retrieval through the authenticated MVP MCP.
@@ -201,7 +202,7 @@ async function search(client: Client, query: string, limit?: number) {
 }
 
 describe('search_history: local history retrieval through the authenticated MVP MCP', () => {
-  it('boots the service with a synthetic promoted-history directory', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('boots the service with a synthetic promoted-history directory', async () => {
     writePromotedHistory(historyDir, baseFixtures);
     const port = await freePort();
     const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-hist-mem-'));
@@ -218,7 +219,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     await client.close();
   });
 
-  it('requires authentication: no or garbage token never reaches search_history', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('requires authentication: no or garbage token never reaches search_history', async () => {
     const noAuth = new Client({ name: 'noauth', version: '0' });
     const t1 = new StreamableHTTPClientTransport(new URL(MCP_PATH_URL(config())));
     await expect(noAuth.connect(t1)).rejects.toThrow();
@@ -228,7 +229,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     await expect(garbage.connect(t2)).rejects.toThrow();
   });
 
-  it('finds the relevant conversation with provenance and untrusted/history labels', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('finds the relevant conversation with provenance and untrusted/history labels', async () => {
     const client = await mcpClient(config(), token);
     const { isError, body } = await search(client, 'ZYNTHETIC-QUARTZ calibration');
     expect(isError).toBe(false);
@@ -249,7 +250,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     await client.close();
   });
 
-  it('never surfaces withdrawn (carried) or non-matching notes', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('never surfaces withdrawn (carried) or non-matching notes', async () => {
     const client = await mcpClient(config(), token);
     const withdrawn = await search(client, 'WITHERED-GROVE');
     expect(withdrawn.body.total_matches).toBe(0);
@@ -261,7 +262,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     await client.close();
   });
 
-  it('snippets are bounded, single-line, and contain the match', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('snippets are bounded, single-line, and contain the match', async () => {
     const client = await mcpClient(config(), token);
     const { body } = await search(client, 'reference jig');
     expect(body.results.length).toBeGreaterThan(0);
@@ -272,7 +273,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     await client.close();
   });
 
-  it('internal reasoning content from the importer contract is never searchable', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('internal reasoning content from the importer contract is never searchable', async () => {
     const client = await mcpClient(config(), token);
     const { body } = await search(client, 'INTERNAL-REASONING-MARKER thoughts');
     expect(body.total_matches).toBe(0); // no eligible note contains internal channels
@@ -284,7 +285,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     await client.close();
   });
 
-  it('limit bounds and deterministic scoring order', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('limit bounds and deterministic scoring order', async () => {
     const client = await mcpClient(config(), token);
     const { body } = await search(client, 'ZYNTHETIC-QUARTZ', 1);
     expect(body.returned).toBe(1);
@@ -293,7 +294,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     await client.close();
   });
 
-  it('a tampered note is fail-closed ineligible and its content is never served', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a tampered note is fail-closed ineligible and its content is never served', async () => {
     const notePath = path.join(historyDir, 'chatgpt-conv-alpha.md');
     fs.appendFileSync(notePath, '\ntampered after promotion\n');
     const client = await mcpClient(config(), token);
@@ -304,7 +305,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     restoreManifest(); // restore canonical fixture state
   });
 
-  it('a removed note is excluded and counted ineligible', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a removed note is excluded and counted ineligible', async () => {
     fs.rmSync(path.join(historyDir, 'chatgpt-conv-beta.md'));
     const client = await mcpClient(config(), token);
     const { body } = await search(client, 'PHOSPHOR-BLOOM');
@@ -314,7 +315,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     restoreManifest();
   });
 
-  it('a human-edited note (hash drift) is ineligible and its file is never modified by the service', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a human-edited note (hash drift) is ineligible and its file is never modified by the service', async () => {
     const notePath = path.join(historyDir, 'chatgpt-conv-delta.md');
     const humanBytes = fs.readFileSync(notePath, 'utf-8') + '\n<!-- human vault edit -->\n';
     fs.writeFileSync(notePath, humanBytes, 'utf-8');
@@ -326,7 +327,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     restoreManifest();
   });
 
-  it('a newly promoted note becomes searchable on the next query (no stale index)', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a newly promoted note becomes searchable on the next query (no stale index)', async () => {
     const note = noteText('conv-new', 'Newly promoted chat', [
       ['user', 'What is the LUMEN-ARCHIVE index?'],
       ['assistant', 'LUMEN-ARCHIVE is a synthetic promoted note added after startup.'],
@@ -348,7 +349,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     restoreManifest();
   });
 
-  it('unsafe manifest entries (path traversal, symlink) are ignored safely', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('unsafe manifest entries (path traversal, symlink) are ignored safely', async () => {
     const outside = path.join(os.tmpdir(), 'mvp-history-outside-' + crypto.randomBytes(4).toString('hex'));
     fs.writeFileSync(outside, 'decoy content', 'utf-8');
     const man = readManifest();
@@ -368,7 +369,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     restoreManifest();
   });
 
-  it('malformed queries and limits are rejected safely (bounded errors)', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('malformed queries and limits are rejected safely (bounded errors)', async () => {
     const client = await mcpClient(config(), token);
     const badCalls: any[] = [
       { name: 'search_history', arguments: { query: '' } },
@@ -394,7 +395,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     await client.close();
   });
 
-  it('a malformed/missing manifest yields an explicit bounded error, fact memory unaffected', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a malformed/missing manifest yields an explicit bounded error, fact memory unaffected', async () => {
     fs.writeFileSync(manifestPath, '{"schema": "garbage"', 'utf-8');
     const client = await mcpClient(config(), token);
     const res = await client.callTool({ name: 'search_history', arguments: { query: 'anything' } });
@@ -411,7 +412,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     restoreManifest();
   });
 
-  it('restart reproduces the same eligible results (rebuild from the authoritative manifest)', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('restart reproduces the same eligible results (rebuild from the authoritative manifest)', async () => {
     const client = await mcpClient(config(), token);
     const before = (await search(client, 'ZYNTHETIC-QUARTZ')).body;
     await client.close();
@@ -429,7 +430,7 @@ describe('search_history: local history retrieval through the authenticated MVP 
     await client2.close();
   });
 
-  it('unconfigured history yields an explicit bounded result; fact memory unaffected', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('unconfigured history yields an explicit bounded result; fact memory unaffected', async () => {
     const port = await freePort();
     const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-hist-mem2-'));
     tmpDirs.push(memoryDir);
@@ -488,7 +489,8 @@ afterAll(async () => {
   delete process.env.MVP_OWNER_EMAIL;
   delete process.env.MVP_OWNER_PASSWORD;
   delete process.env.MVP_HISTORY_DIR;
-  expect(unconfiguredToken).toBe('used');
+  // Set by a service test, which does not run where the HTTP server is unsupported (native Windows).
+  if (!HTTP_SERVER_UNSUPPORTED) expect(unconfiguredToken).toBe('used');
   expect(originalManifest.length).toBeGreaterThan(0);
 });
 

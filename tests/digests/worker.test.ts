@@ -20,6 +20,7 @@ import {
 } from '../../src/digests/worker';
 import { digestsEnabled, resolveDigestOptions, type DigestOptions } from '../../src/digests/digests';
 import { stubDigestReply } from './stubDigestModel';
+import { removeTestDir } from '../helpers/removeDb';
 
 /**
  * The production path of write-time digests: the background worker, its retries, its cost guard, its pruning, and the
@@ -28,8 +29,13 @@ import { stubDigestReply } from './stubDigestModel';
  */
 
 const tmpDirs: string[] = [];
-afterEach(() => {
-  for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+const openDbs: Database.Database[] = [];
+const workers: DigestWorker[] = [];
+afterEach(async () => {
+  // A worker's sweep uses the database: each ends before the database closes, and both before the folder goes.
+  for (const w of workers.splice(0)) await w.close();
+  for (const db of openDbs.splice(0)) db.close();
+  for (const dir of tmpDirs.splice(0)) removeTestDir(dir);
 });
 
 class ManualClock {
@@ -77,6 +83,7 @@ async function fixture(): Promise<Fixture> {
   fs.mkdirSync(memoryDir, { recursive: true });
   const dbPath = path.join(root, 'state', 'index.db');
   const db = openDb(dbPath);
+  openDbs.push(db);
   runMigrations(db);
   const provider = new EvalHashEmbeddingProvider();
   const config = { memoryDir, dbPath, ledgerRelPath: 'Memory/Ledger/Memory Events Ledger.md' } as unknown as MvpConfig;
@@ -129,10 +136,12 @@ function plainReply(prompt: string): string {
 }
 
 function worker(f: Fixture, clock: ManualClock, opts: DigestOptions, extra: Partial<ConstructorParameters<typeof DigestWorker>[0]> = {}): DigestWorker {
-  return new DigestWorker({
+  const w = new DigestWorker({
     db: f.db, config: { memoryDir: f.memoryDir, ledgerRelPath: f.config.ledgerRelPath }, options: opts, provider: f.provider,
     now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, random: () => 0.5, log: () => undefined, ...extra,
   });
+  workers.push(w);
+  return w;
 }
 
 /** How many digests the workspace's cache holds. */
@@ -430,6 +439,7 @@ describe('digests on the read path', () => {
     expect(resolved).not.toBeNull();
     const options = { ...resolved.options, chat };
     const real = new DigestWorker({ db: f.db, config: { memoryDir: f.memoryDir, ledgerRelPath: f.config.ledgerRelPath }, options, provider: f.provider, log: () => undefined });
+    workers.push(real);
     await real.sweepNow();
     return { digests: { options, worker: real }, chat };
   }

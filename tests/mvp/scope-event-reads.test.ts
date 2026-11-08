@@ -12,6 +12,7 @@ import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { engineSearchMemory } from '../../src/mvp/engine';
 import { EvidenceExtractor } from '../../src/evidence/secondPass';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Scope of the memory a read returns, driven through the real MCP tools over the authenticated Streamable HTTP
@@ -162,7 +163,7 @@ async function reads(ws: Workspace, scope: string | undefined, includeHistory = 
 //   scope:work       WORKOLD    -> WORKNEW
 //   project:launch   LAUNCHOLD  -> LAUNCHNEW
 //   global           GLOBALOLD  -> GLOBALNEW
-describe('reads of ledger events are judged by the scope each event was saved in', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('reads of ledger events are judged by the scope each event was saved in', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -310,7 +311,7 @@ describe('reads of ledger events are judged by the scope each event was saved in
   });
 });
 
-describe('a correction made after the last index stays hidden as current, in every scope', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a correction made after the last index stays hidden as current, in every scope', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -354,7 +355,7 @@ describe('a correction made after the last index stays hidden as current, in eve
   });
 });
 
-describe('a ledger that lives somewhere else is judged by its events all the same', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a ledger that lives somewhere else is judged by its events all the same', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace('Archive/ops/events.md');
@@ -377,7 +378,7 @@ describe('a ledger that lives somewhere else is judged by its events all the sam
 // starts at its first event (hand-edited or restored) opens with an event, and the ledger's path says nothing about
 // which scope that event belongs to: the hit is judged by the event, in every direction, exactly as the same event is
 // when it is found by its text.
-describe('the opening chunk of a headerless ledger, added by note identity, is judged by its event\'s scope', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the opening chunk of a headerless ledger, added by note identity, is judged by its event\'s scope', () => {
   /** A workspace whose ledger starts at its first event: the header is cut off, as in a hand-edited or restored ledger. */
   async function headerlessLedger(events: Array<[scope: string | undefined, object: string]>) {
     const ws = await startWorkspace();
@@ -422,7 +423,7 @@ describe('the opening chunk of a headerless ledger, added by note identity, is j
 
 // `Rowan` and first-person queries add the subject's current facts as hits, from the lifecycle store rather than
 // from a note. The store has no path to judge them by, so each fact is judged by the scope it was saved in.
-describe('facts returned as hits for a first-person query are judged by their own scope', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('facts returned as hits for a first-person query are judged by their own scope', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();

@@ -16,6 +16,7 @@ import {
   readBuildIdentity,
   type BuildIdentity,
 } from '../../src/buildIdentity';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Build-identity observability for the surface alpha tenants actually run.
@@ -394,7 +395,7 @@ afterAll(async () => {
   ]) delete process.env[key];
 });
 
-describe('MVP build identity: GET /version', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('MVP build identity: GET /version', () => {
   it('reads the real stamped BUILD.json and resolves it to the engine dist manifest', () => {
     // The helper must find <engine>/dist/BUILD.json in a source run too (tsx:
     // `npm run mvp`), which is the layout the alpha systemd units use.
@@ -502,7 +503,7 @@ describe('MVP build identity: GET /version', () => {
   });
 });
 
-describe('MVP build identity: hostile manifest values are never reflected', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('MVP build identity: hostile manifest values are never reflected', () => {
   /**
    * The adversarial probe: the manifest is the deploy pipeline's file, so its
    * values are untrusted input on a probe surface.
@@ -638,7 +639,7 @@ describe('MVP build identity: hostile manifest values are never reflected', () =
   });
 });
 
-describe('MVP build identity: GET /version is loopback-only', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('MVP build identity: GET /version is loopback-only', () => {
   it('answers a direct loopback call (the SSH verification path)', async () => {
     const res = await rawGet({ headers: { Host: loopbackHostHeader() } });
     expect(res.status).toBe(200);
@@ -729,7 +730,7 @@ describe('MVP build identity: GET /version is loopback-only', () => {
 /** The librarian API needs a bearer token on every route, /api/health included. */
 const LIBRARIAN_TOKEN = 'synthetic-api-token-for-build-identity';
 
-describe('librarian GET /api/health shares the manifest reader', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('librarian GET /api/health shares the manifest reader', () => {
   /** The librarian app, built the way src/api/server.ts is built in production. */
   async function createLibrarianApp() {
     const { createServer } = await import('../../src/api/server.js');

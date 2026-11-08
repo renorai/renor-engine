@@ -5,6 +5,7 @@ import path from 'path';
 import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
 import { hasHandoffTable } from '../../src/db/handoffTable';
+import { removeTestDir } from '../helpers/removeDb';
 import {
   HANDOFF_TTL_MS, handoffNoteEnabled, normaliseBranch, normaliseRepoKey, presentHandoffNote, readHandoffNote, runHandoffTool, writeHandoffNote,
 } from '../../src/memory/handoff';
@@ -14,17 +15,20 @@ import {
 const NOW = new Date('2026-10-22T09:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
 const dirs: string[] = [];
+const handles: ReturnType<typeof openDb>[] = [];
 
 function db() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-'));
   dirs.push(dir);
   const database = openDb(path.join(dir, 'renor.db'));
+  handles.push(database);
   runMigrations(database);
   return database;
 }
 
 afterEach(() => {
-  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  for (const handle of handles.splice(0)) handle.close();
+  for (const dir of dirs.splice(0)) removeTestDir(dir);
 });
 
 const REPO = 'git@github.com:Acme/Fjord.git';

@@ -4,6 +4,7 @@ import path from 'path';
 import { startWorkspace, restoreWorkspaceEnv, type Workspace } from '../helpers/mvpWorkspace';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { SESSION_EXPAND_REASON } from '../../src/retrieval/orchestrator';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * RENOR_SESSION_DIVERSITY defaults to a cap of 2 chunks per note (2026-10-07). It is for one conversation or one document
@@ -48,7 +49,7 @@ const perNote = (hits: Hit[]) => {
   return counts;
 };
 
-describe('a saved statement is still returned by search_memory with the cap on by default', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a saved statement is still returned by search_memory with the cap on by default', () => {
   const QUERY = 'who owns the deploy window rollback';
   const NAMES = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'];
   // Six entries that say every word of the question, and a seventh that says only some of them: the weakest match.
@@ -92,7 +93,7 @@ describe('a saved statement is still returned by search_memory with the cap on b
   });
 });
 
-describe('a document of many sections holds at most 2 matches by default', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a document of many sections holds at most 2 matches by default', () => {
   const SECTIONS = ['Deploys', 'Rollbacks', 'Contacts', 'Queues', 'Hosting', 'Incidents'];
   const DOCS = ['atlas-runbook.md', 'orion-runbook.md'];
 

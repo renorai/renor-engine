@@ -13,6 +13,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { openDb } from '../../src/db/client';
 import { named, realStdioConnection, restoreEnv, startWorkspace, type Harness } from '../helpers/hiveHarness';
 import { INSIDE, MARK, NOTE, REPO, everyReadReply } from '../helpers/handoffReads';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 afterAll(restoreEnv);
 
@@ -62,7 +63,7 @@ async function seedAndWrite(ws: Harness, client: Client) {
   expect((await ws.call(client, 'index_memory', {})).isError).toBe(false);
 }
 
-describe('handoff_note on the hosted engine', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('handoff_note on the hosted engine', () => {
   it('is not listed, and not callable, with RENOR_HANDOFF_NOTE unset (default off)', async () => {
     delete process.env.RENOR_HANDOFF_NOTE;
     const ws = await startWorkspace();

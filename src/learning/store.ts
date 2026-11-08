@@ -148,6 +148,17 @@ const ORDER: Record<(typeof LEARNING_TABLES)[number], string> = {
   outcomes: 'id',
 };
 
+/** The columns the sharing projection reads (src/sharing/project.ts), per table: exportServedWindow selects these and nothing else. */
+export const SHARING_COLUMNS = {
+  retrievals: ['id', 'at', 'tool', 'session_key', 'agent_key', 'query_key', 'retrieval', 'ranker', 'model', 'build', 'served', 'reply_tokens', 'relevant', 'truncated'],
+  candidates: ['id', 'retrieval_id', 'rank', 'kind', 'memory_key', 'subject_key', 'score', 'reason', 'matched', 'current'],
+  memory_ops: ['id', 'at', 'session_key', 'agent_key', 'tool', 'op', 'kind', 'memory_key', 'subject_key', 'replaced_key'],
+  feedback: ['id', 'at', 'session_key', 'agent_key', 'tool', 'memory_key', 'subject_key', 'observed'],
+} as const;
+
+/** Ids of one table fit below this, so `tableIndex * span + id` is one safe integer. */
+export const LEARNING_CURSOR_SPAN = 2 ** 40;
+
 const flag = (value: boolean | null): number | null => (value === null ? null : value ? 1 : 0);
 
 const OUTCOME_OBSERVED: Record<Basis, 0 | 1> = { verifier: 1, user: 1, proxy: 0 };
@@ -326,6 +337,127 @@ export class LearningLog {
       retentionDays: this.retentionDays,
       tables,
     };
+  }
+
+  /**
+   * The sharing sender's bounded read (src/sharing/project.ts projectFromLog): the rows with `at` in (after, until], inside the
+   * retention window, with only the SERVED candidates (rank set) of those retrievals, and only the columns the projection reads
+   * (SHARING_COLUMNS; outcomes are not shared). Same shape as exportLog(), so the projection reads either; this one holds a time
+   * slice of a few columns, never the whole log.
+   */
+  exportServedWindow(after: number, until: number): LearningExport {
+    this.maybePrune();
+    const from = Math.max(after, this.cutoff() - 1);
+    const tables = { outcomes: [] } as unknown as LearningExport['tables'];
+    for (const table of ['retrievals', 'candidates', 'memory_ops', 'feedback'] as const) {
+      const columns = SHARING_COLUMNS[table].join(', ');
+      tables[table] = table === 'candidates'
+        ? this.db.prepare(
+          `SELECT ${columns} FROM candidates WHERE rank IS NOT NULL AND retrieval_id IN (SELECT id FROM retrievals WHERE at > ? AND at <= ?) ORDER BY ${ORDER.candidates}`,
+        ).all(from, until) as Array<Record<string, unknown>>
+        : this.db.prepare(`SELECT ${columns} FROM ${table} WHERE at > ? AND at <= ? ORDER BY ${ORDER[table]}`).all(from, until) as Array<Record<string, unknown>>;
+    }
+    return {
+      schema: LEARNING_SCHEMA_NAME,
+      version: LEARNING_SCHEMA_VERSION,
+      exportedAt: new Date(this.now()).toISOString(),
+      retentionDays: this.retentionDays,
+      tables,
+    };
+  }
+
+  /**
+   * Where a slice of at most about `limit` rows per table ends: the smallest, over retrievals, memory_ops and feedback, of the
+   * time of the `limit`-th row with `at` in (after, until] inside the retention window, or `until` when every table has fewer.
+   * Always above `after`. A slice ends on a time, so rows sharing that time are all in it.
+   */
+  sliceEnd(after: number, until: number, limit: number): number {
+    const from = Math.max(after, this.cutoff() - 1);
+    let end = until;
+    for (const table of ['retrievals', 'memory_ops', 'feedback'] as const) {
+      const row = this.db.prepare(`SELECT at FROM ${table} WHERE at > ? AND at <= ? ORDER BY at LIMIT 1 OFFSET ?`)
+        .get(from, until, Math.max(0, limit - 1)) as { at: number } | undefined;
+      if (row !== undefined) end = Math.min(end, row.at);
+    }
+    return Math.max(end, Math.min(after + 1, until));
+  }
+
+  /**
+   * Each session's span and counts over the retention window, done in SQLite (no row is held here): the sessions whose LAST event
+   * is in (after, until], oldest last first. `limit` caps how many; the sessions sharing the last one's time are all kept.
+   * `first_tool` is the tool of its earliest event (retrievals before memory_ops, then by id, on a tie); `saves` counts the
+   * create/supersede operations of `saveTools`; `empty` the retrievals that served nothing.
+   */
+  sessionSpans(after: number, until: number, saveTools: readonly string[], limit = Number.MAX_SAFE_INTEGER): Array<{
+    first: number; last: number; first_tool: string; reads: number; saves: number; empty: number;
+  }> {
+    this.maybePrune();
+    const cutoff = this.cutoff();
+    const tools = saveTools.map(() => '?').join(', ');
+    const events = `WITH ev AS (
+        SELECT session_key AS k, at, 0 AS src, id, tool, 1 AS rd, 0 AS sv, CASE WHEN served = 0 THEN 1 ELSE 0 END AS em
+          FROM retrievals WHERE session_key IS NOT NULL AND at >= ?
+        UNION ALL
+        SELECT session_key, at, 1, id, tool, 0, CASE WHEN tool IN (${tools}) AND op IN ('create', 'supersede') THEN 1 ELSE 0 END, 0
+          FROM memory_ops WHERE session_key IS NOT NULL AND at >= ?
+      ), ranked AS (
+        SELECT k, at, tool, rd, sv, em, ROW_NUMBER() OVER (PARTITION BY k ORDER BY at, src, id) AS n FROM ev
+      ), spans AS (
+        SELECT k, MIN(at) AS first, MAX(at) AS last, SUM(rd) AS reads, SUM(sv) AS saves, SUM(em) AS empty,
+          MAX(CASE WHEN n = 1 THEN tool END) AS first_tool
+        FROM ranked GROUP BY k
+      )`;
+    const params = [cutoff, ...saveTools, cutoff];
+    let end = until;
+    if (limit < Number.MAX_SAFE_INTEGER) {
+      const row = this.db.prepare(`${events} SELECT last FROM spans WHERE last > ? AND last <= ? ORDER BY last LIMIT 1 OFFSET ?`)
+        .get(...params, after, until, Math.max(0, limit - 1)) as { last: number } | undefined;
+      if (row !== undefined) end = row.last;
+    }
+    return this.db.prepare(`${events}
+      SELECT first, last, reads, saves, empty, first_tool FROM spans WHERE last > ? AND last <= ? ORDER BY last, first`)
+      .all(...params, after, end) as Array<{ first: number; last: number; first_tool: string; reads: number; saves: number; empty: number }>;
+  }
+
+  /** What a paged export names in the manifest in place of the rows: the schema, the window and the rows per table. */
+  exportSummary(): Omit<LearningExport, 'tables'> & { rows: Record<(typeof LEARNING_TABLES)[number], number> } {
+    return {
+      schema: LEARNING_SCHEMA_NAME,
+      version: LEARNING_SCHEMA_VERSION,
+      exportedAt: new Date(this.now()).toISOString(),
+      retentionDays: this.retentionDays,
+      rows: this.counts(),
+    };
+  }
+
+  /**
+   * Up to `limit` rows of the export after `cursor`, the tables in LEARNING_TABLES order and each by id. The cursor is a
+   * keyset position, not a row count: `tableIndex * LEARNING_CURSOR_SPAN + the last id read`, so a row written, or one
+   * aged out, between two pages moves nothing that was already read and nothing is repeated. The start is cursor 0. Each
+   * row comes with the cursor that continues after it. exportLog() holds every row at once; this holds one page.
+   */
+  exportRowsAfter(
+    cursor: number,
+    limit: number,
+  ): Array<{ table: (typeof LEARNING_TABLES)[number]; row: Record<string, unknown>; cursor: number }> {
+    if (!Number.isSafeInteger(cursor) || cursor < 0 || Math.floor(cursor / LEARNING_CURSOR_SPAN) >= LEARNING_TABLES.length) {
+      throw new Error(`invalid learning-log cursor ${cursor}`);
+    }
+    const cutoff = this.cutoff();
+    const out: Array<{ table: (typeof LEARNING_TABLES)[number]; row: Record<string, unknown>; cursor: number }> = [];
+    let index = Math.floor(cursor / LEARNING_CURSOR_SPAN);
+    let lastId = cursor % LEARNING_CURSOR_SPAN;
+    for (; index < LEARNING_TABLES.length && out.length < limit; index++, lastId = 0) {
+      const table = LEARNING_TABLES[index];
+      const take = limit - out.length;
+      const rows = (table === 'candidates'
+        ? this.db.prepare(
+          'SELECT * FROM candidates WHERE id > ? AND retrieval_id IN (SELECT id FROM retrievals WHERE at >= ?) ORDER BY id LIMIT ?',
+        ).all(lastId, cutoff, take)
+        : this.db.prepare(`SELECT * FROM ${table} WHERE id > ? AND at >= ? ORDER BY id LIMIT ?`).all(lastId, cutoff, take)) as Array<Record<string, unknown>>;
+      for (const row of rows) out.push({ table, row, cursor: index * LEARNING_CURSOR_SPAN + Number(row.id) });
+    }
+    return out;
   }
 
   /** Row counts inside the retention window. */

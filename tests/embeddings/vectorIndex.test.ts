@@ -1,15 +1,24 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { VectorIndex, mirrorCapBytes } from '../../src/embeddings/vectorIndex';
-import { openDb } from '../../src/db/client';
-import { runMigrations } from '../../src/db/schema';
+import { openDb as openDbFile } from '../../src/db/client';
 import fs from 'fs';
+import { runMigrations } from '../../src/db/schema';
 import { tmpPath } from '../helpers/tmpPath';
+import { removeDb } from '../helpers/removeDb';
 
 const DB = tmpPath('test-vector.db');
+// Every connection a test opens is closed before the file is removed, even when the test failed before its own close.
+// Two tests never closed theirs: Windows then could not remove the file (EBUSY), the next test reopened a table made at
+// 4 dimensions, and its inserts failed with "Dimension mismatch" / SQLITE_ERROR "SQL logic error" (#1563).
+const opened: ReturnType<typeof openDbFile>[] = [];
+function openDb(file: string): ReturnType<typeof openDbFile> {
+  const db = openDbFile(file);
+  opened.push(db);
+  return db;
+}
 afterEach(() => {
-  for (const suffix of ['', '-wal', '-shm']) {
-    if (fs.existsSync(DB + suffix)) fs.unlinkSync(DB + suffix);
-  }
+  for (const db of opened.splice(0)) if (db.open) db.close();
+  removeDb(DB);
 });
 
 describe('VectorIndex', () => {
@@ -32,6 +41,7 @@ describe('VectorIndex', () => {
     const results = idx.search([1, 0, 0, 0], 2);
     expect(results[0].chunkId).toBe(1);
     expect(results[1].chunkId).toBe(2);
+    db.close();
   });
 
   it('deletes embedding', () => {

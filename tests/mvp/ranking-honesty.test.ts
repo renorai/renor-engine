@@ -12,6 +12,7 @@ import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { engineSearchMemory } from '../../src/mvp/engine';
 import { EvidenceExtractor } from '../../src/evidence/secondPass';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * What search_memory and get_context tell an agent about the order and the dates of what they return, driven
@@ -189,7 +190,7 @@ const PAST_QUERY = 'what package manager did I prefer before?';
 // and, written by hand into the memory directory and indexed:
 //   offsite  a note with a front-matter session_date of 2025-12-01T09:30Z
 //   pasted   a note whose body holds a line shaped like a ledger header for an event that does not exist
-describe('what an agent is told about the order and the dates of what it reads', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('what an agent is told about the order and the dates of what it reads', () => {
   let ws: Workspace;
   let bun: string;
   let db: string;
@@ -336,7 +337,7 @@ describe('what an agent is told about the order and the dates of what it reads',
   });
 });
 
-describe('a superseded event keeps its own time under include_history', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a superseded event keeps its own time under include_history', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -359,7 +360,7 @@ describe('a superseded event keeps its own time under include_history', () => {
   });
 });
 
-describe('the evidence second pass still dates a whole note by the note', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the evidence second pass still dates a whole note by the note', () => {
   let ws: Workspace;
   let standup: string;
   beforeAll(async () => {

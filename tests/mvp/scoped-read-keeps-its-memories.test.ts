@@ -10,6 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Memory scout, finding 7: passing `scope` emptied the memories lane. A scoped get_context answered `memories: []`
@@ -162,7 +163,7 @@ async function scopedReads(ws: Workspace, scope: string, question: string, mine:
   return { context: inContext, search: found(search.hits), raw: { context, search } };
 }
 
-describe('a scoped read keeps the memories of its scope, whatever other scopes hold (memory scout, finding 7)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a scoped read keeps the memories of its scope, whatever other scopes hold (memory scout, finding 7)', () => {
   it('get_context and search_memory return the scope\'s note and fact when other scopes hold nearer matches', async () => {
     const mine = [SCOPE_NOTE, SCOPE_FACT.statement];
 

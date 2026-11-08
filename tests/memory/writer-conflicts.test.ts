@@ -16,6 +16,7 @@ import { DEFAULT_LEDGER_REL, factsFor, remember, replayLedger, resolveLedgerPath
 import { writerConflictLine, writerConflictLines } from '../../src/memory/writerConflicts';
 import { withFactHits } from '../../src/mvp/factsLane';
 import { named, restoreEnv, startWorkspace, type Harness } from '../helpers/hiveHarness';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 afterAll(restoreEnv);
 
@@ -32,7 +33,7 @@ async function readFacts(ws: Harness, client: Client, extra: Record<string, unkn
 
 const current = (facts: Fact[]): Fact[] => facts.filter(f => f.current);
 
-describe('writer conflicts over the hosted tools', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('writer conflicts over the hosted tools', () => {
   it('a later save by the same writer replaces the value with no conflict, as before', async () => {
     const ws = await startWorkspace();
     try {

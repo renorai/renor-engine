@@ -11,6 +11,7 @@ import { readBundleSource } from '../../src/importing/source';
 import { loadMvpConfig } from '../../src/mvp/config';
 import { startMvpService } from '../../src/mvp/server';
 import { bytes, latin1, rawPath, supportsNonUtf8Names } from '../helpers/nonUtf8Names';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 const roots: string[] = [];
 function fixture() {
@@ -110,7 +111,7 @@ describe('Markdown folder import', () => {
     expect(fs.readFileSync(path.join(destination, 'Imported/vault/Project/note.md'), 'utf8')).toContain('Keep this decision.');
   });
 
-  it('previews without writes, preserves Markdown, recalls over authenticated MCP, and supports subsequent saves', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('previews without writes, preserves Markdown, recalls over authenticated MCP, and supports subsequent saves', async () => {
     const { root, vault, destination, write } = fixture();
     const original = '---\ntags: [project, telescope]\naliases: [Orion]\n---\n# Observatory\n\nThe observatory uses amber filters. See [[Calibration]].\n';
     write('Projects/Observatory.md', original);

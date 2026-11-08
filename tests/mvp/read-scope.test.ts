@@ -9,12 +9,15 @@ import { remember } from '../../src/memory/lifecycle';
 import { ledgerEventIds } from '../../src/retrieval/ledgerLiveness';
 import { createReadScope, type ScopedHit } from '../../src/mvp/readScope';
 import { traceStatements } from '../helpers/traceStatements';
+import { removeTestDir } from '../helpers/removeDb';
 
 const LEDGER = 'System/Memory Events Ledger.md';
 const tmpDirs: string[] = [];
 
+const openDbs: Database.Database[] = [];
 afterEach(() => {
-  for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  for (const db of openDbs.splice(0)) db.close();
+  for (const d of tmpDirs.splice(0)) removeTestDir(d);
 });
 
 /** A database with one event per scope for the same subject and predicate, plus a closed one in scope:work. */
@@ -22,6 +25,7 @@ async function fixture() {
   const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'read-scope-'));
   tmpDirs.push(vault);
   const db: Database.Database = openDb(path.join(vault, 'index.db'));
+  openDbs.push(db);
   runMigrations(db);
   const save = async (object: string, scope?: string) =>
     (await remember(db, vault, LEDGER, { subject: 'meeting', predicate: 'time', object, ...(scope ? { scope } : {}) })).eventId;
@@ -335,6 +339,7 @@ describe('createReadScope: a database without the lifecycle projection', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-scope-'));
     tmpDirs.push(dir);
     const db = openDb(path.join(dir, 'index.db'));
+    openDbs.push(db);
     db.exec('CREATE TABLE facts (id INTEGER PRIMARY KEY, subject_entity_id INTEGER, predicate TEXT, object_text TEXT)');
     const scope = createReadScope(db, 'scope:work');
     const note = hit({ notePath: 'Memory/Scopes/work/a.md', text: 'a note' });

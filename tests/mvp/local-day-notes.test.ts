@@ -9,6 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * First-week scout, F9: daily notes were dated in UTC, so Cursor's note from Tuesday 21:00 in São Paulo was filed under
@@ -125,7 +126,7 @@ async function startWorkspace() {
   return { call, read, files, memoryDir };
 }
 
-describe('a note is filed under the user\'s own day when the client names the time zone (first-week scout F9)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a note is filed under the user\'s own day when the client names the time zone (first-week scout F9)', () => {
   it('Tuesday 21:00 in São Paulo lands on Tuesday at 21:00, and its moment stays exact', async () => {
     const ws = await startWorkspace();
     const saved = await ws.call('remember', { statement: STAGING, scope: 'project:kestrel', source: 'cursor', timezone: 'America/Sao_Paulo' });

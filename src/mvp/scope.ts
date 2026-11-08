@@ -88,6 +88,9 @@ export function scopeSqlPredicate(
   scope: NormalizedScope,
   column: string,
 ): { sql: string; params: string[] } {
+  // notePathMatchesScope reads a backslash as '/'; so does this (char(92) is the backslash), or a path stored on Windows,
+  // separated by backslashes, would match no scope in SQL while it matches in JS (#1563).
+  column = `replace(${column}, char(92), '/')`;
   if (scope === 'global') {
     return {
       sql: `(instr(${column}, ?) <> 1 AND instr(${column}, ?) = 0)`,

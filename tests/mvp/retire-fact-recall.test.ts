@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { restoreWorkspaceEnv, startWorkspace, type Workspace } from '../helpers/mvpWorkspace';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Retiring a fact over the real MCP surface (the captain, 2026-10-07: "if the agent remove he can just reverse"). After
@@ -55,7 +56,7 @@ async function reads(ws: Workspace) {
   };
 }
 
-describe('retire_memory and restore_memory with a fact', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('retire_memory and restore_memory with a fact', () => {
   it('revives an identical earlier statement for get_context when its restatement is retired', async () => {
     const ws = await workspace();
     const first = await ok(ws, 'remember', { statement: 'Kestrel staging runs on Postgres 14.', subject: 'Kestrel', predicate: 'staging_database', object: 'Postgres 14' });

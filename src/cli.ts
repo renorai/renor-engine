@@ -38,6 +38,7 @@ import { runTelemetry } from "./sharing/cli";
 import { DIGEST_HIT_PATH, attachDigest, digestIndexedNotes, resolveDigestOptions, type DigestOptions } from "./digests/digests";
 import { ENGINE_VERSION } from "./buildIdentity";
 import { engineStatus, statusLines, StatusError } from "./status.js";
+import { runDoctor, doctorMarkdown } from "./doctor.js";
 import { APPS, isApp, installRule, removeRule, mcpEntry, rulePath } from "./connect.js";
 
 /**
@@ -519,6 +520,17 @@ program
       process.stderr.write(`renor-engine status: ${err.message}\n`);
       process.exit(1);
     }
+  });
+
+program
+  .command("doctor")
+  .description("Read-only health report to paste into a support request: folder, database, ledger, vectors, embedding provider, sharing, client configs. Exit 1 if any check fails.")
+  .option("--json", "print the report as one JSON object")
+  .option("--offline", "skip the embedding reachability check (no network call)")
+  .action(async (opts: { json?: boolean; offline?: boolean }) => {
+    const report = await runDoctor({ offline: opts.offline });
+    process.stdout.write(opts.json ? `${JSON.stringify(report, null, 2)}\n` : doctorMarkdown(report));
+    if (!report.ok) process.exit(1);
   });
 
 program

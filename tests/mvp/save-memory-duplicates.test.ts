@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { loadMvpConfig } from '../../src/mvp/config';
 import { createMvpApp } from '../../src/mvp/server';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 // The hint is advisory, so a test can make its read fail. Off, the real function runs.
 const hint = vi.hoisted(() => ({ fail: false }));
@@ -92,7 +93,7 @@ type Workspace = Awaited<ReturnType<typeof startWorkspace>>;
 const brief = (value: any) => `${value.subject} = ${value.object} [${value.scope}]`;
 
 // The report's reproduction (first-week scout, section 2, F2), call for call, through save_memory.
-describe('the F2 reproduction through save_memory: the duplicate is named when it is saved', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the F2 reproduction through save_memory: the duplicate is named when it is saved', () => {
   let ws: Workspace;
   const receipts: any[] = [];
   beforeAll(async () => {
@@ -130,7 +131,7 @@ describe('the F2 reproduction through save_memory: the duplicate is named when i
   });
 });
 
-describe('scope stays an isolation boundary for the save_memory receipt', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('scope stays an isolation boundary for the save_memory receipt', () => {
   let ws: Workspace;
   const receipts: Record<string, any> = {};
   beforeAll(async () => {
@@ -157,7 +158,7 @@ describe('scope stays an isolation boundary for the save_memory receipt', () => 
   });
 });
 
-describe('what the receipt carries', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('what the receipt carries', () => {
   let ws: Workspace;
   let crowded: any;
   beforeAll(async () => {

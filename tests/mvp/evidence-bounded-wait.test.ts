@@ -15,6 +15,7 @@ import { EVIDENCE_BACKGROUND_CONCURRENCY, EVIDENCE_BACKGROUND_QUEUE, sharedEvide
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { EvidenceCache } from '../../src/evidence/evidenceCache';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Bounded-wait evidence over the REAL remote MCP surface: the MVP service, its OAuth, an MCP client, and an
@@ -221,7 +222,7 @@ async function stillWaiting(promise: Promise<unknown>, ms: number): Promise<bool
   return (await Promise.race([promise, new Promise(resolve => setTimeout(() => resolve(marker), ms))])) === marker;
 }
 
-describe('bounded-wait evidence, flag off (the default)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('bounded-wait evidence, flag off (the default)', () => {
   it('search_memory waits for a slow model and returns its table; get_context and the description are unchanged', async () => {
     const fake = await fakeExtractor();
     const { client } = await workspace(fake);
@@ -241,7 +242,7 @@ describe('bounded-wait evidence, flag off (the default)', () => {
   });
 });
 
-describe('bounded-wait evidence, flag on', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('bounded-wait evidence, flag on', () => {
   it('answers within the wait with "pending", and the same request returns the cached table once the model finished', async () => {
     const fake = await fakeExtractor();
     const { client } = await workspace(fake, { RENOR_EVIDENCE_ASYNC: '1', RENOR_EVIDENCE_WAIT_MS: '150' });
@@ -341,7 +342,7 @@ describe('bounded-wait evidence, flag on', () => {
   });
 });
 
-describe('a failed extraction over the real MCP surface', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a failed extraction over the real MCP surface', () => {
   it('is said again to the same request from another SSE session, which does not ask the model', async () => {
     // Empty at the token cap, as GLM-5.3-Flash on Nebius answered 36% of its dev100 extraction calls (2026-10-03).
     const fake = await fakeExtractor({ choices: [{ message: { content: '' }, finish_reason: 'length' }], usage: { prompt_tokens: 10, completion_tokens: 8192 } });

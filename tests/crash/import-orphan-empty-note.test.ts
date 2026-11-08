@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { startWorkspace, restoreWorkspaceEnv, type Workspace } from '../helpers/mvpWorkspace';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * STANDING TEST (adv-crashsafe-1012, F5). apply_import used to create each note with an exclusive open and only then
@@ -18,7 +19,7 @@ let ws: Workspace | undefined;
 afterEach(async () => { await ws?.close(); ws = undefined; restoreWorkspaceEnv(); });
 
 describe('an import retried after a crash left an empty note at its path', () => {
-  it('writes the note instead of reporting it as a conflict with an empty file', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('writes the note instead of reporting it as a conflict with an empty file', async () => {
     ws = await startWorkspace(() => null);
     const dir = path.join(ws.memoryDir, 'Imported/rt/a');
     fs.mkdirSync(dir, { recursive: true });
@@ -51,7 +52,7 @@ describe('an import retried after a crash left an empty note at its path', () =>
     }
   });
 
-  it('does not adopt an empty leftover that is hard-linked to a file outside the memory directory', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('does not adopt an empty leftover that is hard-linked to a file outside the memory directory', async () => {
     ws = await startWorkspace(() => null);
     const dir = path.join(ws.memoryDir, 'Imported/rt/b');
     fs.mkdirSync(dir, { recursive: true });

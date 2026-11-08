@@ -14,6 +14,7 @@ import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import { identityLine } from '../../src/mvp/identity';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Cheaper replies and direct forgetting: the token-cost and forgetting findings of the live dogfood of 2026-10-03
@@ -152,7 +153,7 @@ const SAVED_GUARD = process.env.RENOR_SECRET_GUARD;
 beforeAll(() => { process.env.RENOR_SECRET_GUARD = '0'; });
 afterAll(() => { if (SAVED_GUARD === undefined) delete process.env.RENOR_SECRET_GUARD; else process.env.RENOR_SECRET_GUARD = SAVED_GUARD; });
 
-describe('D7: the facts lane looks a fact up by the words that say what it is about', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('D7: the facts lane looks a fact up by the words that say what it is about', () => {
   it('a pronoun, an auxiliary, a quantifier or a negation finds no fact', async () => {
     const s = await workspace(null);
     await s.call('remember', { statement: 'The README still says you can not run all the tests offline now, the same as last week.', subject: 'readme task', predicate: 'found_not_fixed', object: 'you can not run all the tests offline now, the same as last week' });
@@ -188,7 +189,7 @@ const BILLING = {
 /** The ledger's bookkeeping as a hit used to carry it: the ledger's path, its heading, a record's `MEM_… · time`. */
 const LEDGER_INTERNALS = /Memory Events Ledger|MEM_[A-Za-z0-9]+/;
 
-describe("D8: a hit shows what was said and when, never the ledger's path or record heading", () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)("D8: a hit shows what was said and when, never the ledger's path or record heading", () => {
   it('get_context, search_memory and search_text return an event without the ledger path and heading, and with its time', async () => {
     const s = await workspace(new EvalHashEmbeddingProvider());
     const saved = await s.call('remember', BILLING);
@@ -269,7 +270,7 @@ async function atlasConflicts(s: Workspace): Promise<void> {
   for (let i = 1; i <= 6; i++) await s.call('remember', { statement: `Atlas status note ${i}: ${sentences(`Atlas note ${i}`, 3)}` });
 }
 
-describe('D9: the whole get_context reply is bounded by max_tokens', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('D9: the whole get_context reply is bounded by max_tokens', () => {
   it('counts the echoed query, relevance, conflicts and the index notice, not the facts and memories alone', async () => {
     // An explicit bar arms the relevance signal for the eval-hash embeddings, so the reply carries `relevance` too.
     const s = await workspace(new EvalHashEmbeddingProvider(), { RENOR_CONTEXT_RELEVANCE_MIN: '0.1' });
@@ -356,7 +357,7 @@ describe('D9: the whole get_context reply is bounded by max_tokens', () => {
 
 // --- D12 ------------------------------------------------------------------------------------------------------------
 
-describe('D12: a note save returns the id that forgets it, and memory_map looks within one scope', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('D12: a note save returns the id that forgets it, and memory_map looks within one scope', () => {
   it('the id in a remember (note) or remember_note receipt is the one memory_map lists, read_memory reads and retire_memory takes', async () => {
     const s = await workspace(null);
     const statement = 'Quillmoor kickoff: the bakery owner wants flour stock alerts.\n- [09:00:00] (alice) a line that looks like an entry\n\n';
@@ -403,7 +404,7 @@ describe('D12: a note save returns the id that forgets it, and memory_map looks 
 
 // --- D14 ------------------------------------------------------------------------------------------------------------
 
-describe('D14: search_memory and search_text return at most top_k hits, facts included', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('D14: search_memory and search_text return at most top_k hits, facts included', () => {
   it('the facts fill the places the index leaves, and never push the total past top_k', async () => {
     const s = await workspace(new EvalHashEmbeddingProvider());
     for (let i = 1; i <= 5; i++) await s.call('remember', { statement: `Deploy log ${i}: the deploy of build ${i} went fine.` });
@@ -432,7 +433,7 @@ async function idOf(s: Workspace, words: string): Promise<string> {
   return memories[0].id;
 }
 
-describe('D11: retiring the last entry of a day retires the day file with it', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('D11: retiring the last entry of a day retires the day file with it', () => {
   it('leaves no header-only note, entity or chunk behind, and restore brings the day back', async () => {
     const s = await workspace(null);
     const before = await s.call('memory_status');

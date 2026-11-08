@@ -14,6 +14,7 @@ import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
 import { DEFAULT_LEDGER_REL, remember } from '../../src/memory/lifecycle';
 import { READING, MARKUP_WORDS, RECORDS, SOURCE_FACT, SOURCE_STATEMENT, chores, readingNotes, sayings, supersessions, type LedgerRecord } from '../helpers/longLedger';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * The ledger is the engine's own record, not a memory (new-user re-check, finding N6).
@@ -201,7 +202,7 @@ const texts = (hits: Hit[]) => hits.map(h => h.text);
 const BUN = 'Remember that I prefer Bun for TypeScript projects.';
 const CODENAME = 'My project codename is Zanzibar.';
 
-describe('the ledger is not a memory', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the ledger is not a memory', () => {
   let ws: Workspace;
   beforeAll(async () => {
     // "memory" is in the header, in the heading of every record, and in these two notes (a day's entries are ONE chunk,
@@ -281,7 +282,7 @@ describe('the ledger is not a memory', () => {
   });
 });
 
-describe('a long ledger does not push a person\'s own words off a keyword page', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a long ledger does not push a person\'s own words off a keyword page', () => {
   let ws: Workspace;
   beforeAll(async () => {
     // More records than any window the keyword lanes read (search_text read 200 rows, get_context 60), none of which says
@@ -330,7 +331,7 @@ describe('a long ledger does not push a person\'s own words off a keyword page',
   });
 });
 
-describe('a page is as long as it was asked to be when enough notes say the word, whatever ranks above them', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a page is as long as it was asked to be when enough notes say the word, whatever ranks above them', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace({ files: readingNotes(30), records: chores(RECORDS) });
@@ -348,7 +349,7 @@ describe('a page is as long as it was asked to be when enough notes say the word
   });
 });
 
-describe('an event that was corrected does not take a place from a person\'s own words either', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('an event that was corrected does not take a place from a person\'s own words either', () => {
   let ws: Workspace;
   beforeAll(async () => {
     // One thing said 260 times, each time superseding the last: 259 closed events and one live, every one of them short
@@ -365,7 +366,7 @@ describe('an event that was corrected does not take a place from a person\'s own
   });
 });
 
-describe('a scope\'s own words are found behind any number of another scope\'s events that say the word', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a scope\'s own words are found behind any number of another scope\'s events that say the word', () => {
   let ws: Workspace;
   beforeAll(async () => {
     // More events than any window the keyword lanes read, all global and each saying "source" in the user's own words
@@ -402,7 +403,7 @@ describe('a scope\'s own words are found behind any number of another scope\'s e
   });
 });
 
-describe('a fact the index does not hold yet is shown as the fact, never as a ledger record', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a fact the index does not hold yet is shown as the fact, never as a ledger record', () => {
   let ws: Workspace;
   beforeAll(async () => { ws = await startWorkspace(); }, HOOK_TIMEOUT_MS);
   afterAll(async () => { await ws?.close(); });
@@ -431,7 +432,7 @@ describe('a fact the index does not hold yet is shown as the fact, never as a le
   });
 });
 
-describe('what the user said comes back as what they said', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('what the user said comes back as what they said', () => {
   let ws: Workspace;
   let bun: string;
   let dana: string;
@@ -517,7 +518,7 @@ describe('what the user said comes back as what they said', () => {
   });
 });
 
-describe('a keyword search finds an event by what it says, never by its markup', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a keyword search finds an event by what it says, never by its markup', () => {
   let ws: Workspace;
   let bun: string;
   beforeAll(async () => {
@@ -556,7 +557,7 @@ describe('a keyword search finds an event by what it says, never by its markup',
   });
 });
 
-describe('only the ledger this workspace is configured with is treated as the ledger', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('only the ledger this workspace is configured with is treated as the ledger', () => {
   const OWN_NOTE = '# Memory Events Ledger\n\nMy own notes about the events ledger idea. The password is quokkaword.\n';
   const PASTED = '# Pasted\n\nA record copied from somewhere:\n\n## MEM_NOSUCHEVENT · 2001-01-01T00:00:00.000Z\n- kind: store\n- subject: pasted\n- predicate: text\n- object: not an event\n';
 
@@ -620,7 +621,7 @@ describe('only the ledger this workspace is configured with is treated as the le
   });
 });
 
-describe('a read in a scope still sees that scope\'s events and no other\'s', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a read in a scope still sees that scope\'s events and no other\'s', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();

@@ -6,6 +6,7 @@ import path from 'path';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService } from '../../src/mvp/server';
 import { StoredSizeGauge, measureMarkdownBytes } from '../../src/mvp/storedSize';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * How many bytes of Markdown a workspace stores, and how the engine tells the gateway.
@@ -238,7 +239,7 @@ describe('StoredSizeGauge: serve now, measure in the background', () => {
 /**
  * The real route, on the real engine, over loopback: the figure arrives beside the bearer the gateway reads.
  */
-describe('POST /internal/gateway-token carries the stored size', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('POST /internal/gateway-token carries the stored size', () => {
   const GATEWAY_SECRET = 'synthetic-gateway-secret-stored-size';
   const ENV_KEYS = [
     'MVP_MEMORY_DIR', 'MVP_AUTH_STATE_PATH', 'MVP_BASE_URL', 'MVP_OWNER_EMAIL', 'MVP_OWNER_PASSWORD',

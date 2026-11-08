@@ -12,6 +12,7 @@ import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { ReadUsefulness, contextItems, factItem, noteItem } from '../../src/mvp/readUsefulness';
 import { emitTelemetry, flushTelemetry, type TelemetryEvent } from '../../src/mvp/telemetry';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Whether a read helped, measured by the engine alone (readUsefulness.ts): metadata-only events, a use inferred inside
@@ -361,7 +362,7 @@ function recorder() {
 const FACT = { subject: 'Atlas Project', predicate: 'owner' };
 const NOTE = 'The Atlas launch checklist lives in the Notion space called Harbor';
 
-describe('read usefulness over MCP, two workspaces holding the same things', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('read usefulness over MCP, two workspaces holding the same things', () => {
   it('records served reads and infers each kind of use, inside the workspace that was read, with no content in any event', async () => {
     const events = recorder();
     const a = await startWorkspace();

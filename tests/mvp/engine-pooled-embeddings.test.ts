@@ -9,6 +9,7 @@ import { attachEngine, createEmbeddingProvider } from '../../src/mvp/engine';
 import type { MvpConfig } from '../../src/mvp/config';
 import { startVertexStub } from '../helpers/vertexStub';
 import { CallPhases } from '../../src/callPhases';
+import { removeTestDir } from '../helpers/removeDb';
 
 /**
  * Which callers get a pooled connection to the embedding service: the service (attachEngine, with no provider of its own) does,
@@ -47,7 +48,7 @@ async function vertexConfig(): Promise<MvpConfig> {
   const stub = await startVertexStub();
   cleanup.push(() => stub.close());
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pooled-'));
-  cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+  cleanup.push(() => removeTestDir(dir));
   return {
     embeddingProvider: 'vertex', embeddingModel: 'gemini-embedding-001', embeddingDims: 768,
     vertexKeyFile: stub.keyFile, vertexProject: 'stub-project', vertexLocation: 'europe-west4',
@@ -60,11 +61,13 @@ describe('the service\'s embedding stack', () => {
     const config = await vertexConfig();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pooled-db-'));
     const db: Database.Database = openDb(path.join(dir, 'index.db'));
-    cleanup.push(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+    cleanup.push(() => { db.close(); removeTestDir(dir); });
     runMigrations(db);
     const realFetch = vi.spyOn(globalThis, 'fetch');
 
     const engine = attachEngine(db, config);
+    // The query-embedding cache it opens beside config.authStatePath is its owner's to close (the server does on shutdown).
+    cleanup.push(() => (engine.provider as { close?: () => void } | null)?.close?.());
 
     expect(seen.made).toEqual([{ retryOnReset: true, onConnect: expect.any(Function) }]);
     // A connection the pool opens is told to the call that is being recorded, as its `connect` phase.
@@ -82,6 +85,7 @@ describe('the service\'s embedding stack', () => {
     const realFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('stopped before it left the machine'));
 
     const provider = createEmbeddingProvider(config);
+    cleanup.push(() => (provider as { close?: () => void } | null)?.close?.());
 
     expect(seen.made).toEqual([]);
     await expect(provider!.embedQuery!('a question')).rejects.toThrow();

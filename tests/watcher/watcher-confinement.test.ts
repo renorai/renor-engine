@@ -8,6 +8,7 @@ import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
 import { indexFile } from '../../src/indexer/pipeline';
 import { startWatcher } from '../../src/watcher/watcher';
+import { removeTestDir } from '../helpers/removeDb';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -27,7 +28,7 @@ async function watchRun(prep: (vault: string, outside: string) => void, after: (
   const paths = (db.prepare('SELECT path FROM notes').all() as { path: string }[]).map(r => path.relative(root, r.path)).sort();
   await watcher.close();
   db.close();
-  fs.rmSync(root, { recursive: true, force: true });
+  removeTestDir(root);
   return paths;
 }
 
@@ -81,16 +82,18 @@ describe('renor watch follows the walker\'s rules', () => {
 describe('indexFile', () => {
   it('does not read through a symlink', async () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'index-link-')));
+    let db: ReturnType<typeof openDb> | undefined;
     try {
       fs.writeFileSync(path.join(root, 'secret.md'), '# s\nindexsecret');
       fs.symlinkSync(path.join(root, 'secret.md'), path.join(root, 'link.md'));
-      const db = openDb(path.join(root, 'idx.db'));
+      db = openDb(path.join(root, 'idx.db'));
       runMigrations(db);
       await expect(indexFile(db, path.join(root, 'link.md'))).rejects.toThrow(/symbolic link/);
       expect(db.prepare('SELECT count(*) AS c FROM notes').get()).toEqual({ c: 0 });
-      db.close();
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      // Closed here, not at the end of the try, so a failed expectation cannot leave it open for the removal.
+      db?.close();
+      removeTestDir(root);
     }
   });
 });

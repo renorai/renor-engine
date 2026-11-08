@@ -11,6 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * What memory_status counts, driven through the real MCP tools over the authenticated Streamable HTTP endpoint.
@@ -213,7 +214,7 @@ function updatedFactCount(db: Database.Database): number {
   return (db.prepare(`SELECT COUNT(*) AS c FROM facts WHERE predicate = 'updated'`).get() as { c: number }).c;
 }
 
-describe('memory_status counts what the user saved', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('memory_status counts what the user saved', () => {
   it('reads an empty workspace as empty', async () => {
     const ws = await startWorkspace();
     expect(await ws.counts()).toEqual({ notes: 0, facts: 0, entities: 0 });

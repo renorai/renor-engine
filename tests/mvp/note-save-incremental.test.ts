@@ -30,6 +30,7 @@ import { remember, replayLedger, resolveLedgerPath } from '../../src/memory/life
 import { buildMemoryMap, restoreMemory, retireMemory, type MemoryMapContext } from '../../src/memorymap/memoryMap';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Saving a note must cost what changed, not what the workspace holds. A note-mode save used to
@@ -593,7 +594,7 @@ describe('note-mode save indexes what changed, not the whole vault', () => {
     expect(embedded[60].some((t) => t.includes('hosted_on'))).toBe(true);
   });
 
-  it('the remember tool takes that path: a note save over MCP does not walk the workspace', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('the remember tool takes that path: a note save over MCP does not walk the workspace', async () => {
     const memoryDir = tmp('note-save-mcp-');
     seedNotes(memoryDir, 40);
     const seeded = Date.now();
@@ -735,7 +736,7 @@ describe('note-mode save indexes what changed, not the whole vault', () => {
   });
 });
 
-describe('a fact-mode save indexes what changed too, not the whole workspace', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a fact-mode save indexes what changed too, not the whole workspace', () => {
   afterEach(() => {
     vi.useRealTimers();
   });

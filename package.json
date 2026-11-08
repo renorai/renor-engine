@@ -1,6 +1,6 @@
 {
   "name": "renor-engine",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Local-first semantic memory — indexing, multi-signal retrieval, MCP",
   "main": "dist/cli.js",
   "files": [
@@ -48,8 +48,6 @@
     "eval:locomo:score": "python3 scripts/eval/locomo/score-locomo.py",
     "eval:beam": "tsx -r ./scripts/lib/no-sharing-preload.cjs scripts/eval/beam/run-retrieval.ts",
     "eval:beam:score": "tsx -r ./scripts/lib/no-sharing-preload.cjs scripts/eval/beam/score-nuggets.ts",
-    "eval:convomem:run": "tsx -r ./scripts/lib/no-sharing-preload.cjs scripts/eval/convomem/run-convomem.ts",
-    "eval:convomem:score": "tsx -r ./scripts/lib/no-sharing-preload.cjs scripts/eval/convomem/score-convomem.ts",
     "eval:register": "tsx -r ./scripts/lib/no-sharing-preload.cjs scripts/eval/register-run.ts",
     "eval:progress": "tsx -r ./scripts/lib/no-sharing-preload.cjs scripts/eval/progress.ts",
     "prebuild": "node scripts/ci/stamp-build.mjs",

@@ -14,6 +14,7 @@ import {
 import { breakerSummary, printBreakerReport, runAttack, type AttackResult } from './breakerReport';
 import { encodeTokens } from '../../src/indexer/tokenizer';
 import { KEY_SHAPES, Rng } from '../../scripts/eval/secret-guard/plantedSet';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * The Renor breaker suite, v1: a standing adversarial pass that tries to break the real MCP tool
@@ -207,7 +208,7 @@ const noiseFiles = (label: string, count: number): Array<{ relativePath: string;
 // Cross-agent recall and agent-to-agent learning
 // ---------------------------------------------------------------------------
 
-describe('breaker: two agents, one workspace', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: two agents, one workspace', () => {
   attack('attack: cross_agent_recall — agent A learns, a later agent B session recalls it', () => runAttack('cross_agent_recall', async () => {
     const shared = root('cross-agent');
     return withWorkspace(shared, base, async (agentA) => {
@@ -249,7 +250,7 @@ describe('breaker: two agents, one workspace', () => {
 // Long-term recall and noise resistance
 // ---------------------------------------------------------------------------
 
-describe('breaker: recall survives unrelated activity', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: recall survives unrelated activity', () => {
   attack('attack: long_term_recall_after_noise — a needle survives 120 unrelated interactions', () => runAttack('long_term_recall_after_noise', async () => {
     return withWorkspace(root('long-term'), base, async (ws) => {
       const needle = await ws.call('remember', { statement: 'The Helios backup passphrase rotation is scheduled for the second Tuesday of each month.' });
@@ -290,7 +291,7 @@ describe('breaker: recall survives unrelated activity', () => {
 // Contradictions and project isolation
 // ---------------------------------------------------------------------------
 
-describe('breaker: contradictions and isolation', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: contradictions and isolation', () => {
   attack('attack: contradiction_newest_and_history — a corrected fact returns the new value and keeps the old', () => runAttack('contradiction_newest_and_history', async () => {
     return withWorkspace(root('contradiction'), base, async (ws) => {
       const first = await ws.call('remember', { statement: 'Fjord uses PostgreSQL.', subject: 'Fjord', predicate: 'database', object: 'PostgreSQL' });
@@ -342,7 +343,7 @@ describe('breaker: contradictions and isolation', () => {
 // Deletion, restore and export
 // ---------------------------------------------------------------------------
 
-describe('breaker: deletion, restore and export', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: deletion, restore and export', () => {
   attack('attack: deletion_retire_restore — retire removes a memory, restore brings it back exactly', () => runAttack('deletion_retire_restore', async () => {
     return withWorkspace(root('deletion'), base, async (ws) => {
       const saved = await ws.call('remember', { statement: 'The Ozymandias vault code is kept in the blue folder.' });
@@ -391,7 +392,7 @@ describe('breaker: deletion, restore and export', () => {
 // Failure modes: the engine stops, instruction injection, secrets, bad input
 // ---------------------------------------------------------------------------
 
-describe('breaker: failure modes', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: failure modes', () => {
   attack('attack: failure_engine_stop — a stopped engine fails fast, and a fresh session still has the memory', () => runAttack('failure_engine_stop', async () => {
     const shared = root('engine-stop');
     return withWorkspace(shared, base, async (ws) => {
@@ -536,7 +537,7 @@ describe('breaker: failure modes', () => {
 // Instruction injection: stored text is data, never structure
 // ---------------------------------------------------------------------------
 
-describe('breaker: stored instructions stay data', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: stored instructions stay data', () => {
   attack('attack: injection_fake_guidance_is_data — fake tool results, system text and reply fields stay inside string fields', () => runAttack('injection_fake_guidance_is_data', async () => {
     return withWorkspace(root('injection-guidance'), base, async (ws) => {
       const marker = INJECTION_MARKERS.join(' ');
@@ -900,7 +901,7 @@ describe('breaker: stored instructions stay data', () => {
 // Cross-workspace isolation
 // ---------------------------------------------------------------------------
 
-describe('breaker: cross-workspace isolation', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: cross-workspace isolation', () => {
   attack('attack: cross_workspace_isolation — one workspace cannot read another, and traversal is refused', () => runAttack('cross_workspace_isolation', async () => {
     const rootA = root('ws-a');
     const rootB = root('ws-b');
@@ -925,7 +926,7 @@ describe('breaker: cross-workspace isolation', () => {
 // Latency and cost at normal volume
 // ---------------------------------------------------------------------------
 
-describe('breaker: latency and cost at volume', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: latency and cost at volume', () => {
   attack('attack: latency_and_cost_at_volume — a normal query is fast enough and the reply is bounded', () => runAttack('latency_and_cost_at_volume', async () => {
     return withWorkspace(root('latency'), base, async (ws) => {
       const failed = await importNotes(ws, 'volume', noiseFiles('volume', 60));
@@ -966,7 +967,7 @@ async function searchHits(ws: BreakerWorkspace, query: string): Promise<number> 
   return res.isError ? -1 : hitTexts(res.body).length;
 }
 
-describe('breaker: lifecycle, import and scope edges', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: lifecycle, import and scope edges', () => {
   attack('attack: partial_subject_read_refused — a partial name never reads another subject’s fact', () => runAttack('partial_subject_read_refused', async () => {
     return withWorkspace(root('partial-read'), base, async (ws) => {
       const saved = await ws.call('save_memory', { subject: 'Fjord Engine', predicate: 'database', object: 'SQLite' });

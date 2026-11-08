@@ -12,6 +12,7 @@ import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * SSE-CHATGPT transport regressions.
@@ -202,7 +203,7 @@ async function openStream(url: (p?: string) => string, token: string, sid: strin
   return { status: res.status, close: () => controller.abort() };
 }
 
-describe('SSE-CHATGPT: default JSON mode is unchanged', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('SSE-CHATGPT: default JSON mode is unchanged', () => {
   it('POST returns application/json; GET /mcp stays 404 (no behavior change without opt-in)', async () => {
     const { config, app, url } = await bootService(); // no MVP_MCP_JSON set -> default true
     const token = await obtainToken(app);
@@ -218,7 +219,7 @@ describe('SSE-CHATGPT: default JSON mode is unchanged', () => {
   });
 });
 
-describe('SSE-CHATGPT: SSE mode (MVP_MCP_JSON=false)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('SSE-CHATGPT: SSE mode (MVP_MCP_JSON=false)', () => {
   it('full SDK-client roundtrip over SSE: initialize, tools/list, save, retrieve, export; wire format is SSE with session header', async () => {
     const { config, app, url } = await bootService({ MVP_MCP_JSON: 'false' });
     const token = await obtainToken(app);

@@ -8,6 +8,7 @@ import { loadMvpConfig } from '../../src/mvp/config';
 import { createMvpApp } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { SUPERSEDED_LABEL } from '../../src/retrieval/ledgerLiveness';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A belief the user has moved on from must close, and must stop answering questions.
@@ -190,7 +191,7 @@ const surfaces = (reads: Reads): Array<[string, string[]]> => [
 const mentioning = (reads: Reads, value: string): string[] =>
   surfaces(reads).filter(([, items]) => items.some(t => t.includes(value))).map(([name]) => name);
 
-describe('a chain of beliefs about one thing', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a chain of beliefs about one thing', () => {
   it('closes every hop as a ledger lifecycle: all values on request, one current, each closed one dated', async () => {
     const ws = await serve();
     for (const chain of CHAINS) {

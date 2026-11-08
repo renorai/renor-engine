@@ -10,6 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Live dogfood, D3: a daily-log entry's `session_date` was the moment its FILE was last written, so every entry of a day
@@ -145,7 +146,7 @@ const QUESTION = 'Where is Quillmoor deployed now?';
 const STALE = 'Quillmoor hosting decision: deploy it on Fly.io in the São Paulo region, where Quillmoor is deployed for now.';
 const CORRECTION = 'Change of plan: Quillmoor moves from Fly.io to Railway.';
 
-describe('a daily-log entry is dated by its own moment, not by its file (live dogfood D3)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a daily-log entry is dated by its own moment, not by its file (live dogfood D3)', () => {
   it('rolls a restore back when its completed Markdown would exceed the gateway storage ceiling', async () => {
     const ws = await startWorkspace();
     const statement = `storage ceiling restore ${'x'.repeat(3_500)}`;

@@ -11,6 +11,7 @@ import { loadMvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { DEFAULT_LEDGER_REL } from '../../src/memory/lifecycle';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * One scope rule for notes and facts (dogfood 2026-10-03, finding D6). `scope:<slug>`, `project:<slug>` and the bare
@@ -153,7 +154,7 @@ async function reads(ws: Workspace, scope: string) {
   };
 }
 
-describe('a named scope is its slug, for facts as for notes (D6)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a named scope is its slug, for facts as for notes (D6)', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -223,7 +224,7 @@ describe('a named scope is its slug, for facts as for notes (D6)', () => {
   });
 });
 
-describe('a save under another spelling of the slug corrects the value saved under the first; another slug keeps its own', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a save under another spelling of the slug corrects the value saved under the first; another slug keeps its own', () => {
   let ws: Workspace;
   let first: any;
   let second: any;
@@ -272,7 +273,7 @@ describe('a save under another spelling of the slug corrects the value saved und
   });
 });
 
-describe('values saved under two spellings before a save closed across them: both current, named as a conflict, until a save corrects both', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('values saved under two spellings before a save closed across them: both current, named as a conflict, until a save corrects both', () => {
   let ws: Workspace;
   beforeAll(async () => {
     // A ledger written before: each spelling of atlas got its own value, and nothing named the other.
@@ -329,7 +330,7 @@ describe('values saved under two spellings before a save closed across them: bot
   });
 });
 
-describe('a fact saved under one spelling and not indexed yet is found under every spelling', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a fact saved under one spelling and not indexed yet is found under every spelling', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();

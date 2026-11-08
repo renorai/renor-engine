@@ -16,6 +16,7 @@ import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 const OWNER_EMAIL = 'owner@example.test';
 const OWNER_PASSWORD = 'synthetic-owner-secret-123';
@@ -117,7 +118,7 @@ function parse(res: Awaited<ReturnType<Client['callTool']>>) {
 }
 
 describe('engine tools on authenticated MCP (ADR-0003)', () => {
-  it('lists engine tools; search_memory is unavailable without a provider; FTS/index/entity/daily-note work', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('lists engine tools; search_memory is unavailable without a provider; FTS/index/entity/daily-note work', async () => {
     const port = await freePort();
     const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-eng-'));
     tmpDirs.push(memoryDir);
@@ -175,7 +176,7 @@ describe('engine tools on authenticated MCP (ADR-0003)', () => {
     await client.close();
   });
 
-  it('stub embeddings rank mango over unrelated notes; no real model download', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('stub embeddings rank mango over unrelated notes; no real model download', async () => {
     // This test isolates semantic ranking. Product search applies a default-on
     // newest-first presentation rerank after semantic selection, and the two
     // temp files can have different mtimes depending on filesystem timing.
@@ -298,7 +299,7 @@ describe('engine tools on authenticated MCP (ADR-0003)', () => {
     db.close();
   });
 
-  it('lookup_entity with scope returns only entities whose source note belongs to that scope', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('lookup_entity with scope returns only entities whose source note belongs to that scope', async () => {
     const port = await freePort();
     const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-scope-'));
     tmpDirs.push(memoryDir);
@@ -371,7 +372,7 @@ describe('engine tools on authenticated MCP (ADR-0003)', () => {
 });
 
 // Constant embeddings intentionally rank irrelevant memories highly.
-describe('read liveness through real MCP', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('read liveness through real MCP', () => {
   async function fixture() {
     delete process.env.RENOR_READ_HONESTY;
     process.env.RENOR_SEARCH_EVIDENCE = '0';

@@ -15,6 +15,7 @@ import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server';
 import { readEmbeddingTableDims, semanticReady } from '../../src/mvp/engine';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A workspace that searched by keyword (no embedding provider, what the provisioner ships by default) and is started
@@ -193,7 +194,7 @@ async function found(call: (name: string, args?: Record<string, unknown>) => Pro
   return result.ok === true && JSON.stringify(result.hits).includes(word);
 }
 
-describe('a keyword-only workspace started with an embedding provider', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a keyword-only workspace started with an embedding provider', () => {
   it('embeds every chunk it holds, once, in the background, with semantic search off and saying so until it is whole', async () => {
     // Born keyword-only, as the provisioner makes a workspace today: imported notes, notes and a fact.
     const memoryDir = vaultWith(NOTES);
@@ -340,7 +341,7 @@ describe('a keyword-only workspace started with an embedding provider', () => {
   });
 });
 
-describe('a workspace that had the provider, ran without it, and has it again', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace that had the provider, ran without it, and has it again', () => {
   it('embeds what was saved meanwhile, keeps the vectors it had, and drops the vectors of chunks that are gone', async () => {
     const memoryDir = vaultWith(NOTES);
     vi.spyOn(console, 'log').mockImplementation(() => {});

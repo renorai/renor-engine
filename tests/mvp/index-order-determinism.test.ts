@@ -16,6 +16,7 @@ import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
 import { remember, DEFAULT_LEDGER_REL } from '../../src/memory/lifecycle';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * The same notes, indexed again, answer every read the same, byte for byte.
@@ -223,7 +224,7 @@ async function indexAndRead(memoryDir: string, run: number): Promise<Run> {
   }
 }
 
-describe('the same vault indexed concurrently, again and again, answers every read the same', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the same vault indexed concurrently, again and again, answers every read the same', () => {
   let memoryDir: string;
   const runs: Run[] = [];
 

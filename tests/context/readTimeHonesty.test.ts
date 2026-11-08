@@ -29,6 +29,7 @@ import {
 } from '../../src/context/readHonesty';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { createMvpApp, type MvpApp } from '../../src/mvp/server';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * LANE 3 — read-time honesty: provenance, conflict detection, abstention.
@@ -114,7 +115,7 @@ describe('LANE 3: read-time honesty flag is default OFF', () => {
     expect(readHonestyEnabled({ [READ_HONESTY_FLAG]: 'true' } as NodeJS.ProcessEnv)).toBe(true);
   });
 
-  it('leaves the default get_context response contract byte-identical when off', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('leaves the default get_context response contract byte-identical when off', async () => {
     // The strongest form of "default-off": not just "no new keys" but the exact
     // key set the shipped contract had, including on the fact items themselves.
     const body = await getContext('what runtime does FlagOffOwner prefer', {
@@ -162,7 +163,7 @@ describe('LANE 3 behaviour 1: provenance on returned items', () => {
     expect(n.lastVerified).toBeNull();
   });
 
-  it('is attached to every item the product read returns (MCP get_context)', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('is attached to every item the product read returns (MCP get_context)', async () => {
     const body = await getContext('what runtime does ProvenanceOwner prefer', {
       after: async (call) => {
         const save = await call('save_memory', {
@@ -504,7 +505,7 @@ describe('LANE 3 behaviour 2: read-time conflict detection', () => {
     expect(fitConflicts(oneScope, 512)).toEqual(oneScope);
   });
 
-  it('surfaces the conflict through the public MCP get_context tool', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('surfaces the conflict through the public MCP get_context tool', async () => {
     const body = await getContext('what is the power source of the machine', {
       seed: (db) => {
         db.prepare(
@@ -548,7 +549,7 @@ describe('LANE 3 behaviour 2: read-time conflict detection', () => {
     expect(serialized).not.toMatch(/"\/home\/|\/var\/folders\//);
   }, 120_000);
 
-  it('names every side of a conflict across scopes through get_context, each source rendered client-safe', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('names every side of a conflict across scopes through get_context, each source rendered client-safe', async () => {
     // A host path is only ever a string here; it is seeded as a note's path and must never reach
     // the reply. It is still built per call so no other run on this machine can assume the same
     // name — the rule for every fixture path in this tree, data or file.
@@ -659,7 +660,7 @@ describe('LANE 3 behaviour 3: honest abstention', () => {
     }
   });
 
-  it('reaches the public MCP get_context tool as an explicit no-answer', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('reaches the public MCP get_context tool as an explicit no-answer', async () => {
     const saveMachine = async (call: (name: string, args: any) => Promise<any>) => {
       const save = await call('save_memory', {
         subject: 'Machine',

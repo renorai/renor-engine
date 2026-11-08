@@ -1,4 +1,4 @@
-import type { LearningExport } from '../learning/store';
+import type { LearningExport, LearningLog } from '../learning/store';
 import type { ExampleReader } from './examples';
 import {
   COUNT_BUCKETS, DELAY_BUCKETS, LENGTH_BUCKETS, modelIdentifier, RETRIEVAL_TOOL_NAMES, SAVE_TOOL_NAMES, type SharingLevel,
@@ -302,28 +302,95 @@ function sessionRows(log: LearningExport, options: ProjectOptions, windowMs: num
   const rows: ProjectedRow[] = [];
   for (const seen of [...sessions.values()].sort((a, b) => a.last - b.last)) {
     if (seen.last <= options.watermarks.session || seen.last > cutoff) continue;
-    const firstCall = (RETRIEVAL_TOOL_NAMES as readonly string[]).includes(seen.tool) || (SAVE_TOOL_NAMES as readonly string[]).includes(seen.tool)
-      ? seen.tool
-      : 'other';
-    rows.push({
-      kind: 'session',
-      at: seen.last,
-      row: {
-        kind: 'session-aggregate/1',
-        hour: hourOf(seen.first),
-        length_bucket: lengthBucket(seen.last - seen.first),
-        reads_bucket: countBucket(seen.reads),
-        saves_bucket: countBucket(seen.saves),
-        empty_reads_bucket: countBucket(seen.empty),
-        first_call: firstCall,
-      },
-    });
+    rows.push(sessionRow(seen));
   }
   return rows;
+}
+
+function sessionRow(seen: { first: number; last: number; tool: string; reads: number; saves: number; empty: number }): ProjectedRow {
+  const firstCall = (RETRIEVAL_TOOL_NAMES as readonly string[]).includes(seen.tool) || (SAVE_TOOL_NAMES as readonly string[]).includes(seen.tool)
+    ? seen.tool
+    : 'other';
+  return {
+    kind: 'session',
+    at: seen.last,
+    row: {
+      kind: 'session-aggregate/1',
+      hour: hourOf(seen.first),
+      length_bucket: lengthBucket(seen.last - seen.first),
+      reads_bucket: countBucket(seen.reads),
+      saves_bucket: countBucket(seen.saves),
+      empty_reads_bucket: countBucket(seen.empty),
+      first_call: firstCall,
+    },
+  };
 }
 
 /** The finished rows the log holds that are final and not yet sent, oldest first within each kind. */
 export function projectRows(log: LearningExport, options: ProjectOptions): ProjectedRow[] {
   const windowMs = options.windowMs ?? LABEL_WINDOW_MS;
   return [...retrievalRows(log, options, windowMs), ...saveRows(log, options, windowMs), ...sessionRows(log, options, windowMs)];
+}
+
+/** How many rows of each table one slice of projectFromLog reads as its subject rows (it also reads one label window after them). */
+export const SLICE_ROWS = 500;
+/** How far before a save a cite still counts as that save's (saveRows `has_cites`). */
+const CITE_SKEW_MS = 2_000;
+
+/**
+ * One slice's rows of one kind. Its own function, so the slice's tables are garbage once it returns: a generator suspended at a
+ * `yield` keeps its locals alive, and the tables are most of what a slice holds.
+ */
+function projectSlice(
+  log: LearningLog, build: typeof retrievalRows, kind: 'retrieval' | 'save', after: number, until: number, options: ProjectOptions, windowMs: number,
+): ProjectedRow[] {
+  // Everything a row in (after, until] can be built from: its cites up to CITE_SKEW_MS before it, and its label window after it.
+  const slice = log.exportServedWindow(after - CITE_SKEW_MS, until + Math.max(windowMs, CITE_SKEW_MS));
+  // `now` = until + window makes the projection's own cut-off `until`; the watermark `after` is the slice's start.
+  return build(slice, { ...options, now: until + windowMs, watermarks: { ...options.watermarks, [kind]: after } }, windowMs);
+}
+
+/**
+ * projectRows without the whole log: the same rows, in the same order within each kind, read from the log a time slice at a
+ * time. A slice is at most about SLICE_ROWS rows of each table, plus the label window after it (the events that label them), and
+ * only the served candidates; sessions are summed by SQLite. What one slice holds is bounded by the slice and one label window of
+ * activity, never by the size of the log, its retention or how far behind the watermarks are. Each yield is one slice's rows:
+ * the caller sends them and moves the watermark before the next slice is read.
+ */
+export function* projectFromLog(
+  source: LearningLog | (() => LearningLog), options: ProjectOptions & { sliceRows?: number },
+): Generator<ProjectedRow[]> {
+  // Given a way to open the log, each slice opens it and closes it before its rows are handed on, so no handle is held while the
+  // caller sends them. Given an open log, it is only read.
+  const read = <T>(fn: (log: LearningLog) => T): T => {
+    if (typeof source !== 'function') return fn(source);
+    const log = source();
+    try {
+      return fn(log);
+    } finally {
+      log.close();
+    }
+  };
+  const windowMs = options.windowMs ?? LABEL_WINDOW_MS;
+  const limit = Math.max(1, options.sliceRows ?? SLICE_ROWS);
+  const cutoff = options.now - windowMs;
+  const kinds: Array<{ kind: 'retrieval' | 'save'; build: typeof retrievalRows }> = [
+    { kind: 'retrieval', build: retrievalRows },
+    { kind: 'save', build: saveRows },
+  ];
+  for (const { kind, build } of kinds) {
+    let after = options.watermarks[kind];
+    while (after < cutoff) {
+      const until = read(log => log.sliceEnd(after, cutoff, limit));
+      yield read(log => projectSlice(log, build, kind, after, until, options, windowMs));
+      after = until;
+    }
+  }
+  let after = options.watermarks.session;
+  while (after < cutoff) {
+    const spans = read(log => log.sessionSpans(after, cutoff, SAVE_TOOL_NAMES, limit));
+    if (spans.length === 0) break;
+    yield spans.map(span => sessionRow({ ...span, tool: span.first_tool }));
+    after = spans[spans.length - 1]!.last;
+  }
 }

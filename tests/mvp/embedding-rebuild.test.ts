@@ -19,6 +19,7 @@ import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server
 import { attachEngine, engineRebuildEmbeddings, engineSearchMemory, engineStatus, semanticReady } from '../../src/mvp/engine';
 import { chunksWithoutVectors } from '../../src/embeddings/rebuild';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * An index whose vectors are in another model's space, or in none anyone can vouch for, is never served: semantic
@@ -351,7 +352,7 @@ describe('engineRebuildEmbeddings', () => {
   });
 });
 
-describe('the service rebuilds a mixed or unknown index in the background and says so until it is done', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the service rebuilds a mixed or unknown index in the background and says so until it is done', () => {
   it('serves keyword search with a notice while the embeddings are rebuilt, and semantic search once they are', async () => {
     const legacy = await workspaceBuiltByA(false);
     vi.spyOn(console, 'warn').mockImplementation(() => {});

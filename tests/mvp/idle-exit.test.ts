@@ -9,6 +9,7 @@ import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * On-demand idle exit (RENOR_ON_DEMAND): an engine with nothing to do exits cleanly so its
@@ -147,7 +148,7 @@ describe('on-demand switch (RENOR_ON_DEMAND)', () => {
     }
   });
 
-  it('with the switch off the engine has no idle monitor and keeps serving', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('with the switch off the engine has no idle monitor and keeps serving', async () => {
     const { started, base } = await boot();
     expect(started.idle).toBeNull();
     expect(started.idleExit).toBeNull();
@@ -157,7 +158,7 @@ describe('on-demand switch (RENOR_ON_DEMAND)', () => {
 });
 
 describe('on-demand idle exit of a running engine', () => {
-  it('exits after the idle period with nothing in flight and stops listening', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('exits after the idle period with nothing in flight and stops listening', async () => {
     const t0 = Date.now();
     const { started, base } = await boot({ idleExitMs: 400 });
     expect(await settle(started, 20_000)).toBe('exited');
@@ -165,7 +166,7 @@ describe('on-demand idle exit of a running engine', () => {
     await expect(fetch(`${base}/version`)).rejects.toThrow();
   }, 30_000);
 
-  it('readiness probes, scanners and refused requests do not keep it awake', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('readiness probes, scanners and refused requests do not keep it awake', async () => {
     const { started, base } = await boot({ idleExitMs: 800 });
     let polling = true;
     const poller = (async () => {
@@ -187,7 +188,7 @@ describe('on-demand idle exit of a running engine', () => {
     }
   }, 30_000);
 
-  it('an open SSE stream holds it awake; it exits an idle period after the stream closes', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('an open SSE stream holds it awake; it exits an idle period after the stream closes', async () => {
     const { started, base } = await boot({ idleExitMs: 500, env: { MVP_MCP_JSON: 'false' } });
     const token = await mint(base);
     const init = await fetch(`${base}/mcp`, {
@@ -220,7 +221,7 @@ describe('on-demand idle exit of a running engine', () => {
     expect(Date.now() - closedAt).toBeGreaterThanOrEqual(490);
   }, 40_000);
 
-  it('a write and index job holds it awake after its client disconnects, and completes before the drain', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a write and index job holds it awake after its client disconnects, and completes before the drain', async () => {
     const provider = new GatedHashProvider();
     const { started, base } = await boot({ idleExitMs: 500, provider });
     const token = await mint(base);
@@ -252,7 +253,7 @@ describe('on-demand idle exit of a running engine', () => {
     expect(indexed.n).toBeGreaterThan(0);
   }, 40_000);
 
-  it('a save that holds the engine past its idle deadline is durable across the sleep and the next wake', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a save that holds the engine past its idle deadline is durable across the sleep and the next wake', async () => {
     // On-demand split admission puts newborns and idle workspaces to sleep far more often than
     // always-on engines ever restarted, so the race that matters is a save still running when the
     // idle period ends: it must hold the engine awake, finish, and be there when the next request

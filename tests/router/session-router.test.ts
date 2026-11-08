@@ -38,6 +38,7 @@ import {
 import { renderSession } from '../../scripts/eval/run-longmemeval-product';
 import { kindOf, stubReply, type StubBehaviour } from './stubRouterModel';
 import { LEDGER, QUESTION, SESSIONS } from './fixtureSessions';
+import { removeTestDir } from '../helpers/removeDb';
 
 /**
  * The session router (RENOR_SESSION_ROUTER) against a real index of benchmark-shaped notes (rendered by the product
@@ -52,11 +53,16 @@ const ENV_KEYS = [
   'RENOR_EVIDENCE_API_KEYS', 'RENOR_EVIDENCE_BASE_URL', 'RENOR_NEWEST_FIRST',
 ];
 const savedEnv = Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]));
+const openHandles: Array<{ close(): void }> = [];
 afterEach(() => {
-  for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-  for (const key of ENV_KEYS) {
-    if (savedEnv[key] === undefined) delete process.env[key];
-    else process.env[key] = savedEnv[key];
+  try {
+    for (const handle of openHandles.splice(0)) handle.close();
+    for (const dir of tmpDirs.splice(0)) removeTestDir(dir);
+  } finally {
+    for (const key of ENV_KEYS) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
   }
 });
 
@@ -97,12 +103,14 @@ async function fixture(sessions = SESSIONS, extra: (vault: string) => void = () 
     '---\ntype: memory-ledger\n---\n\n# Memory Events Ledger\n\n## MEM_CAT1 · 2023-05-02T00:00:00.000Z\n- kind: store\n- subject: cat\n- predicate: adopted\n- object: Miso\n');
   extra(vault);
   const db = openDb(path.join(vault, 'index.db'));
+  openHandles.push(db);
   runMigrations(db);
   const provider = new EvalHashEmbeddingProvider();
   const vectorIndex = new VectorIndex(db, provider.dimensions);
   vectorIndex.initTable();
   await indexVault(db, vault, { embeddingProvider: provider, vectorIndex }, 2);
   const cache = new RouterCache(path.join(vault, 'router-cache.db'));
+  openHandles.push(cache);
   const retrieve = (query: string, topK = 20): Promise<RetrievalResult> =>
     retrieveContext(db, vectorIndex, provider, query, topK, [], {}, {});
   return { vault, db, cache, retrieve };

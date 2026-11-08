@@ -10,6 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { replyTokens } from '../../src/mvp/agentMemory';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Multi-agent drift (first-week scout, finding F2), driven through the real MCP tools over the authenticated
@@ -131,7 +132,7 @@ const brief = (value: any) => `${value.subject} = ${value.object} [${value.scope
 const conflictsOf = (body: any) => (body.conflicts ?? []).map((c: any) => `${c.predicate}: ${c.values.map(brief).join(' / ')}`);
 
 // The report's reproduction (first-week scout, section 2, F2), call for call.
-describe('the F2 reproduction: the duplicate is named when it is saved, the conflict when it is read', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the F2 reproduction: the duplicate is named when it is saved, the conflict when it is read', () => {
   let ws: Workspace;
   const receipts: any[] = [];
   beforeAll(async () => {
@@ -207,7 +208,7 @@ describe('the F2 reproduction: the duplicate is named when it is saved, the conf
 // Memory scout finding 13 (renor-newuser-scout-memory-1002, S9), call for call: the same two-scope contradiction read
 // with the opt-in read-honesty lane armed. The lane replaces get_context's conflicts with its own, and it used to
 // compare one scope at a time, so it answered `conflicts: []` with both values side by side in facts.
-describe('the read-honesty lane names a two-scope contradiction as get_context does (scout finding 13)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the read-honesty lane names a two-scope contradiction as get_context does (scout finding 13)', () => {
   let ws: Workspace;
   const query = 'how many retries does the deploy bot get?';
   /** get_context with RENOR_READ_HONESTY armed, as an operator arms it: the service reads the flag per request. */
@@ -254,7 +255,7 @@ describe('the read-honesty lane names a two-scope contradiction as get_context d
 // older carried one), and a value saved in many scopes grew the conflicts without bound, past max_tokens. The lane names
 // every value with its scope, eight at most as get_context's default conflicts list, cuts them to the reply's budget,
 // and counts what it does not name.
-describe('the read-honesty lane names every value with its scope, within the reply budget', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the read-honesty lane names every value with its scope, within the reply budget', () => {
   let ws: Workspace;
   const TEAMS = 200;
   /** get_context with RENOR_READ_HONESTY armed, as an operator arms it: the service reads the flag per request. */
@@ -358,7 +359,7 @@ describe('the read-honesty lane names every value with its scope, within the rep
 });
 
 // The scout's week: the same drifts made inside one project, and across projects.
-describe('scope is an isolation boundary for both fields', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('scope is an isolation boundary for both fields', () => {
   let ws: Workspace;
   const receipts: Record<string, any> = {};
   beforeAll(async () => {
@@ -417,7 +418,7 @@ describe('scope is an isolation boundary for both fields', () => {
   });
 });
 
-describe('what is and is not named', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('what is and is not named', () => {
   let ws: Workspace;
   beforeAll(async () => { ws = await startWorkspace(); }, HOOK_TIMEOUT_MS);
   afterAll(async () => { await ws?.close(); });

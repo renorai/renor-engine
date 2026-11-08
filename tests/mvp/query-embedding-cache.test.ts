@@ -11,6 +11,7 @@ import { createMvpApp } from '../../src/mvp/server';
 import { createEmbeddingProvider, queryEmbeddingCachePath, QUERY_CACHE_MAX_ENTRIES } from '../../src/mvp/engine';
 import { CachingEmbeddingProvider } from '../../src/embeddings/caching';
 import { CallPhases } from '../../src/callPhases';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * The hosted read path embeds a query once. Driven through the real Vertex provider with `fetch` replaced by a
@@ -262,7 +263,7 @@ describe('createEmbeddingProvider: a cache fault never fails a read', () => {
   });
 });
 
-describe('the cache is invisible to export, import and memory_status', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the cache is invisible to export, import and memory_status', () => {
   async function connect(config: MvpConfig) {
     const app = createMvpApp(config);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

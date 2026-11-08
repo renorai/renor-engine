@@ -11,6 +11,7 @@ import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, createMvpApp, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server';
 import { ClientRegistry, ClientRegistryError } from '../../src/mvp/client-store';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * CLIENT-PERSISTENCE regressions (restart contract for the DCR registry).
@@ -220,7 +221,7 @@ function syntheticClientRecord(id: string): Record<string, unknown> {
   };
 }
 
-describe('CLIENT-PERSISTENCE: pending registration expiry', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('CLIENT-PERSISTENCE: pending registration expiry', () => {
   it('keeps a pending registration at 9 minutes, removes it at 11 minutes, and never expires an approved registration', () => {
     const authStatePath = path.join(tmpdir0700('mvp-cp-auth-'), 'clients.json');
     const registry = new ClientRegistry(authStatePath);
@@ -245,7 +246,7 @@ describe('CLIENT-PERSISTENCE: pending registration expiry', () => {
   });
 });
 
-describe('CLIENT-PERSISTENCE: expiry never breaks reads', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('CLIENT-PERSISTENCE: expiry never breaks reads', () => {
   it('drops an expired pending registration in memory when the store cannot be written, and does not throw', () => {
     const dir = tmpdir0700('mvp-cp-auth-');
     const registry = new ClientRegistry(path.join(dir, 'clients.json'));
@@ -263,7 +264,7 @@ describe('CLIENT-PERSISTENCE: expiry never breaks reads', () => {
   });
 });
 
-describe('CLIENT-PERSISTENCE: restart contract (register once, restart, re-authorize)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('CLIENT-PERSISTENCE: restart contract (register once, restart, re-authorize)', () => {
   it('CRITICAL: register once -> use tools -> restart from same store (no re-registration) -> same clientId/secret authorizes again and memory/history still work; old ticket/code replay fails', async () => {
     const memoryDir = tmpdir0700('mvp-cp-memory-');
     const authRoot = tmpdir0700('mvp-cp-auth-');
@@ -394,21 +395,25 @@ function expectStartupFails(authStatePath: string, memoryDir: string) {
   process.env.MVP_OWNER_PASSWORD = OWNER_PASSWORD;
   process.env.MVP_ALLOWED_CALLBACK_URIS = LOOPBACK_CB;
   delete process.env.MVP_HISTORY_DIR;
+  const config = loadMvpConfig();
   let registryError: unknown = null;
   try {
-    createMvpApp(loadMvpConfig());
+    createMvpApp(config);
   } catch (err) {
     registryError = err;
   }
   expect(registryError).toBeInstanceOf(ClientRegistryError);
   expect((registryError as Error).message).toContain('not usable');
+  // The store is checked before the index is opened: a refused start creates, migrates and holds no database (#1563).
+  expect(fs.existsSync(config.dbPath)).toBe(false);
   return registryError as ClientRegistryError;
 }
 
 describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset)', () => {
 
   it('refuses startup when the platform has no POSIX user id', () => {
-    vi.spyOn(process, 'getuid').mockImplementation(() => undefined as never);
+    // Native Windows has no process.getuid at all, so there the real platform is the case under test; elsewhere it is mocked.
+    if (typeof process.getuid === 'function') vi.spyOn(process, 'getuid').mockImplementation(() => undefined as never);
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const authStatePath = path.join(authRoot, 'clients.json');
 
@@ -416,7 +421,7 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
     expect(error.message).toContain('process uid is unavailable on this platform');
   });
 
-  it('corrupt JSON store fails closed at startup', () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('corrupt JSON store fails closed at startup', () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const p = path.join(authRoot, 'clients.json');
     fs.writeFileSync(p, '{not valid json', { mode: 0o600 });
@@ -424,7 +429,7 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
     expectStartupFails(p, tmpdir0700('mvp-cp-memory-'));
   });
 
-  it('valid JSON but wrong schema version fails closed', () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('valid JSON but wrong schema version fails closed', () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const p = path.join(authRoot, 'clients.json');
     fs.writeFileSync(p, JSON.stringify({ schema: 'mvp-oauth-clients/2', clients: [] }), { mode: 0o600 });
@@ -432,7 +437,7 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
     expectStartupFails(p, tmpdir0700('mvp-cp-memory-'));
   });
 
-  it('a store written by the live ChatGPT connector (response_types present) loads fine; still-unknown fields fail closed', () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a store written by the live ChatGPT connector (response_types present) loads fine; still-unknown fields fail closed', () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const p = path.join(authRoot, 'clients.json');
     fs.writeFileSync(p, validStoreWith([
@@ -458,7 +463,7 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
     expect(threw).toBeNull();
   });
 
-  it('unknown top-level or client fields fail closed', () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('unknown top-level or client fields fail closed', () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const p = path.join(authRoot, 'clients.json');
     fs.writeFileSync(p, JSON.stringify({ schema: 'mvp-oauth-clients/1', clients: [], extra: 1 }), { mode: 0o600 });
@@ -466,7 +471,7 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
     expectStartupFails(p, tmpdir0700('mvp-cp-memory-'));
   });
 
-  it('symlink store file fails closed', () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('symlink store file fails closed', () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const target = path.join(authRoot, 'real.json');
     fs.writeFileSync(target, validStoreWith([]), { mode: 0o600 });
@@ -476,7 +481,7 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
     expectStartupFails(p, tmpdir0700('mvp-cp-memory-'));
   });
 
-  it('symlinked store DIRECTORY fails closed', () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('symlinked store DIRECTORY fails closed', () => {
     const realRoot = tmpdir0700('mvp-cp-real-');
     const linkRoot = tmpdir0700('mvp-cp-link-'); // 0700, holds the symlink
     fs.rmSync(linkRoot, { recursive: true, force: true });
@@ -486,7 +491,7 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
     expectStartupFails(path.join(dirWithLink, 'authroot', 'clients.json'), tmpdir0700('mvp-cp-memory-'));
   });
 
-  it('group/world-readable store file (0644) fails closed', () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('group/world-readable store file (0644) fails closed', () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const p = path.join(authRoot, 'clients.json');
     fs.writeFileSync(p, validStoreWith([]));
@@ -494,13 +499,13 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
     expectStartupFails(p, tmpdir0700('mvp-cp-memory-'));
   });
 
-  it('group/world-accessible store directory (0755) fails closed', () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('group/world-accessible store directory (0755) fails closed', () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     fs.chmodSync(authRoot, 0o755);
     expectStartupFails(path.join(authRoot, 'clients.json'), tmpdir0700('mvp-cp-memory-'));
   });
 
-  it('store exceeding the bounded client limit fails closed (not trimmed)', () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('store exceeding the bounded client limit fails closed (not trimmed)', () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const p = path.join(authRoot, 'clients.json');
     const many = Array.from({ length: 101 }, (_, i) => syntheticClientRecord(`bulk-${i}`));
@@ -509,7 +514,7 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
     expectStartupFails(p, tmpdir0700('mvp-cp-memory-'));
   });
 
-  it('a valid store at the bound still boots, and further registration is refused (store bound)', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a valid store at the bound still boots, and further registration is refused (store bound)', async () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const p = path.join(authRoot, 'clients.json');
     const many = Array.from({ length: 100 }, (_, i) => syntheticClientRecord(`bulk-${i}`));
@@ -524,7 +529,7 @@ describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset
 });
 
 describe('CLIENT-PERSISTENCE: disk-first registration and I/O failure', () => {
-  it('failed disk write acknowledges NO client (not even in memory)', async ({ skip }) => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('failed disk write acknowledges NO client (not even in memory)', async ({ skip }) => {
     if (process.getuid?.() === 0) skip('requires a non-root process so directory permissions deny writes');
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const p = path.join(authRoot, 'clients.json');
@@ -553,7 +558,7 @@ describe('CLIENT-PERSISTENCE: disk-first registration and I/O failure', () => {
     expect(ok.status).toBe(201);
   });
 
-  it('registration audit output contains no secrets or full client identifiers', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('registration audit output contains no secrets or full client identifiers', async () => {
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const memoryDir = tmpdir0700('mvp-cp-memory-');
     const svc = await bootService({ memoryDir, authStatePath: path.join(authRoot, 'clients.json') });
@@ -597,7 +602,7 @@ describe('CLIENT-PERSISTENCE: disk-first registration and I/O failure', () => {
 });
 
 
-describe('CLIENT-PERSISTENCE: the path to the store directory may cross a root-owned symlink only where nobody but root and the service user can change it', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('CLIENT-PERSISTENCE: the path to the store directory may cross a root-owned symlink only where nobody but root and the service user can change it', () => {
   // macOS reaches its per-user temp directory through /var, a symlink to private/var that root owns, so a store kept
   // there is reached through a symlink. A test cannot make a file that root owns, so `lstatReports` has lstat say what
   // the platform says for the paths a test names; the symlinks, the directories and the writes through them are real.

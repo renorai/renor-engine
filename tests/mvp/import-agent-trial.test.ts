@@ -20,6 +20,7 @@ import { loadMvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 type F = { relativePath: string; markdown: string };
 interface Reply { error?: string; body?: any }
@@ -268,7 +269,7 @@ const SAVED_GUARD = process.env.RENOR_SECRET_GUARD;
 beforeAll(() => { process.env.RENOR_SECRET_GUARD = '0'; });
 afterAll(() => { if (SAVED_GUARD === undefined) delete process.env.RENOR_SECRET_GUARD; else process.env.RENOR_SECRET_GUARD = SAVED_GUARD; });
 
-describe('import labels and paths: what reaches the filesystem', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('import labels and paths: what reaches the filesystem', () => {
   const one = (label: string, markdown = '# N\nBody text.') => ({ label, files: [{ relativePath: 'a.md', markdown }] });
   const folders = () => fs.readdirSync(path.join(memoryDir, 'Imported'));
 
@@ -339,7 +340,7 @@ describe('import labels and paths: what reaches the filesystem', () => {
   });
 });
 
-describe('import trial: what a first-time agent tries', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('import trial: what a first-time agent tries', () => {
   for (const a of attempts) {
     (a.knownGap ? it.fails : it)(`${a.source}: ${a.call}`, async () => {
       const driver = new Driver();

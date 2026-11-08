@@ -12,6 +12,7 @@ import { retrieveContext, orderHits, type RetrievalHit } from '../../src/retriev
 import { createLedgerEventClock } from '../../src/retrieval/ledgerEventTime';
 import { engineSearchText } from '../../src/mvp/engine';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { removeTestDir } from '../helpers/removeDb';
 
 /**
  * The time an excerpt carries, and the order retrieval hands it back in, against a real index built from a
@@ -30,11 +31,17 @@ const tmpDirs: string[] = [];
 const ENV_KEYS = ['RENOR_NEWEST_FIRST', 'RENOR_TEMPORAL_RANKING', 'RENOR_TEMPORAL_ASOF', 'RENOR_SESSION_DIVERSITY'];
 const savedEnv = Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]));
 
+const openDbs: Array<ReturnType<typeof openDb>> = [];
 afterEach(() => {
-  for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
-  for (const key of ENV_KEYS) {
-    if (savedEnv[key] === undefined) delete process.env[key];
-    else process.env[key] = savedEnv[key];
+  try {
+    for (const db of openDbs.splice(0)) db.close();
+    for (const d of tmpDirs.splice(0)) removeTestDir(d);
+  } finally {
+    // The environment is restored even when a removal throws, so the next test does not inherit this one's flags.
+    for (const key of ENV_KEYS) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
   }
 });
 
@@ -57,6 +64,7 @@ async function fixture() {
   fs.writeFileSync(path.join(vault, 'Notes', 'budget.md'),
     `---\nsession_date: "${BUDGET_AT}"\n---\n\n# Budget\n\nThe standup budget for the offsite in Lisbon was approved.\n`);
   const db = openDb(path.join(vault, 'index.db'));
+  openDbs.push(db);
   runMigrations(db);
   await replayLedger(db, vault, LEDGER);
   const provider = new EvalHashEmbeddingProvider();

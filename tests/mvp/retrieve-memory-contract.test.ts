@@ -9,6 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * retrieve_memory contract, driven through the real MCP tool over the authenticated
@@ -126,7 +127,7 @@ const SAVED_GUARD = process.env.RENOR_SECRET_GUARD;
 beforeAll(() => { process.env.RENOR_SECRET_GUARD = '0'; });
 afterAll(() => { if (SAVED_GUARD === undefined) delete process.env.RENOR_SECRET_GUARD; else process.env.RENOR_SECRET_GUARD = SAVED_GUARD; });
 
-describe('retrieve_memory contract: a new user with nothing saved yet', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('retrieve_memory contract: a new user with nothing saved yet', () => {
   let ws: Workspace;
   beforeAll(async () => { ws = await startWorkspace(); }, HOOK_TIMEOUT_MS);
   afterAll(async () => { await ws?.close(); });
@@ -144,7 +145,7 @@ describe('retrieve_memory contract: a new user with nothing saved yet', () => {
   });
 });
 
-describe('retrieve_memory contract', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('retrieve_memory contract', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -367,7 +368,7 @@ describe('retrieve_memory contract', () => {
   });
 });
 
-describe('retrieve_memory contract: more subjects than fit in one error', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('retrieve_memory contract: more subjects than fit in one error', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();

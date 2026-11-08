@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { factsFor, resolveLedgerPath } from '../../src/memory/lifecycle';
 import { startWorkspace, restoreWorkspaceEnv, authorize, type Workspace } from '../helpers/mvpWorkspace';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * STANDING TEST (adv-crashsafe-1012, F4). The index is documented as derived and rebuildable from the ledger and the
@@ -72,7 +73,7 @@ const DAMAGES = [
 ] as const;
 
 for (const [name, damage] of DAMAGES) {
-  describe(`an index.db ${name}`, () => {
+  describe.skipIf(HTTP_SERVER_UNSUPPORTED)(`an index.db ${name}`, () => {
     it('is set aside with its bytes kept, rebuilt from the ledger, and the export is byte-identical', async () => {
       ws = await startWorkspace(() => null);
       await ws.call('save_memory', { subject: 'Cardamom canary', predicate: 'value', object: 'cardamom1' });
@@ -101,7 +102,7 @@ for (const [name, damage] of DAMAGES) {
   });
 }
 
-describe('an index.db damaged with pending agent requests in it', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('an index.db damaged with pending agent requests in it', () => {
   it('writes the requests, cursors and known connections back into the rebuilt index', async () => {
     ws = await startWorkspace(() => null);
     const db = ws.service.db;
@@ -141,7 +142,7 @@ describe('an index.db damaged with pending agent requests in it', () => {
   });
 });
 
-describe('an index.db damaged with no ledger to rebuild it from', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('an index.db damaged with no ledger to rebuild it from', () => {
   it('is not moved aside, and start-up refuses', async () => {
     ws = await startWorkspace(() => null);
     await ws.call('index_memory', {});

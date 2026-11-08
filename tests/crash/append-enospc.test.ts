@@ -134,4 +134,41 @@ describe('an append that hits ENOSPC', () => {
     await expect(appendLedgerEvent(vault, DEFAULT_LEDGER_REL, ev('MEM_CCCCCCCCCCCCCC', 'later'))).rejects.toThrow(/could not be cut back/);
     expect(fs.readFileSync(ledger).equals(stuck)).toBe(true);
   });
+
+  it('cuts back through a second handle when the append handle may not truncate (Windows, #1563), and keeps accepting saves', async () => {
+    const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'enospc-append-only-')); dirs.push(vault);
+    const ev = (id: string, object: string) => ({ id, at: new Date().toISOString(), kind: 'store' as const, subject: 'S', predicate: 'p', object, closedEvent: null, source: 'test' });
+    await appendLedgerEvent(vault, DEFAULT_LEDGER_REL, ev('MEM_AAAAAAAAAAAAAA', 'before'));
+    const ledger = resolveLedgerPath(vault, DEFAULT_LEDGER_REL);
+    const before = fs.readFileSync(ledger);
+    // What Windows does: a handle opened O_APPEND carries only the right to append, so ftruncate on it is EPERM. A handle
+    // opened without O_APPEND may truncate.
+    const enospc = () => Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+    const realOpen = fsp.open.bind(fsp);
+    vi.spyOn(fsp, 'open').mockImplementation((async (...args: any[]) => {
+      const handle: any = await (realOpen as any)(...args);
+      const appendOnly = typeof args[1] === 'number' && (args[1] & fs.constants.O_APPEND) !== 0;
+      return new Proxy(handle, {
+        get(target, prop) {
+          if (prop === 'appendFile') {
+            return async (data: any) => {
+              const buf = Buffer.from(data);
+              await target.write(buf.subarray(0, Math.floor(buf.length / 2)));
+              throw enospc();
+            };
+          }
+          if (prop === 'truncate' && appendOnly) {
+            return async () => { throw Object.assign(new Error('EPERM: operation not permitted, ftruncate'), { code: 'EPERM' }); };
+          }
+          const value = Reflect.get(target, prop);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    }) as any);
+    await expect(appendLedgerEvent(vault, DEFAULT_LEDGER_REL, ev('MEM_BBBBBBBBBBBBBB', 'failing '.repeat(30)))).rejects.toThrow(/ENOSPC/);
+    vi.restoreAllMocks();
+    expect(fs.readFileSync(ledger).equals(before)).toBe(true);
+    await appendLedgerEvent(vault, DEFAULT_LEDGER_REL, ev('MEM_CCCCCCCCCCCCCC', 'later'));
+    expect(fs.readFileSync(ledger, 'utf8')).toContain('## MEM_CCCCCCCCCCCCCC');
+  });
 });

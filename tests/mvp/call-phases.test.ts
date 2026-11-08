@@ -10,6 +10,7 @@ import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { createMvpApp } from '../../src/mvp/server';
 import { emitTelemetry, flushTelemetry } from '../../src/mvp/telemetry';
 import { CallPhases, markRetrieved, recordPhase, recordedPhase } from '../../src/callPhases';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Where a read's time went, on the line the engine already writes for each call (callPhases.ts, telemetry.ts `phases`): a
@@ -140,7 +141,7 @@ const ENV_KEYS = [
 const savedEnv = Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]));
 const cleanups: Array<() => void | Promise<void>> = [];
 
-describe('get_context and search_memory', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('get_context and search_memory', () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();

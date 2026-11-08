@@ -40,7 +40,9 @@ export function ledgerNoteMatcher(vault: InventoryVault): IsLedgerNote {
   const stored = ledgerNotePath(vault);
   if (stored === null) return () => false; // a path that cannot name a file names no ledger
   const shown = path.relative(path.resolve(vault.memoryDir), stored);
-  return notePath => notePath === stored || notePath === shown;
+  // Clients are shown vault paths with '/' (mvp/engine.ts clientPath); on Windows the native form differs (#1563).
+  const shownSlashes = shown.split(path.sep).join('/');
+  return notePath => notePath === stored || notePath === shown || notePath === shownSlashes;
 }
 
 /** A chunk of the ledger that no event owns: its header (nothing else comes before the first event). */

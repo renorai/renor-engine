@@ -8,6 +8,7 @@ import { loadMvpConfig } from '../../src/mvp/config';
 import { createMvpApp, type MvpApp } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { startDigestStub } from './stubDigestModel';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Write-time digests through the real MCP server (createMvpApp, the registered tools, JSON serialization) over an
@@ -78,7 +79,7 @@ async function boot(env: Record<string, string>): Promise<{ app: MvpApp; client:
 const searchDescription = async (client: Client) =>
   (await client.listTools()).tools.find(tool => tool.name === 'search_memory')!.description ?? '';
 
-describe('write-time digests through the MCP server', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('write-time digests through the MCP server', () => {
   it('off by default: no digests object in memory_status, no digest sentence in the tool description, no worker', async () => {
     const { app, client, call } = await boot({});
     expect(app.digests).toBeNull();

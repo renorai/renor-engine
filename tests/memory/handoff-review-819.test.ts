@@ -20,6 +20,7 @@ import { HANDOFF_TTL_MS, normaliseRepoKey, readHandoffNote, startHandoffSweep, s
 import { NOT_EXPORTED, notExported } from '../../src/mvp/exportAll';
 import { describeSalvage, restoreIndexTables, salvageIndexTables } from '../../src/db/indexSalvage';
 import { named, restoreEnv, startWorkspace } from '../helpers/hiveHarness';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 const NOW = new Date('2026-10-22T09:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -29,8 +30,10 @@ function tmp(): string {
   dirs.push(dir);
   return dir;
 }
+const handles: Array<ReturnType<typeof openDb>> = [];
 function db(file = path.join(tmp(), 'index.db')) {
   const database = openDb(file);
+  handles.push(database);
   runMigrations(database);
   return { database, file };
 }
@@ -38,7 +41,10 @@ function db(file = path.join(tmp(), 'index.db')) {
 function onDisk(file: string, marker: string): string[] {
   return [file, `${file}-wal`].filter(f => fs.existsSync(f) && fs.readFileSync(f).includes(marker)).map(f => path.basename(f));
 }
-afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => {
+  for (const handle of handles.splice(0)) handle.close();
+  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
 afterAll(restoreEnv);
 
 describe('819-1: one key per repository, never shared by two', () => {
@@ -119,7 +125,7 @@ describe('819-2: with the switch off, the database is untouched', () => {
     expect(source).not.toMatch(/handoff/i);
   });
 
-  it('a hosted workspace run with the switch off never gets the table, through saves, reads and an export', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a hosted workspace run with the switch off never gets the table, through saves, reads and an export', async () => {
     delete process.env.RENOR_HANDOFF_NOTE;
     const ws = await startWorkspace();
     try {
@@ -163,7 +169,7 @@ describe('819-3: with the switch off, export_memory\'s manifest is unchanged', (
     expect(notExported({ RENOR_HANDOFF_NOTE: '1' }).map(e => e.kind)).toEqual([...NOT_EXPORTED.map(e => e.kind), 'handoffNotes']);
   });
 
-  it('the hosted export reply carries the same notExported as without this change', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('the hosted export reply carries the same notExported as without this change', async () => {
     delete process.env.RENOR_HANDOFF_NOTE;
     const ws = await startWorkspace();
     try {
@@ -214,7 +220,7 @@ describe('819-4: expiry is a delete, on a schedule, that a clock rollback cannot
     expect(onDisk(file, 'zqmarkerfuturezq')).toEqual([]);
   });
 
-  it('a hosted server with the switch on sweeps an expired note at start, with no handoff call', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('a hosted server with the switch on sweeps an expired note at start, with no handoff call', async () => {
     const memoryDir = tmp();
     const dbPath = path.join(memoryDir, '.memory-index', 'index.db');
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });

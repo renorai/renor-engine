@@ -10,6 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { engineRememberNote } from '../../src/mvp/engine';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * First-week scout, F5: retire_memory takes an id that only memory_map gave, so forgetting one note cost an agent the
@@ -137,7 +138,7 @@ function filler(days: number, perDay: number): Array<{ text: string; date: strin
 
 const LANDLORD = 'My landlord, Mr. Duarte, wants the rent paid by the 5th of each month via PIX.';
 
-describe('forgetting one memory without the whole map (first-week scout F5)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('forgetting one memory without the whole map (first-week scout F5)', () => {
   it('finds the memory by its words in a small answer, retires it, finds it again among the retired, and restores it', async () => {
     const ws = await startWorkspace({}, [...filler(6, 8), { date: '2026-10-04', text: LANDLORD }]);
 

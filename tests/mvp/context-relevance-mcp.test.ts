@@ -12,6 +12,7 @@ import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { dailyDirForScope, normalizeScope } from '../../src/mvp/scope';
 import { CONTEXT_BUDGET_KEEPS_NEWEST, CONTEXT_RELEVANCE_KEEPS_MATCH, NO_STRONG_MATCH, SEARCH_RELEVANCE_GUIDANCE } from '../../src/mvp/contextRelevance';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * The relevance signal as an agent meets it: over the authenticated MCP surface.
@@ -154,7 +155,7 @@ async function saveEditorFact(client: Client): Promise<void> {
   }
 }
 
-describe('get_context relevance over MCP', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('get_context relevance over MCP', () => {
   it('leaves the tool description and instructions untouched, and the response without a relevance field, by default', async () => {
     const client = await start({});
     const tools = (await client.listTools()).tools;

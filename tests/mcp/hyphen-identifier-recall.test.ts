@@ -11,6 +11,7 @@ import { indexVault } from '../../src/indexer/pipeline';
 import { DEFAULT_LEDGER_REL } from '../../src/memory/lifecycle';
 import { tmpPath } from '../helpers/tmpPath';
 import { hitList } from '../helpers/hitList';
+import { removeDb, removeTestDir } from '../helpers/removeDb';
 
 /**
  * Regression: an agent searching memory by a hyphenated identifier.
@@ -25,9 +26,11 @@ import { hitList } from '../helpers/hitList';
 
 const DB = tmpPath('test-hyphen-identifier-recall.db');
 const vaults: string[] = [];
+const openDbs: Array<ReturnType<typeof openDb>> = [];
 afterEach(() => {
-  if (fs.existsSync(DB)) fs.unlinkSync(DB);
-  for (const v of vaults.splice(0)) fs.rmSync(v, { recursive: true, force: true });
+  for (const db of openDbs.splice(0)) db.close();
+  removeDb(DB);
+  for (const v of vaults.splice(0)) removeTestDir(v);
 });
 
 /** A vault written to disk and indexed through the real pipeline, as a user would. */
@@ -40,6 +43,7 @@ async function indexedVault(files: Record<string, string>) {
     fs.writeFileSync(p, body);
   }
   const db = openDb(DB);
+  openDbs.push(db);
   runMigrations(db);
   await indexVault(db, vaultPath, {}, 1);
   const vectorIndex = new VectorIndex(db, 4);

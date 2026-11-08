@@ -10,6 +10,7 @@ import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { openDb } from '../../src/db/client';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import { authorize, freePort, restoreWorkspaceEnv } from '../helpers/mvpWorkspace';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A workspace folder that is moved or restored from a backup into another directory keeps working, and each note is
@@ -93,7 +94,7 @@ function hitsForNote(reply: { hits: Array<{ notePath?: string; text?: string }> 
   return reply.hits.filter(hit => (hit.text ?? '').includes('mango juice stand'));
 }
 
-describe('a workspace folder moved to another directory', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace folder moved to another directory', () => {
   it('serves its note once, from the new folder, and nothing from the old one', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-moved-'));
     roots.push(root);

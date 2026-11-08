@@ -14,6 +14,7 @@ import type { EmbeddingProvider } from '../../src/embeddings/types';
 import { seedNewerFacts } from '../helpers/seedFacts';
 import { startMvpServiceOnFreePort } from '../helpers/mvpPort';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A saved fact must be findable at once, before anyone runs `index_memory`.
@@ -161,7 +162,7 @@ const factHits = (hits: Array<{ reason: string; text: string }>) => hits.filter(
 
 const POSTGRES = { subject: 'production database', predicate: 'engine_and_extension', object: 'Postgres 16 with pgvector' };
 
-describe('a saved fact is found before any index_memory (real MCP)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a saved fact is found before any index_memory (real MCP)', () => {
   it('search_text finds it by value, subject, predicate or any words of it, and nothing else', async () => {
     const s = await boot(workspace());
     const saved = await save(s, POSTGRES.subject, POSTGRES.predicate, POSTGRES.object);
@@ -260,7 +261,7 @@ describe('a saved fact is found before any index_memory (real MCP)', () => {
   });
 });
 
-describe('a table of ten thousand newer facts (real MCP)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a table of ten thousand newer facts (real MCP)', () => {
   it('finds a fact saved before all of them, and one saved after, through all three tools', async () => {
     const s = await boot(workspace());
     const needle = await save(s, 'Zürich-stripe-spec', 'owner', '東京 Marta Quasar');
@@ -308,7 +309,7 @@ describe('a table of ten thousand newer facts (real MCP)', () => {
   }, 60_000);
 });
 
-describe('a corrected fact is never returned as current', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a corrected fact is never returned as current', () => {
   const ask = async (s: Session) => ({
     text: await s.call('search_text', { query: 'MySQL' }),
     postgres: await s.call('search_text', { query: 'Postgres' }),
@@ -353,7 +354,7 @@ describe('a corrected fact is never returned as current', () => {
   });
 });
 
-describe('scoped reads do not widen', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('scoped reads do not widen', () => {
   const TOKENS = { GLOBALNET: 'global', ALPHACODE: 'scope:alpha', BETACODE: 'project:beta' } as const;
   // [what the caller passes, the scope it means]; undefined means every scope.
   const SCOPES: Array<[string | undefined, string | undefined]> = [
@@ -403,7 +404,7 @@ describe('scoped reads do not widen', () => {
   });
 });
 
-describe('index.stale says when saved facts are not in the semantic index', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('index.stale says when saved facts are not in the semantic index', () => {
   it('appears after a save, goes away after index_memory, and returns with the next save', async () => {
     const s = await boot(workspace());
     const stale = async () => {
@@ -439,7 +440,7 @@ describe('index.stale says when saved facts are not in the semantic index', () =
   });
 });
 
-describe('a workspace with no saved facts is untouched', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace with no saved facts is untouched', () => {
   it('answers exactly what the index alone answers, with no new fields', async () => {
     const dir = workspace();
     fs.mkdirSync(path.join(dir, 'Notes'), { recursive: true });
@@ -468,7 +469,7 @@ describe('a workspace with no saved facts is untouched', () => {
   });
 });
 
-describe('saving a fact with save_memory costs nothing in the index', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('saving a fact with save_memory costs nothing in the index', () => {
   const count = (s: Session, table: string) => (s.db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }).c;
   // The first lifecycle write adds the synthetic `_mcp_` note that owns lifecycle entities; it is not a file.
   const notes = (s: Session) => (s.db.prepare(`SELECT COUNT(*) AS c FROM notes WHERE path != '_mcp_'`).get() as { c: number }).c;
@@ -501,7 +502,7 @@ describe('saving a fact with save_memory costs nothing in the index', () => {
  * never sees it, and it waited for index_memory: `search_text("billing webhook")` answered `[]` right after the save.
  * It is indexed the way a note-mode remember indexes its line, by the same pass, and its receipt says so the same way.
  */
-describe('a line saved with remember_note is found before any index_memory', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a line saved with remember_note is found before any index_memory', () => {
   const BILLING = 'The billing webhook retries five times before it pages anyone.';
   const said = (hits: Array<{ text: string }>, words: string) => hits.filter(h => h.text.includes(words));
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 1.4.5 - 2026-11-08
+
+### Added
+
+- `renor-engine doctor` gives self-hosters a read-only health report for their folder, index, ledger, embeddings and client configuration, with secrets redacted (#1573).
+
+### Fixed
+
+- Windows: close databases before deleting their files, normalize displayed and scoped paths, and fix SQL errors; confined writes also refuse links safely where `O_NOFOLLOW` is unavailable (#1574, fixes #1563).
+
 ## 1.4.4 - 2026-11-07
 
 ### Fixed

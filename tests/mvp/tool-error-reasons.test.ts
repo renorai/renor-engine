@@ -12,6 +12,7 @@ import { TOOL_ERROR_REASONS, isToolErrorReason, refusal, refusalReason } from '.
 import { folderLabel } from '../../src/importing/hosted';
 import { normalizeScope } from '../../src/mvp/scope';
 import { LifecycleInputError } from '../../src/memory/lifecycle';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Why a refused MCP tool call failed, as a code next to `error_kind` on the `tool_use` event.
@@ -120,7 +121,7 @@ afterAll(async () => {
 
 afterEach(() => { emitted = []; });
 
-describe('every refusal path logs its reason code', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('every refusal path logs its reason code', () => {
   it('remember with part of a fact triple: invalid_argument', async () => {
     await refusedWith('remember', { statement: 'Atlas ships on Friday', subject: 'Atlas', predicate: 'ships_on' }, 'invalid_argument');
   });
@@ -298,7 +299,7 @@ describe('every refusal path logs its reason code', () => {
   });
 });
 
-describe('the codes are a closed set, and they carry nothing of the user\'s', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the codes are a closed set, and they carry nothing of the user\'s', () => {
   it('every code a refusal may log is a literal of the closed set', () => {
     // The mapping the search lane answers with, including the three states a keyword-only test cannot force.
     expect(SEARCH_REFUSAL_REASONS).toEqual({
@@ -363,7 +364,7 @@ describe('the codes are a closed set, and they carry nothing of the user\'s', ()
   }, HOOK_TIMEOUT_MS);
 });
 
-describe('the closed set itself', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the closed set itself', () => {
   it('is short, snake_case and unique, and holds the codes every refusal path uses', () => {
     expect(new Set(TOOL_ERROR_REASONS).size).toBe(TOOL_ERROR_REASONS.length);
     for (const code of TOOL_ERROR_REASONS) expect(code).toMatch(/^[a-z][a-z0-9_]{2,31}$/);
@@ -375,7 +376,7 @@ describe('the closed set itself', () => {
   });
 });
 
-describe('a refusal is the same plain Error it always was, with the code out of band', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a refusal is the same plain Error it always was, with the code out of band', () => {
   function caught(fn: () => unknown): Error {
     try { fn(); } catch (err) { return err as Error; }
     throw new Error('the call did not refuse');

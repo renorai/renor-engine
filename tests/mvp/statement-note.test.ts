@@ -13,6 +13,7 @@ import { MAX_STATEMENT_LENGTH } from '../../src/memory/limits';
 import { parseNote } from '../../src/indexer/parser';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * `remember` without subject/predicate/object saves the statement as a note in the day's file, and it
@@ -129,7 +130,7 @@ const PS = cu(0x2029); // PARAGRAPH SEPARATOR
 
 type ToolResult = { isError?: boolean; content: { text: string }[] };
 
-describe('remember keeps a note-mode statement whole, and reads it back after a restart', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('remember keeps a note-mode statement whole, and reads it back after a restart', () => {
   /** `seed` runs on the memory directory before the service starts: a workspace that already holds notes. */
   async function boot(seed?: (memoryDir: string) => void) {
     process.env.RENOR_NEWEST_FIRST = '0';

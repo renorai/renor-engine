@@ -10,6 +10,7 @@ import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { MVP_MCP_PATH } from '../../src/mvp/server';
 import { hiveNameHeader } from '../../src/memory/hiveNameHeader.cjs';
 import { startMvpServiceOnFreePort } from '../helpers/mvpPort';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * The origin of an entry over the real hosted tools. A Renor user found entries saved with file-path garbage in their
@@ -130,7 +131,7 @@ const ledgerSources = (ledger: string) => [...ledger.matchAll(/^- source: (.*)$/
 const mapSources = async (ws: Workspace) =>
   Object.fromEntries(((await ws.call('memory_map')).body.memories as Array<{ title: string; source: string | null }>).map((m) => [m.title, m.source]));
 
-describe('a path sent as the source is stored as the name it ends in, by every tool that takes one', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a path sent as the source is stored as the name it ends in, by every tool that takes one', () => {
   it('remember (a note), remember_note, remember (a fact) and save_memory', async () => {
     const ws = await startWorkspace();
     const BOARD = '/home/ana/atlas/BOARD.md';
@@ -209,7 +210,7 @@ describe('a path sent as the source is stored as the name it ends in, by every t
   });
 });
 
-describe('a write that names no one is saved by the client that made it', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a write that names no one is saved by the client that made it', () => {
   it('uses the connection key\'s name ahead of the User-Agent, and a read shows that author', async () => {
     const ws = await startWorkspace({ userAgent: CLAUDE_CODE, agent: 'firstmate' });
     await ws.call('save_memory', { subject: 'Atlas', predicate: 'database', object: 'SQLite' });
@@ -264,7 +265,7 @@ describe('a write that names no one is saved by the client that made it', () => 
   });
 });
 
-describe('a caller-supplied source cannot impersonate a reserved identity', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a caller-supplied source cannot impersonate a reserved identity', () => {
   it('refuses reserved names, stored-name aliases, and every non-ASCII lookalike through every write tool', async () => {
     const ws = await startWorkspace({ userAgent: CLAUDE_CODE });
     const reserved = [
@@ -313,7 +314,7 @@ describe('a caller-supplied source cannot impersonate a reserved identity', () =
   });
 });
 
-describe('a URL with credentials leaves them in no file, by every tool that takes a source', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a URL with credentials leaves them in no file, by every tool that takes a source', () => {
   // Independent review of PR 388, finding P2, over the real hosted tools.
   it('a URL with no host names no one (the client is saved), a URL with a host is its host, and the password is nowhere', async () => {
     const ws = await startWorkspace({ userAgent: CLAUDE_CODE });
@@ -334,7 +335,7 @@ describe('a URL with credentials leaves them in no file, by every tool that take
   });
 });
 
-describe('a URL a browser reads with one separator or none leaves its credentials in no file either', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a URL a browser reads with one separator or none leaves its credentials in no file either', () => {
   // Independent review of PR 388, second round (P2), over the real hosted tools: `https:/user:pass@example.com` and
   // `https:user:pass@example.com` parsed as a path or a plain name, so the whole userinfo reached the ledger.
   it('is its host, a URL with no host names no one, and the password is nowhere', async () => {
@@ -354,7 +355,7 @@ describe('a URL a browser reads with one separator or none leaves its credential
   });
 });
 
-describe('a control character in a caller-supplied source is refused by every write tool', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a control character in a caller-supplied source is refused by every write tool', () => {
   // The previous cleanup dropped controls, but a writer name must now be validated before cleanup so hidden characters
   // cannot turn an untrusted spelling into a trusted-looking identity.
   it('writes nothing and returns the plain-ASCII refusal', async () => {
@@ -374,7 +375,7 @@ describe('a control character in a caller-supplied source is refused by every wr
   });
 });
 
-describe('entries and events saved before are left exactly as they are', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('entries and events saved before are left exactly as they are', () => {
   // The shapes the old writers made: a note header with a path run together, and a ledger event with the path whole.
   const NOTE = '---\nkind: note\nupdated: 2026-10-05\n---\n# 2026-10-05\n\n- [19:02:11] (homeanaatlasBOARDmd) saved the T8 root cause\n- [19:05:00] (mcpremember) an older note';
   const EVENT = [
@@ -408,7 +409,7 @@ describe('entries and events saved before are left exactly as they are', () => {
   });
 });
 
-describe('a reserved product in the User-Agent never becomes the writer name', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a reserved product in the User-Agent never becomes the writer name', () => {
   // PR 622 review round 3: the User-Agent is the client's own text and was stored unchecked, so `system/1.0` saved as `system`.
   // A reserved product now falls back to each tool's default, the same as a client with no usable name; it is never refused.
   const RESERVED_USER_AGENTS = ['system/1.0', 'Admin', 'tool', 'owner/2 (x)', 'https:system', 'system:x/1'];
@@ -457,7 +458,7 @@ describe('a reserved product in the User-Agent never becomes the writer name', (
   });
 });
 
-describe('a trusted connection name cannot claim a reserved identity either', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a trusted connection name cannot claim a reserved identity either', () => {
   // Review of PR 622, open question 1. The reserved-identity rule checked the typed source and the User-Agent, but the name a
   // write is stored under first comes from the connection: the gateway's x-renor-agent (from the key's label) behind the
   // gateway, the OAuth client's name on self-hosted. Such a name that is a reserved identity now reads as unnamed.
@@ -476,7 +477,7 @@ describe('a trusted connection name cannot claim a reserved identity either', ()
   });
 });
 
-describe('the import prefix is reserved for imports: no caller records a save under it', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the import prefix is reserved for imports: no caller records a save under it', () => {
   // Review of PR 622, open question 1: an `import:` source is how a read tells an imported fact (marked untrusted) from an
   // agent's save, and `import` is not one of the reserved identities a typed source is refused for. Synthetic names only.
   const IMPORT_NAME = 'import:markdown';
@@ -514,7 +515,7 @@ describe('the import prefix is reserved for imports: no caller records a save un
   });
 });
 
-describe('injection run 6, finding 1: a reserved source in a stored fact reads as an untrusted claim', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('injection run 6, finding 1: a reserved source in a stored fact reads as an untrusted claim', () => {
   // A ledger event saved before the reserved-identity rule (PR 622), or written into the ledger by hand, still names
   // `system`. The read keeps the stored source and marks it, as it marks an import's.
   const LEDGER_HEAD = '---\ntype: memory-ledger\ntitle: Memory Events Ledger\n---\n\n# Memory Events Ledger\n\nAppend-only durable record of memory events. Replayed on rebuild.\n';

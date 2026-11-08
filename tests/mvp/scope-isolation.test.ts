@@ -29,6 +29,11 @@ const PATHS = [
   // Another case is another folder to the JS rule: SQLite's LIKE folds ASCII case, so the SQL rule may not use it.
   'memory/scopes/alpha/Notes/Acme.md',
   'MEMORY/SCOPES/alpha',
+  // Paths stored on Windows are separated by backslashes; the JS rule reads them as '/', and so must the SQL rule (#1563).
+  'Memory\\Scopes\\alpha\\Notes\\Acme.md',
+  'C:\\vault\\Memory\\Scopes\\beta\\Notes\\Globex.md',
+  'C:\\vault\\Memory\\Daily\\2026-10-02.md',
+  'Memory\\Scopes\\alpha',
 ];
 
 const SCOPES = ['global', 'scope:alpha', 'scope:beta', 'project:alpha'] as const;

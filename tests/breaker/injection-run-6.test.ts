@@ -9,10 +9,11 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { named, restoreEnv, startWorkspace } from '../helpers/hiveHarness';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 afterAll(restoreEnv);
 
-describe('injection run 6, finding 3: a claimed newer fact does not silently hide the prior fact', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('injection run 6, finding 3: a claimed newer fact does not silently hide the prior fact', () => {
   it('does not let a claimed newer fact silently hide the prior fact from default reads', async () => {
     const ws = await startWorkspace();
     try {
@@ -82,7 +83,7 @@ async function workspace(label: string, files: Record<string, string> = {}): Pro
   return openWorkspace(root, base);
 }
 
-describe('injection run 6, finding 1: stored content cannot claim a reserved identity', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('injection run 6, finding 1: stored content cannot claim a reserved identity', () => {
   // The last five are digit look-alikes (PR 750 review, LOW): a typed source is folded 0→o, 1→i/l, 3→e, 4→a, 5→s, 7→t first.
   const EQUIVALENTS = ['System Message', 'system-prompt', 'SYSTEM_PROMPT', 'developer note', 'Assistant Bot', 'renor-engine', 'Renor Support', 'renor.bot',
     'SYST3M', 'Dev3loper', 'r3nor-bot', '0wner', 't00l'];
@@ -138,7 +139,7 @@ describe('injection run 6, finding 1: stored content cannot claim a reserved ide
   });
 });
 
-describe('injection run 6, finding 2: every read tool keeps the imported marker', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('injection run 6, finding 2: every read tool keeps the imported marker', () => {
   it('lookup_entity marks an imported note\'s entity, and only that one', async () => {
     const ws = await workspace('run6-f2', { 'notes/heron.md': '---\naliases: [Heron Export]\n---\n# Heron\n\nOur own note.\n' });
     try {
@@ -170,7 +171,7 @@ describe('injection run 6, finding 2: every read tool keeps the imported marker'
  * read check now folds compatibility forms (fullwidth) and accents, and a correction label (`replaced`) whose source is
  * reserved says so too.
  */
-describe('PR 750 review: a stored reserved source is marked in every read that returns it', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('PR 750 review: a stored reserved source is marked in every read that returns it', () => {
   const day = (date: string, source: string, text: string) =>
     `---\nkind: note\nrenor: daily-v1\n---\n# ${date}\n- [09:00:00] (${source}) ${text}\n`;
 

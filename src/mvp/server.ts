@@ -185,6 +185,11 @@ export function createMvpApp(config: MvpConfig, engineOverride?: EmbeddingProvid
   // opens through openDb, so a damaged index that is set aside and rebuilt is created owner-only as well.
   ensureOwnerOnlyMemoryDir(config.memoryDir);
   ensureOwnerOnlyFile(config.dbPath);
+  // The OAuth client store is checked before the index is opened: a store that refuses the start (missing uid on native
+  // Windows, unsafe modes, a corrupt registry) must stop it before migrations run, background work starts or a database
+  // handle is held. Built later, a refused start migrated the index and left it open (Windows then cannot remove or move
+  // the folder until the process exits, #1563).
+  const provider = new OwnerOAuthProvider(config);
   const db = openIndexDb(config.dbPath, resolveLedgerPath(config.memoryDir, config.ledgerRelPath));
   // Expired handoff notes are deleted on a timer, not only when one is read (memory/handoff.ts). Off: nothing runs.
   const stopHandoffSweep = handoffNoteEnabled() ? startHandoffSweep(db) : null;
@@ -205,7 +210,6 @@ export function createMvpApp(config: MvpConfig, engineOverride?: EmbeddingProvid
   // What an earlier process could not embed in time (its service was down when it was saved, or it exited first) is
   // finished now, in the background, once the service answers.
   if (hasIndexWorkToFinish(db, engine)) engineFinishIndexInBackground(db, config, engine);
-  const provider = new OwnerOAuthProvider(config);
   const idle = config.idleExitMs ? new IdleMonitor(config.idleExitMs) : null;
   // What a release asks before it restarts this engine (GET /internal/activity): the work a restart would cut and when the
   // last of it ended. It tracks the same work the idle monitor does and passes it on, so every place that held the engine

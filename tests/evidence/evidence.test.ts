@@ -10,6 +10,7 @@ import {
   loadEvidenceSessionsFromVault,
 } from '../../src/evidence/secondPass';
 import { evidenceGate, hasEvidenceIntent, resolveEvidenceMode } from '../../src/evidence/gate';
+import { removeTestDir } from '../helpers/removeDb';
 import {
   attachSearchEvidence,
   evidenceItemsToFactRows,
@@ -23,8 +24,16 @@ function tmpCachePath(): string {
   tmpDirs.push(dir);
   return path.join(dir, 'evidence-cache.db');
 }
+const openCaches: EvidenceCache[] = [];
+/** A cache in a new temporary directory, closed by afterEach before its directory is removed. */
+function openCache(): EvidenceCache {
+  const cache = new EvidenceCache(tmpCachePath());
+  openCaches.push(cache);
+  return cache;
+}
 afterEach(() => {
-  for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  for (const cache of openCaches.splice(0)) cache.close();
+  for (const d of tmpDirs.splice(0)) removeTestDir(d);
 });
 
 const ITEMS_JSON = JSON.stringify({ items: [{ item: 'camping trip', action: 'went on', amount: '3 days', date: '2023/05/29' }] });
@@ -115,7 +124,7 @@ describe('evidence parsing (fail-fast)', () => {
 
 describe('content-addressed cache', () => {
   it('roundtrips, ignores duplicate puts, and counts hits', () => {
-    const cache = new EvidenceCache(tmpCachePath());
+    const cache = openCache();
     const key = EvidenceCache.computeKey('gemma4:31b', 'prompt');
     expect(cache.get(key)).toBeNull();
     cache.put(key, {
@@ -158,7 +167,7 @@ describe('content-addressed cache', () => {
 describe('EvidenceExtractor', () => {
   it('calls the model once on a miss, then replays from cache with zero calls', async () => {
     const chat = fakeChat();
-    const extractor = new EvidenceExtractor({ chat, cache: new EvidenceCache(tmpCachePath()) });
+    const extractor = new EvidenceExtractor({ chat, cache: openCache() });
     const sessions = [{ stem: '/v/a.md', date: '2023/05/29', text: 'we went camping for 3 days' }];
 
     const first = await extractor.extract('how many days did we camp?', sessions);
@@ -175,7 +184,7 @@ describe('EvidenceExtractor', () => {
 
   it('a session content change forces a fresh call', async () => {
     const chat = fakeChat();
-    const cache = new EvidenceCache(tmpCachePath());
+    const cache = openCache();
     const extractor = new EvidenceExtractor({ chat, cache });
     await extractor.extract('q', [{ stem: '/v/a.md', text: 'v1' }]);
     await extractor.extract('q', [{ stem: '/v/a.md', text: 'v2' }]);
@@ -184,7 +193,7 @@ describe('EvidenceExtractor', () => {
 
   it('does not cache a malformed response', async () => {
     const chat = fakeChat('{"items": [}]');
-    const cache = new EvidenceCache(tmpCachePath());
+    const cache = openCache();
     const extractor = new EvidenceExtractor({ chat, cache });
     await expect(extractor.extract('q', [{ stem: '/v/a.md', text: 't' }])).rejects.toThrow(/malformed JSON/);
     expect(cache.stats().entries).toBe(0);
@@ -259,7 +268,7 @@ describe('search-path evidence attach', () => {
     const note = path.join(vault, 'a.md');
     fs.writeFileSync(note, '# A\n\nwe went camping for 3 days\nFULL_NOTE_ONLY_MARKER');
     const chat = fakeChat();
-    const extractor = new EvidenceExtractor({ chat, cache: new EvidenceCache(tmpCachePath()) });
+    const extractor = new EvidenceExtractor({ chat, cache: openCache() });
     const hits = [{
       notePath: note,
       chunkId: 1,

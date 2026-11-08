@@ -12,6 +12,7 @@ import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { DEFAULT_LEDGER_REL } from '../../src/memory/lifecycle';
 import { KEY_SHAPES, Rng, password } from '../../scripts/eval/secret-guard/plantedSet';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * RENOR_SECRET_GUARD through the real MCP tools (`remember` in both modes, `save_memory`, `remember_note`) over the
@@ -141,7 +142,7 @@ const refusal = (res: Result): string => {
 /** Enough of a secret, from its random end, to find it in anything that was said back or stored. */
 const tail = (secret: string) => secret.slice(-14);
 
-describe('RENOR_SECRET_GUARD through the MCP tools', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('RENOR_SECRET_GUARD through the MCP tools', () => {
   let ws: Awaited<ReturnType<typeof startWorkspace>>;
   const r = new Rng(20261003);
   const key = KEY_SHAPES.openai_proj(r);

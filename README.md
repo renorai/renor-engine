@@ -63,6 +63,8 @@ Trust the folder in Grok, then restart Grok. To check it: ask Grok to save a rea
 npx renor-engine status
 ```
 
+Something wrong? `npx renor-engine doctor` is a read-only health report (folder, index, ledger, embeddings, client configs) that is safe to paste into a support request; secrets are redacted. See [troubleshooting](docs/self-hosting.md#troubleshooting).
+
 Then tell your agent a real decision ("remember that the orders service uses Postgres 16"), start a new session, and ask about it.
 
 Running it on a server or with Docker: [docs/self-hosting.md](docs/self-hosting.md).
@@ -103,9 +105,7 @@ Self-hosted, the local tools are `search`, `remember_fact` and `note`; agents ma
 | LongMemEval-S | **94.4%** (472/500) | Default settings |
 | LoCoMo (categories 1 to 4) | **96.7%** (1,489/1,540) | Deep search |
 | BEAM 128K / 1M / 10M | **76.2 / 74.7 / 60.2** | Deep search, score out of 100 |
-| ConvoMem | **88.4%** (191/216) | Default search, 100 conversations per memory |
-
-Claude Opus 5.5 answers LongMemEval, LoCoMo and BEAM; DeepSeek V4.1 Flash answers ConvoMem (a research run). One run each, Oct 2026. Deep search is top-K 50 with a 4,000-token budget (`RENOR_TOPK_SCALES_BUDGET=1`). Judges and methods for every run: [renor.cloud/research](https://renor.cloud/research).
+Claude Opus 5.5 answers LongMemEval, LoCoMo and BEAM. One run each, Oct 2026. Deep search is top-K 50 with a 4,000-token budget (`RENOR_TOPK_SCALES_BUDGET=1`). Judges and methods for every run: [renor.cloud/research](https://renor.cloud/research).
 
 ## Build from source
 

@@ -20,6 +20,7 @@ import {
   UNFINISHED_FILES,
   UNFINISHED_RETRY_MS,
 } from '../../src/mvp/engine';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * What an agent is told while the embedding provider is down, and after it is back (first-week scout, finding F3).
@@ -185,7 +186,7 @@ const SAVED_GUARD = process.env.RENOR_SECRET_GUARD;
 beforeAll(() => { process.env.RENOR_SECRET_GUARD = '0'; });
 afterAll(() => { if (SAVED_GUARD === undefined) delete process.env.RENOR_SECRET_GUARD; else process.env.RENOR_SECRET_GUARD = SAVED_GUARD; });
 
-describe('while the embedding provider is down', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('while the embedding provider is down', () => {
   it('get_context answers with the saved facts and keyword search, says semantic search failed and why, and calls the provider once', async () => {
     process.env.RENOR_CONTEXT_RELEVANCE_MIN = '0.5'; // armed: an outage must not read as "nothing on file matches"
     const { ws, provider } = await workspaceInOutage();
@@ -274,7 +275,7 @@ describe('while the embedding provider is down', () => {
   }, TEST_TIMEOUT_MS);
 });
 
-describe('after the embedding provider is back', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('after the embedding provider is back', () => {
   it('the first search finds by meaning what was saved during the outage, before any other save', async () => {
     const { ws, provider } = await workspaceInOutage();
     await ws.call('remember', { statement: NOTE });
@@ -302,7 +303,7 @@ describe('after the embedding provider is back', () => {
   }, TEST_TIMEOUT_MS);
 });
 
-describe('a workspace whose every save failed to embed (a provider down or misconfigured from the start)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace whose every save failed to embed (a provider down or misconfigured from the start)', () => {
   it('says semantic search failed rather than that nothing matched, and the first search after the provider is back finds them', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const provider = new FlakyProvider();

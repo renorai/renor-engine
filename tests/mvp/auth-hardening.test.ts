@@ -7,6 +7,7 @@ import request from 'supertest';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { createMvpApp, type MvpApp } from '../../src/mvp/server';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Auth hardening regressions (Kimi auth review AUTH-B1/B2/B3 + H1/H2/H4).
@@ -103,7 +104,7 @@ async function fullLogin(app: Express, clientId: string, redirectUri = LOOPBACK_
   return { loginStatus: login.status, code, verifier };
 }
 
-describe('AUTH-B1: DCR deny-by-default, tickets, consent, cross-origin', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('AUTH-B1: DCR deny-by-default, tickets, consent, cross-origin', () => {
   it('deny-by-default: with no allowlist configured, every DCR registration is rejected', async () => {
     const { app } = boot(); // MVP_ALLOWED_CALLBACK_URIS unset
     const res = await registerClient(app, LOOPBACK_CB);
@@ -290,7 +291,7 @@ describe('AUTH-B1: DCR deny-by-default, tickets, consent, cross-origin', () => {
   });
 });
 
-describe('AUTH-B2: export never masks read errors as empty exports', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('AUTH-B2: export never masks read errors as empty exports', () => {
   async function exportViaMcp(app: Express, accessToken: string) {
     const res = await request(app).post('/mcp')
       .set('Authorization', `Bearer ${accessToken}`)
@@ -343,7 +344,7 @@ describe('AUTH-B2: export never masks read errors as empty exports', () => {
   });
 });
 
-describe('AUTH-B3: bounded failed-login limiter with recovery, metadata-only audit', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('AUTH-B3: bounded failed-login limiter with recovery, metadata-only audit', () => {
   it('lockout after bounded failures; correct credentials also refused while locked; recovery works', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line: unknown) => { logs.push(String(line)); });
@@ -386,7 +387,7 @@ describe('AUTH-B3: bounded failed-login limiter with recovery, metadata-only aud
   });
 });
 
-describe('AUTH-H1/H2: refresh expiry and bounded DCR store', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('AUTH-H1/H2: refresh expiry and bounded DCR store', () => {
   it('expired refresh tokens are refused and deleted (rotation still single-use)', async () => {
     const { app, mvp } = boot({ MVP_ALLOWED_CALLBACK_URIS: LOOPBACK_CB });
     const reg = await registerClient(app);
@@ -432,7 +433,7 @@ describe('AUTH-H1/H2: refresh expiry and bounded DCR store', () => {
   });
 });
 
-describe('existing tools keep working after a valid hardened OAuth flow', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('existing tools keep working after a valid hardened OAuth flow', () => {
   it('full ticket/consent dance still yields working save/retrieve over MCP', async () => {
     const { app } = boot({ MVP_ALLOWED_CALLBACK_URIS: LOOPBACK_CB });
     const reg = await registerClient(app);

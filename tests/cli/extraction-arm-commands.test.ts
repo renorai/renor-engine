@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { execFile } from 'child_process';
+import { execFile, type ChildProcess } from 'child_process';
 import { execFileTree, killTree } from '../helpers/childTree';
 import fs from 'fs';
 import net from 'net';
@@ -8,6 +8,7 @@ import path from 'path';
 import { openExtractorClient, resolveExtractorClientConfig } from '../../src/extraction/extractionClient';
 import { buildWritePathExtractors } from '../../src/cli-extractors';
 import { FACTS_MODEL } from '../../src/extraction/typedFacts';
+import { removeTestDir } from '../helpers/removeDb';
 
 /**
  * An armed structured-row flag with no extractor provider must fail the
@@ -81,8 +82,14 @@ function runCli(
   });
 }
 
+/** Resolves once `child` has exited (at once if it already has). */
+function exited(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => child.once('exit', () => resolve()));
+}
+
 afterAll(() => {
-  for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of tmpDirs.splice(0)) removeTestDir(dir);
 });
 
 const legacyRequests: Array<{ apiKey: string; body: { model?: string } }> = [];
@@ -420,6 +427,8 @@ describe('structured-row arm without a provider', () => {
       await new Promise((resolve) => setTimeout(resolve, 300));
       killTree(serve, 'SIGKILL');
       killTree(mcp, 'SIGKILL');
+      // Both hold a database in the vault open until they exit; Windows refuses afterAll's removal while they do.
+      await Promise.all([exited(serve), exited(mcp)]);
     }
   }, 40_000);
 });

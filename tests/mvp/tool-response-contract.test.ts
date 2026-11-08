@@ -13,6 +13,7 @@ import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server
 import { OLLAMA_KEY_ENV_NAMES } from '../../src/evidence/keyPool';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * The shape an agent actually reads, over the REAL remote MCP surface.
@@ -175,7 +176,7 @@ async function searchService(memoryDir: string) {
   return client;
 }
 
-describe('finding 15: search_memory says which state the evidence second pass is in', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('finding 15: search_memory says which state the evidence second pass is in', () => {
   it('carries no evidence object when no evidence model is configured: no second pass ran, so there is nothing to report', async () => {
     const memoryDir = await vaultWithNote('# Mango notes\n\nRowan likes mango juice.\n', 'People/Rowan.md');
     const client = await searchService(memoryDir);
@@ -280,7 +281,7 @@ describe('finding 15: search_memory says which state the evidence second pass is
   });
 });
 
-describe('finding 17: every tool renders its JSON the same way, on one line', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('finding 17: every tool renders its JSON the same way, on one line', () => {
   it('every tool the server lists answers compact JSON, keys and values unchanged', async () => {
     const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-shape-'));
     tmpDirs.push(memoryDir);
@@ -352,7 +353,7 @@ describe('finding 17: every tool renders its JSON the same way, on one line', ()
   });
 });
 
-describe('finding 18: a lookup_entity miss names the boundary instead of returning null', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('finding 18: a lookup_entity miss names the boundary instead of returning null', () => {
   it('says a note-text word is not an entity, and points at the tool that finds it', async () => {
     const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-entity-'));
     tmpDirs.push(memoryDir);
@@ -410,7 +411,7 @@ describe('finding 18: a lookup_entity miss names the boundary instead of returni
     await client.close();
   });
 });
-describe('a workspace without semantic search: search_memory says what to use instead', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace without semantic search: search_memory says what to use instead', () => {
   it('answers semantic-unavailable with a note naming search_text, and the advice works', async () => {
     // What a new self-serve workspace runs: no MVP_EMBEDDING_PROVIDER (cleared above), so no provider.
     const memoryDir = await vaultWithNote('# Drinks\n\nRowan likes mango juice.\n', 'People/Rowan.md');

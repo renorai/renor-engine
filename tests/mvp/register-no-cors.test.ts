@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
 import request from 'supertest';
 import { LOCAL_PORT, localApp, cleanupLocalApps } from '../helpers/localMvpApp';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Client registration is not open to web pages (adversary run renor-adv-localhost-1012, F4). The SDK answers
@@ -19,7 +20,7 @@ const storedClients = (authStatePath: string): unknown[] =>
   fs.existsSync(authStatePath) ? JSON.parse(fs.readFileSync(authStatePath, 'utf8')).clients : [];
 const corsHeaders = (headers: Record<string, unknown>) => Object.keys(headers).filter(name => name.startsWith('access-control-'));
 
-describe('POST /register', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('POST /register', () => {
   it('refuses a web page: no client is stored, so the name stays free for the real client', async () => {
     const { app, authStatePath } = localApp();
     for (const origin of ['http://evil.test', 'http://127.0.0.1:39580', 'https://evil.test:8443', 'null']) {

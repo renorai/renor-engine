@@ -16,6 +16,7 @@ import { createReadScope } from '../../src/mvp/readScope';
 import { normalizeScope } from '../../src/mvp/scope';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Two rules met when scope-isolation merged with the scoped read (memory scout, finding 7):
@@ -43,7 +44,7 @@ afterEach(() => {
   for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
-describe('ReadScope.chunkIds answers the same for every spelling of a scope', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('ReadScope.chunkIds answers the same for every spelling of a scope', () => {
   /** One event per scope (the work scope in both its spellings), and the chunks that hold them, as the indexer cuts them. */
   async function fixture() {
     const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-spellings-'));
@@ -254,7 +255,7 @@ async function scopedReads(ws: Workspace, scope: string, question: string, mine:
   };
 }
 
-describe('a scoped read finds the scope\'s memories under every spelling of its slug, whatever other scopes hold', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a scoped read finds the scope\'s memories under every spelling of its slug, whatever other scopes hold', () => {
   it.each(['project:kestrel', 'scope:kestrel'])('saved as %s: both spellings, and the bare slug, return the note and the fact', async saved => {
     const ws = await boot();
     await ws.note(SCOPE_NOTE, saved);
@@ -280,7 +281,7 @@ describe('a scoped read finds the scope\'s memories under every spelling of its 
   }, 120_000);
 });
 
-describe('the facts lane keeps the scope\'s fact under another spelling when other scopes hold more than a page of it', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the facts lane keeps the scope\'s fact under another spelling when other scopes hold more than a page of it', () => {
   const DOG = (name: string) => ({ statement: `Rowan's dog is ${name}.`, subject: 'Rowan', predicate: 'dog_name', object: name });
 
   it.each(['project:kestrel', 'scope:kestrel'])('saved as %s, read as every spelling', async saved => {

@@ -5,17 +5,21 @@ import { indexVault } from '../../src/indexer/pipeline';
 import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
 import { tmpPath } from '../helpers/tmpPath';
+import { removeDb } from '../helpers/removeDb';
 
 const DB = tmpPath('test-pipeline-error.db');
 const VAULT = path.resolve('fixtures/vault');
 
+const openDbs: Array<ReturnType<typeof openDb>> = [];
 afterEach(() => {
-  if (fs.existsSync(DB)) fs.unlinkSync(DB);
+  for (const db of openDbs.splice(0)) db.close();
+  removeDb(DB);
 });
 
 describe('indexVault error handling', () => {
   it('continues indexing and counts errors when embedding throws for one file', async () => {
     const db = openDb(DB);
+    openDbs.push(db);
     runMigrations(db);
 
     let calls = 0;
@@ -44,6 +48,7 @@ describe('indexVault error handling', () => {
 
   it('retries failed fact extraction on the next unchanged-file index and persists recovered facts (Fix #5)', async () => {
     const db = openDb(DB);
+    openDbs.push(db);
     runMigrations(db);
 
     const DB_TARGET = 'OpenClaw Memory/User.md';

@@ -10,6 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * lookup_entity in a scope, for the subjects of remembered facts (dogfood 2026-10-03, finding D5). Such a subject is a
@@ -133,7 +134,7 @@ const UNKNOWN = 'nothing-is-called-this';
 /** Scopes that hold none of the atlas-only subject's facts. */
 const ELSEWHERE = ['global', 'project:kestrel', 'scope:kestrel'];
 
-describe('lookup_entity judges the subject of remembered facts by the scope its facts were saved in (D5)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('lookup_entity judges the subject of remembered facts by the scope its facts were saved in (D5)', () => {
   let ws: Workspace;
   /** entitiesIndexed per scope before any fact was saved: the note entities only. */
   const before = new Map<string, number>();

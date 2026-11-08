@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * The unit ExecStarts `node dist/mvp/cli.js` directly. `npm run mvp` used to put the package's
@@ -34,7 +35,7 @@ function freePort(): Promise<number> {
 }
 
 describe('the engine started with nothing npm provides', () => {
-  it('serves, and exits 0 on SIGTERM, with no PATH, no HOME and no npm_* variable', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('serves, and exits 0 on SIGTERM, with no PATH, no HOME and no npm_* variable', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'renor-nonpm-'));
     dirs.push(root);
     fs.mkdirSync(path.join(root, 'memory'), { mode: 0o700 });

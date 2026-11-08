@@ -16,6 +16,7 @@ import { runMigrations } from '../../src/db/schema';
 import { isDailyNotePath } from '../../src/memory/dailyNote';
 import { replyTokens } from '../../src/mvp/agentMemory';
 import { makeLegacyDailyNote } from '../helpers/legacyDailyIndex';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A daily note holds one entry per `remember`. Recalling one memory must return that memory, not the day.
@@ -187,7 +188,7 @@ const QUESTION = 'what is the retry budget for job alpha?';
 const bestMatch = (memories: Array<{ text: string; score?: number; reason: string }>) =>
   memories.filter(m => m.reason.startsWith('semantic')).reduce((a, b) => ((b.score ?? 0) > (a.score ?? 0) ? b : a));
 
-describe('recalling one daily-note memory returns that memory, not the whole day', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('recalling one daily-note memory returns that memory, not the whole day', () => {
   it('get_context returns the memory that answers the question as its best match, alone', async () => {
     const ws = await boot();
     for (const [, statement] of DAY) await ws.note(statement);
@@ -259,7 +260,7 @@ describe('recalling one daily-note memory returns that memory, not the whole day
   }, 90_000);
 });
 
-describe('the words come back exactly, one memory each, after a restart and after the index is rebuilt', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the words come back exactly, one memory each, after a restart and after the index is rebuilt', () => {
   const legacyFile = 'Memory/Daily/2026-09-20.md';
   const legacyStatement = `Legacy literal slash noteleg1q\n${BS}- [08:30:00] (alice) kept noteleg2q\n${BS}${BS}- [09:00:00] (bob) twice noteleg3q\n  - [10:00:00] (carol) indented noteleg4q`;
   const legacyRaw = `---\nkind: note\nupdated: 2026-09-20\n---\n# 2026-09-20\n\n- [08:00:00] (claude) ${legacyStatement}\n- [08:05:00] (claude) legacy neighbour noteleg5q\n`;
@@ -310,7 +311,7 @@ describe('the words come back exactly, one memory each, after a restart and afte
   }, 120_000);
 });
 
-describe('a workspace indexed before this change', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace indexed before this change', () => {
   /**
    * Build a workspace with the current code (earlier days, today, a fact), stop it, and put its index back the way
    * the release before this one left it: each daily note one chunk under the hash of its bytes alone.
@@ -412,7 +413,7 @@ describe('a workspace indexed before this change', () => {
   }, 180_000);
 });
 
-describe('scope still decides what a read can see, and a day is cut by entry inside each scope', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('scope still decides what a read can see, and a day is cut by entry inside each scope', () => {
   it('returns a scope\'s own entries one by one and no other scope\'s', async () => {
     const ws = await boot();
     await ws.note('Global plan ship the beta (nchunkgplana).');
@@ -447,7 +448,7 @@ describe('scope still decides what a read can see, and a day is cut by entry ins
   }, 90_000);
 });
 
-describe('retiring and restoring one entry of a day', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('retiring and restoring one entry of a day', () => {
   it('takes only that memory out of recall and puts it back, its neighbours untouched', async () => {
     const ws = await boot();
     let file = '';
@@ -473,7 +474,7 @@ describe('retiring and restoring one entry of a day', () => {
   }, 90_000);
 });
 
-describe('what is current stays current beside the entries of a day (a guard: this held before the day was cut by entry)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('what is current stays current beside the entries of a day (a guard: this held before the day was cut by entry)', () => {
   it('a corrected fact never surfaces as current, and the entries around it are still recalled', async () => {
     const ws = await boot();
     await ws.call('remember', { statement: 'Alice works at Acme.', subject: 'Alice', predicate: 'works_at', object: 'Acme' });

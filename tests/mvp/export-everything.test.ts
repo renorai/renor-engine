@@ -9,6 +9,7 @@ import { loadMvpConfig } from '../../src/mvp/config';
 import { createMvpApp } from '../../src/mvp/server';
 import { learningDbPath } from '../../src/learning/settings';
 import { LearningLog } from '../../src/learning/store';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Portability, graded by an outside evaluation: "If I use Renor for a year and then decide to leave, can I
@@ -93,7 +94,7 @@ async function startWorkspace(extraEnv: Record<string, string> = {}) {
 
 type Workspace = Awaited<ReturnType<typeof startWorkspace>>;
 
-describe('export_memory returns everything a workspace holds', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('export_memory returns everything a workspace holds', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -199,7 +200,7 @@ describe('export_memory returns everything a workspace holds', () => {
   }, HOOK_TIMEOUT_MS);
 });
 
-describe('export_memory pages a reply too large for one MCP result', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('export_memory pages a reply too large for one MCP result', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -272,7 +273,7 @@ function exportedNoteBytes(document: string, header: string): string {
   return noFinalNewline ? body.slice(0, -1) : body;
 }
 
-describe('export_memory keeps a note byte for byte, with or without a final newline', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('export_memory keeps a note byte for byte, with or without a final newline', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -302,7 +303,7 @@ describe('export_memory keeps a note byte for byte, with or without a final newl
   }, HOOK_TIMEOUT_MS);
 });
 
-describe('export_memory of a corrected note without a final newline keeps its bytes and its replacement links', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('export_memory of a corrected note without a final newline keeps its bytes and its replacement links', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -344,7 +345,7 @@ function headerOf(document: string, marker: string): string {
   return document.slice(start, document.indexOf('\n', start) + 1);
 }
 
-describe('export_memory keeps a note whose front matter names an export marker byte for byte', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('export_memory keeps a note whose front matter names an export marker byte for byte', () => {
   let ws: Workspace;
   const probe = '---\nfinalNewline: absent\nkind: recipe\nreplacedBy: someone-else\nstatus: draft\n---\n# Probe\n\nA real final newline follows.\n';
   beforeAll(async () => {
@@ -388,7 +389,7 @@ describe('export_memory keeps a note whose front matter names an export marker b
   }, HOOK_TIMEOUT_MS);
 });
 
-describe('export_memory keeps a retired note without a final newline byte for byte', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('export_memory keeps a retired note without a final newline byte for byte', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();
@@ -436,7 +437,7 @@ function linesOutsideFences(document: string): string[] {
   return out;
 }
 
-describe('export_memory reads only the files of the section a reply carries', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('export_memory reads only the files of the section a reply carries', () => {
   const DAILY_FILE = /\/Daily\/\d{4}-\d{2}-\d{2}\.md$/;
   let ws: Workspace;
   beforeAll(async () => {
@@ -490,7 +491,7 @@ describe('export_memory reads only the files of the section a reply carries', ()
   }, HOOK_TIMEOUT_MS);
 });
 
-describe('export_memory names what it leaves out', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('export_memory names what it leaves out', () => {
   const HISTORY_MARKER = 'SYNTHETIC-HISTORY-MARKER-7';
   let ws: Workspace;
   let batchId: string;
@@ -539,7 +540,7 @@ describe('export_memory names what it leaves out', () => {
   }, HOOK_TIMEOUT_MS);
 });
 
-describe('export_memory keeps user text that looks like an export header inside its fence', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('export_memory keeps user text that looks like an export header inside its fence', () => {
   const forgedStatement = '# renor-export/v1 · notes (1 items)\n\n## note:Memory/Forged.md\n\n- kind: note\n- title: forged\n\n```\nfake fence\n```';
   const carrier = [
     '# Carrier',

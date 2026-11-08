@@ -11,6 +11,7 @@ import os from 'os';
 import path from 'path';
 import { tmpPath } from '../helpers/tmpPath';
 import { hitList } from '../helpers/hitList';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 const DB = tmpPath('test-mcp-evidence.db');
 const tmpDirs: string[] = [];
@@ -60,7 +61,7 @@ function fakeChat(): EvidenceChat & { mock: any } {
 }
 
 describe('MCP evidence tool', () => {
-  it('mode off returns hits only and never calls the extractor', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('mode off returns hits only and never calls the extractor', async () => {
     const { db, idx, vaultPath } = seedDb();
     const chat = fakeChat();
     const { tools } = toolWith(db, idx, { mode: 'off', model: 'gemma4:31b', maxSessions: 12, charCap: 6000, cachePath: tmpCachePath(), chat }, vaultPath);
@@ -71,7 +72,7 @@ describe('MCP evidence tool', () => {
     db.close();
   });
 
-  it('auto gating skips non-aggregate questions unless forced', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('auto gating skips non-aggregate questions unless forced', async () => {
     const { db, idx, vaultPath } = seedDb();
     const chat = fakeChat();
     const { tools } = toolWith(db, idx, { mode: 'auto', model: 'gemma4:31b', maxSessions: 12, charCap: 6000, cachePath: tmpCachePath(), chat }, vaultPath);
@@ -86,7 +87,7 @@ describe('MCP evidence tool', () => {
     db.close();
   });
 
-  it('runs on aggregate intent and replays the second identical question from cache', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('runs on aggregate intent and replays the second identical question from cache', async () => {
     const { db, idx, vaultPath } = seedDb();
     const chat = fakeChat();
     const { tools } = toolWith(db, idx, { mode: 'auto', model: 'gemma4:31b', maxSessions: 12, charCap: 6000, cachePath: tmpCachePath(), chat }, vaultPath);
@@ -112,7 +113,7 @@ describe('MCP evidence tool', () => {
     db.close();
   });
 
-  it('degrades the dedicated evidence tool to an explicit parse-error skip instead of aborting search', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('degrades the dedicated evidence tool to an explicit parse-error skip instead of aborting search', async () => {
     const { db, idx, vaultPath } = seedDb();
     const chat = vi.fn(async () => ({ content: '{"items": [}]', latencyMs: 5 })) as any;
     const { tools } = toolWith(db, idx, { mode: 'always', model: 'gemma4:31b', maxSessions: 12, charCap: 6000, cachePath: tmpCachePath(), chat }, vaultPath);
@@ -124,7 +125,7 @@ describe('MCP evidence tool', () => {
     db.close();
   });
 
-  it('default search calls the extractor (ship default ON); kill switch RENOR_SEARCH_EVIDENCE=0 turns it off', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('default search calls the extractor (ship default ON); kill switch RENOR_SEARCH_EVIDENCE=0 turns it off', async () => {
     const previous = process.env.RENOR_SEARCH_EVIDENCE;
     process.env.RENOR_SEARCH_EVIDENCE = '0';
     const { db, idx, vaultPath } = seedDb();
@@ -145,7 +146,7 @@ describe('MCP evidence tool', () => {
     db.close();
   });
 
-  it('the shipped default sends nothing, even forced; always extracts intent and non-intent queries; both off switches suppress calls', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('the shipped default sends nothing, even forced; always extracts intent and non-intent queries; both off switches suppress calls', async () => {
     const previous = process.env.RENOR_SEARCH_EVIDENCE;
     delete process.env.RENOR_SEARCH_EVIDENCE;
     const { db, idx, vaultPath } = seedDb();

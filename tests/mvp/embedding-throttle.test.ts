@@ -6,6 +6,7 @@ import type { EmbeddingProvider } from '../../src/embeddings/types';
 import { createEmbeddingProvider, DEFAULT_EMBED_BUDGETS, engineFinishIndexInBackground, runningBackgroundIndex, UNFINISHED_FILES } from '../../src/mvp/engine';
 import { startVertexStub, type VertexStub } from '../helpers/vertexStub';
 import { startWorkspace, vertexConfigFor, restoreWorkspaceEnv, type Workspace } from '../helpers/mvpWorkspace';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * What an agent waits when Google's embedding service refuses or stalls, through the product's own Vertex stack
@@ -90,7 +91,7 @@ const SAVED_GUARD = process.env.RENOR_SECRET_GUARD;
 beforeAll(() => { process.env.RENOR_SECRET_GUARD = '0'; });
 afterAll(() => { if (SAVED_GUARD === undefined) delete process.env.RENOR_SECRET_GUARD; else process.env.RENOR_SECRET_GUARD = SAVED_GUARD; });
 
-describe('while the embedding service refuses (429)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('while the embedding service refuses (429)', () => {
   it('no tool waits on it: saves return with the memory kept, reads answer from keyword search, and a failed service is not asked again at once', async () => {
     const { ws, stub } = await start();
     await ws.call('remember', { statement: 'Kestrel uses Expo Router for navigation.' });
@@ -175,7 +176,7 @@ function writeOutsideNote(ws: Workspace, name: string, text: string): void {
   fs.writeFileSync(path.join(ws.memoryDir, 'Projects', name), `# ${name}\n\n${text}\n`);
 }
 
-describe('index_memory while the embedding service is refusing', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('index_memory while the embedding service is refusing', () => {
   it('answers within the write budget and says the file is still being indexed, instead of running the whole retry loop', async () => {
     const { ws, stub } = await start();
     stub.mode = 'throttle';
@@ -216,7 +217,7 @@ describe('index_memory while the embedding service is refusing', () => {
   }, TEST_TIMEOUT_MS);
 });
 
-describe('while the embedding service does not answer at all', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('while the embedding service does not answer at all', () => {
   it('a save and a read end within their budgets instead of waiting for a service that never replies', async () => {
     process.env.RENOR_EMBED_WRITE_BUDGET_MS = '400';
     process.env.RENOR_EMBED_READ_BUDGET_MS = '300';
@@ -267,7 +268,7 @@ describe('while the embedding service does not answer at all', () => {
   }, TEST_TIMEOUT_MS);
 });
 
-describe('while the embedding service is healthy', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('while the embedding service is healthy', () => {
   it('a save is indexed in the same call, with the receipt it always had, and nothing is left for a background job', async () => {
     const { ws, stub } = await start();
     const note = await ws.call('remember', { statement: NOTE });

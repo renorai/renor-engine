@@ -5,6 +5,7 @@ import path from 'path';
 import request from 'supertest';
 import { loadMvpConfig } from '../../src/mvp/config';
 import { createMvpApp, MVP_MCP_PATH, MVP_VERSION_PATH, type MvpApp } from '../../src/mvp/server';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Live-security F5: mcp.renor.cloud answered with `X-Powered-By: Express`. The header names the
@@ -54,7 +55,7 @@ afterAll(async () => {
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-describe('the tenant engine does not advertise its framework (live-security F5)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the tenant engine does not advertise its framework (live-security F5)', () => {
   it.each([
     ['OAuth discovery', () => request(app()).get('/.well-known/oauth-authorization-server'), 200],
     ['the owner login form without a ticket', () => request(app()).post('/mvp-login').type('form').send({}), 400],

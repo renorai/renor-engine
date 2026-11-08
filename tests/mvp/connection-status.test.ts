@@ -8,6 +8,7 @@ import { loadMvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server';
 import { HOSTED_MCP_URL, connectionStatusFromEnv } from '../../src/mvp/connectionStatus';
 import { authorize, freePort, restoreWorkspaceEnv } from '../helpers/mvpWorkspace';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Agents could not tell that they were connected to the wrong server, or that a connection had silently dropped.
@@ -102,7 +103,7 @@ describe('connection status of a hosted workspace', () => {
     expect(connectionStatusFromEnv({ MVP_INSTANCE_ID: 'ada', RENOR_CONNECTION_STATUS: '0' })).toBeNull();
   });
 
-  it('puts it on the first reply of a session, not on the second, and again on a new session', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('puts it on the first reply of a session, not on the second, and again on a new session', async () => {
     const ws = await start({ instance: 'status-ws' });
     const one = await ws.connect();
 
@@ -127,7 +128,7 @@ describe('connection status of a hosted workspace', () => {
     expect(statusOf(await call(two, 'get_context', { query: 'anything' }))).toBeNull();
   });
 
-  it('carries it whichever tool is the first of a session', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('carries it whichever tool is the first of a session', async () => {
     const ws = await start({ instance: 'status-ws' });
     for (const [name, args] of [['get_context', { query: 'x' }], ['search_text', { query: 'x' }], ['memory_map', {}], ['export_memory', {}], ['lookup_entity', { name: 'x' }]] as const) {
       const reply = await call(await ws.connect(), name, args);
@@ -136,7 +137,7 @@ describe('connection status of a hosted workspace', () => {
     }
   });
 
-  it('always carries it on an error, with how to reconnect, however late in the session', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('always carries it on an error, with how to reconnect, however late in the session', async () => {
     const ws = await start({ instance: 'status-ws' });
     const client = await ws.connect();
     await call(client, 'memory_status'); // the first reply is spent
@@ -158,7 +159,7 @@ describe('connection status of a hosted workspace', () => {
     expect(statusOf(fresh)!.message).toContain('reconnect');
   });
 
-  it('carries it on the errors the SDK answers itself: a refused input schema and an unknown tool', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('carries it on the errors the SDK answers itself: a refused input schema and an unknown tool', async () => {
     const ws = await start({ instance: 'status-ws' });
     const client = await ws.connect();
     await call(client, 'memory_status'); // the first reply is spent
@@ -183,7 +184,7 @@ describe('connection status of a hosted workspace', () => {
     expect(statusOf(await call(fresh, 'memory_status'))).toBeNull();
   });
 
-  it('adds nothing else: every reply is byte-identical to a workspace without it, whichever is the first call', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('adds nothing else: every reply is byte-identical to a workspace without it, whichever is the first call', async () => {
     const hosted = await start({ instance: 'status-ws' });
     const control = await start({ killSwitch: true, instance: 'status-ws' });
     const calls: Array<[string, Record<string, unknown>]> = [
@@ -208,7 +209,7 @@ describe('connection status of a hosted workspace', () => {
     }
   });
 
-  it('says nothing in a workspace that is not hosted, or with the switch off', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('says nothing in a workspace that is not hosted, or with the switch off', async () => {
     const plain = await start({});
     const off = await start({ instance: 'status-ws', killSwitch: true });
     for (const ws of [plain, off]) {
@@ -220,7 +221,7 @@ describe('connection status of a hosted workspace', () => {
     }
   });
 
-  it('has no session to announce on without sessions, but still says it on an error', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('has no session to announce on without sessions, but still says it on an error', async () => {
     const ws = await start({ instance: 'status-ws', sessions: false });
     const client = await ws.connect();
     expect(statusOf(await call(client, 'memory_status'))).toBeNull();

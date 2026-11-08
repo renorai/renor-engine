@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import request from 'supertest';
 import { MVP_MCP_PATH } from '../../src/mvp/server';
 import { LOCAL_PORT as PORT, localApp, cleanupLocalApps } from '../helpers/localMvpApp';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * DNS rebinding (adversary run renor-adv-localhost-1012, F3). A web page that rebinds its own domain to
@@ -26,7 +27,7 @@ const OPEN_ROUTES: Array<['get' | 'post', string]> = [
   ['post', MVP_MCP_PATH],
 ];
 
-describe('MVP server: Host header (DNS rebinding)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('MVP server: Host header (DNS rebinding)', () => {
   it.each(OPEN_ROUTES)('refuses a foreign Host on %s %s with 403 before any route runs', async (method, route) => {
     const { app } = appFor(`http://127.0.0.1:${PORT}`);
     for (const host of ['evil.test', `evil.test:${PORT}`, '127.0.0.1.evil.test', 'localhost.evil.test:80']) {

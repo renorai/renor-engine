@@ -48,6 +48,7 @@ import {
 } from '../context/rowStore';
 import { laneZeroYieldMarker, recordLaneRun, type LaneRowKind } from './laneRuns';
 import { createLogger } from '../mvp/log';
+import { nameKind } from '../memory/sameFile';
 
 const log = createLogger('engine');
 
@@ -819,6 +820,9 @@ async function indexAppend(
 }
 
 async function readRegularFile(filePath: string): Promise<Buffer> {
+  // Windows has no O_NOFOLLOW, so the read below would follow a link there: the name, not followed, must be a regular file
+  // (#1563). Elsewhere O_NOFOLLOW refuses a link as well.
+  if ((await nameKind(filePath)) === 'other') throw new Error(`refusing to index ${JSON.stringify(filePath)}: it is a symbolic link or not a regular file`);
   try {
     return await fs.readFile(filePath, { flag: fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK });
   } catch (err) {

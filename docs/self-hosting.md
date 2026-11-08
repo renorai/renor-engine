@@ -6,6 +6,30 @@ Run every command from the directory that holds `package.json`. If you use mise,
 
 ## Troubleshooting
 
+**Run `doctor` first.** `renor-engine doctor` is a read-only health report you can paste into a support request. It checks the memory folder and its permissions, that the index opens and passes SQLite's `quick_check`, the schema version, that the ledger's event count matches what the index applied, how many chunks have embeddings, whether the embedding provider answers (one request, 5 second limit; `--offline` skips it), the sharing level, the engine and Node versions, which AI-app config files point at this engine, and Windows notes. It writes nothing, and keys, tokens and URL passwords are replaced with `[redacted]` in its output.
+
+```bash
+npx renor-engine doctor            # Markdown, to paste
+npx renor-engine doctor --json     # the same, for scripts
+npx renor-engine doctor --offline  # no network call
+```
+
+The exit status is 0 when every check passes and 1 when any fails. Each failing check has a stable code and a one-line fix:
+
+| Code | Meaning | Fix |
+| --- | --- | --- |
+| `DOC_CONFIG_INVALID` | an environment variable is invalid (the message names it) | correct it |
+| `DOC_VAULT_MISSING` / `DOC_VAULT_NOT_A_FOLDER` / `DOC_VAULT_UNREADABLE` / `DOC_VAULT_PERMISSIONS` | the memory folder is absent, a file, or not readable and writable | set `VAULT_PATH`, or fix the folder permissions |
+| `DOC_DB_OPEN_FAILED` / `DOC_DB_QUICK_CHECK_FAILED` | the index is damaged | `renor-engine rebuild` |
+| `DOC_SCHEMA_OUTDATED` / `DOC_SCHEMA_UNVERSIONED` | the index predates this engine | `renor-engine index` |
+| `DOC_SCHEMA_NEWER` | the index was written by a newer engine | upgrade `renor-engine` |
+| `DOC_LEDGER_MISMATCH` | the ledger holds events the index has not applied | `renor-engine index` or `rebuild` |
+| `DOC_LEDGER_MISSING` / `DOC_LEDGER_UNREADABLE` | the ledger file is gone or corrupt | restore it from a backup; do not delete it |
+| `DOC_VECTORS_INCOMPLETE` | a semantic provider is set but some chunks have no embedding | `renor-engine index` |
+| `DOC_EMBEDDING_UNREACHABLE` / `DOC_EMBEDDING_TIMEOUT` / `DOC_EMBEDDING_AUTH_REJECTED` | the embedding endpoint does not answer, is too slow, or rejects the key | check `EMBEDDING_BASE_URL`, `OPENAI_API_KEY` and the network |
+| `DOC_INDEX_STALE` | notes changed since the last index | `renor-engine index` |
+| `DOC_WIN_PATH_TOO_LONG` | Windows only: the memory folder path nears the 260-character limit | choose a shorter `VAULT_PATH` |
+
 **Wrong Node version.** Renor needs **Node 22.16 or newer** (it uses Node's built-in SQLite; `.nvmrc` and `mise.toml` pin the tested Node 22). On an older Node every command stops at once with one line saying so:
 
 ```

@@ -12,6 +12,7 @@ import { runMigrations } from '../../src/db/schema';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { CALIBRATED_BARS, contextRelevanceArmed } from '../../src/mvp/contextRelevance';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A caller that brings its own embedding provider must keep the relevance bar its model has.
@@ -186,7 +187,7 @@ describe('the model key of an injected provider', () => {
   });
 });
 
-describe('the relevance verdict an injected provider gets', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the relevance verdict an injected provider gets', () => {
   it('is returned by get_context and search_memory when the injected model has a calibrated bar', async () => {
     const { call, tools } = await serve(new CalibratedIdentityProvider());
     await call('remember', { statement: 'The Renor dog is called Biscuit.', subject: 'user', predicate: 'dog_name', object: 'Biscuit' });

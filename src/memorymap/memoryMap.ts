@@ -19,6 +19,7 @@ import { forgetImportedNotes } from '../importing/forgetImported';
 import { forgetReplacementsOf } from './replacedJournal';
 import { clampSessionDate, createNoteTimeBound, resolveSessionDate } from '../retrieval/orchestrator';
 import { observeEnabled, observationsForExport, purgeRetiredObservations, setObservationRetired, type ObservationExportRow } from '../mvp/observations';
+import { nameIsOpenFile, nameKind } from '../memory/sameFile';
 
 // ---------------------------------------------------------------------------
 // Memory map: a read model of everything one workspace holds, shaped for a
@@ -459,9 +460,39 @@ export function parseMemoryId(id: string): { kind: MemoryKind; rel: string } {
 
 // ------------------------------- helpers ------------------------------------
 
-function collapse(text: string, max: number): string {
-  const t = text.replace(/\s+/g, ' ').trim();
-  return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
+/**
+ * `text` (or the pieces it is made of, in order) with every run of whitespace as one space and the ends trimmed, cut to `max`
+ * characters with an ellipsis. Only the front of a long text is ever read: a note body is tens of kilobytes and the map shows 280
+ * characters of it, so collapsing the whole body (once per note, once per map) made a copy of every note on every call.
+ * The result is the same as collapsing all of it. A prefix collapses to a prefix of the whole's collapse, so a prefix whose
+ * collapse is at least two characters past `max` already holds the answer (one character of slack for a trailing space that a
+ * following run of whitespace would trim); otherwise the window grows, up to the whole text.
+ */
+function collapse(text: string | readonly string[], max: number): string {
+  const pieces = typeof text === 'string' ? [text] : text;
+  const total = pieces.reduce((n, p) => n + p.length, 0);
+  const prefix = (n: number): string => {
+    let out = '';
+    for (const p of pieces) {
+      if (out.length >= n) break;
+      out += p.length > n - out.length ? p.slice(0, n - out.length) : p;
+    }
+    return out;
+  };
+  for (let window = Math.max(max * 4, 1024); ; window *= 4) {
+    if (window >= total) {
+      const t = prefix(total).replace(/\s+/g, ' ').trim();
+      return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
+    }
+    const t = prefix(window).replace(/\s+/g, ' ').trimStart();
+    if (t.length > max + 1) return `${t.slice(0, max - 1)}…`;
+  }
+}
+
+/** A note body without its first heading line (`# Title`), as the pieces before and after it, for collapse(). */
+function withoutFirstHeading(body: string): string[] {
+  const m = /^#\s+.*$/m.exec(body);
+  return m ? [body.slice(0, m.index), body.slice(m.index + m[0].length)] : [body];
 }
 
 function tagsOf(frontmatter: Record<string, unknown>): string[] {
@@ -662,10 +693,12 @@ async function appendJournal(ctx: MemoryMapContext, record: RetiredRecord): Prom
   const dir = await ensureRealDir(await fs.realpath(ctx.memoryDir), RETIRED_DIR);
   const file = path.join(dir, path.basename(RETIRED_INDEX));
   // O_NONBLOCK: a FIFO planted under the journal's name is an error here, never a wait.
+  // Windows has no O_NOFOLLOW and follows even a dangling link under O_CREAT: a link at the name is refused before the open (#1563).
+  if ((await nameKind(file)) === 'other') throw new Error(`refusing to write ${JSON.stringify(RETIRED_INDEX)}: it is not a regular file with a single name`);
   const handle = await fs.open(file, fs.constants.O_RDWR | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NONBLOCK | NOFOLLOW, 0o600);
   try {
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.nlink !== 1) throw new Error(`refusing to write ${JSON.stringify(RETIRED_INDEX)}: it is not a regular file with a single name`);
+    if (!stat.isFile() || stat.nlink !== 1 || !(await nameIsOpenFile(handle, file))) throw new Error(`refusing to write ${JSON.stringify(RETIRED_INDEX)}: it is not a regular file with a single name`);
     // A crash can leave a torn last line; start on a fresh line so this record is never glued to it.
     const size = stat.size;
     let prefix = '';
@@ -859,7 +892,7 @@ async function collectMemories(
       source: typeof fm.source === 'string' ? fm.source : null,
       tags: tagsOf(fm),
       status: typeof fm.status === 'string' ? fm.status : null,
-      excerpt: collapse(parsed.body.replace(/^#\s+.*$/m, ''), EXCERPT_CHARS),
+      excerpt: collapse(withoutFirstHeading(parsed.body), EXCERPT_CHARS),
     }, `${n.title}\n${parsed.body}`);
     if (kept) wikilinks.set(id, parsed.wikilinks);
   }

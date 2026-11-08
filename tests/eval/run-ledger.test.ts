@@ -340,6 +340,7 @@ describe('run ledger: which environment is configuration', () => {
       CLAUDE_CONFIG_DIR: "Claude Code's own config folder, where `renor-engine connect` writes the memory rule (src/connect.ts); not Renor configuration, no effect on results",
       CODEX_HOME: "Codex's own config folder, where `renor-engine connect` writes the memory rule (src/connect.ts); not Renor configuration, no effect on results",
       USERPROFILE: 'the Windows home folder, the fallback for HOME in `renor-engine connect` (src/connect.ts); no effect on results',
+      APPDATA: 'the Windows roaming-config folder, where `renor-engine doctor` looks for VS Code\'s mcp.json (src/doctor.ts); read only, no effect on results',
       XDG_RUNTIME_DIR: 'where the SessionStart hook keeps its owner-only session files (src/recall/autoRecall.ts); no effect on results',
     };
     const read = new Set<string>();

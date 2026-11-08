@@ -7,6 +7,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server';
 import { authorize, freePort, restoreWorkspaceEnv } from '../helpers/mvpWorkspace';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 // A query or a subject is short text an agent names something with. Two inputs got past the schema: retrieve_memory's
 // subject had no length bound, so a megabyte came back in the reply, and search_text let a NUL byte through to SQLite,
@@ -14,7 +15,7 @@ import { authorize, freePort, restoreWorkspaceEnv } from '../helpers/mvpWorkspac
 
 const HOOK_TIMEOUT_MS = 30_000;
 
-describe('retrieve_memory and search_text refuse input they cannot use', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('retrieve_memory and search_text refuse input they cannot use', () => {
   let started: MvpApp & { httpServer: import('http').Server };
   let client: Client;
   const dirs: string[] = [];

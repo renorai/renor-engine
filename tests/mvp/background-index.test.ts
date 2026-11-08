@@ -9,6 +9,7 @@ import {
   UNFINISHED_FILES,
 } from '../../src/mvp/engine';
 import { startWorkspace, restoreWorkspaceEnv, type Workspace } from '../helpers/mvpWorkspace';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A save the embedding service could not take in time is not lost: the chunks stay (keyword search finds them), the
@@ -51,7 +52,7 @@ async function start(provider: Flaky): Promise<Workspace> {
 
 const settled = (ws: Workspace) => chunksWithoutVectors(ws.service.db) === 0 && ws.service.db.prepare(UNFINISHED_FILES).pluck().get() === 0;
 
-describe('the background index', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the background index', () => {
   it('tries again after each failure and finishes once the service answers: nothing a save kept is dropped', async () => {
     const provider = new Flaky();
     const ws = await start(provider);

@@ -20,6 +20,7 @@ import {
   type RetrievalHit,
 } from '../../src/retrieval/orchestrator';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { removeTestDir } from '../helpers/removeDb';
 
 /**
  * RENOR_SESSION_EXPAND: the deterministic expansion of what retrieval already found (the PageIndex scout's R2,
@@ -37,11 +38,17 @@ const tmpDirs: string[] = [];
 const ENV_KEYS = ['RENOR_SESSION_EXPAND', 'RENOR_SESSION_EXPAND_TOKENS', 'RENOR_SESSION_EXPAND_STATEMENT_TOKENS', 'RENOR_SESSION_EXPAND_DOCUMENT_STATEMENT_TOKENS', 'RENOR_NEWEST_FIRST', 'RENOR_TEMPORAL_RANKING', 'RENOR_TEMPORAL_ASOF', 'RENOR_SESSION_DIVERSITY'];
 const savedEnv = Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]));
 
+const openDbs: Array<ReturnType<typeof openDb>> = [];
 afterEach(() => {
-  for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
-  for (const key of ENV_KEYS) {
-    if (savedEnv[key] === undefined) delete process.env[key];
-    else process.env[key] = savedEnv[key];
+  try {
+    for (const db of openDbs.splice(0)) db.close();
+    for (const d of tmpDirs.splice(0)) removeTestDir(d);
+  } finally {
+    // The environment is restored even when a removal throws, so the next test does not inherit this one's flags.
+    for (const key of ENV_KEYS) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
   }
 });
 
@@ -101,6 +108,7 @@ async function fixture(extra: (vault: string) => void = () => {}) {
   ]));
   extra(vault);
   const db = openDb(path.join(vault, 'index.db'));
+  openDbs.push(db);
   runMigrations(db);
   const provider = new EvalHashEmbeddingProvider();
   const vectorIndex = new VectorIndex(db, provider.dimensions);

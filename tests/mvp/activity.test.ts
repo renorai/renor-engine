@@ -10,6 +10,7 @@ import { runningBackgroundIndex } from '../../src/mvp/engine';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * What a release asks an engine before it restarts it (GET /internal/activity): tool calls in flight and when the last
@@ -282,7 +283,7 @@ class FlakyThenGatedProvider extends EvalHashEmbeddingProvider {
   }
 }
 
-describe(`GET ${ACTIVITY_PATH}`, () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)(`GET ${ACTIVITY_PATH}`, () => {
   it('answers on an always-on engine with no credential: nothing running, nothing ended', async () => {
     const { base } = await boot();
     expect(await activity(base)).toEqual({ renor: ACTIVITY_REPORT_VERSION, inFlight: 0, lastEndedAgoMs: null });

@@ -12,6 +12,7 @@ import {
   readMemory, resolveVaultFile, type MemoryMapContext,
 } from './memoryMap';
 import { REPLACED_FILE_NAME } from './replacedJournal';
+import { nameIsOpenFile, nameKind } from '../memory/sameFile';
 
 // ---------------------------------------------------------------------------
 // Replacements: a correction that names the earlier memory it corrects.
@@ -253,10 +254,13 @@ export async function recordReplacement(ctx: MemoryMapContext, old: string, by: 
   const dir = await ensureRealDir(await fs.realpath(ctx.memoryDir), RETIRED_DIR);
   // O_NONBLOCK and the single-name check: the same rules as the retirement journal (appendJournal), so neither a FIFO nor a
   // hard link under this name is written through.
-  const handle = await fs.open(path.join(dir, path.basename(REPLACED_FILE)), fs.constants.O_RDWR | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NONBLOCK | NOFOLLOW, 0o600);
+  const replacedFile = path.join(dir, path.basename(REPLACED_FILE));
+  // Windows has no O_NOFOLLOW and follows even a dangling link under O_CREAT: a link at the name is refused before the open (#1563).
+  if ((await nameKind(replacedFile)) === 'other') throw new Error(`refusing to write ${JSON.stringify(REPLACED_FILE_NAME)}: it is not a regular file with a single name`);
+  const handle = await fs.open(replacedFile, fs.constants.O_RDWR | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NONBLOCK | NOFOLLOW, 0o600);
   try {
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.nlink !== 1) throw new Error(`refusing to write ${JSON.stringify(REPLACED_FILE_NAME)}: it is not a regular file with a single name`);
+    if (!stat.isFile() || stat.nlink !== 1 || !(await nameIsOpenFile(handle, replacedFile))) throw new Error(`refusing to write ${JSON.stringify(REPLACED_FILE_NAME)}: it is not a regular file with a single name`);
     // A crash can leave a torn last line; start on a fresh line so this record is never glued to it.
     const size = stat.size;
     let prefix = '';

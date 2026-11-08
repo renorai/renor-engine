@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import { constants as C } from 'fs';
 import path from 'path';
 import { markUnrecoverable, syncDirectory, unrecoverableReason, withAppendLock } from './durableAppend';
+import { nameIsOpenFile, nameKind } from './sameFile';
 
 /**
  * Writes into the vault that cannot be turned into a write somewhere else.
@@ -18,6 +19,10 @@ import { markUnrecoverable, syncDirectory, unrecoverableReason, withAppendLock }
  * between them. After the open and before the first byte, `assertHandleInside` asks the kernel where the open file really
  * is (/proc/self/fd/<fd>) and refuses unless that is under the vault's real root. Node has no openat2(RESOLVE_BENEATH) and
  * /proc exists on Linux only; elsewhere that race stays open (engine/docs/self-hosting.md says so).
+ *
+ * Windows has no O_NOFOLLOW (Node leaves the constant undefined, so the flag drops out of the open) and a final-name link is
+ * followed there. Every open is therefore also checked by name (`assertNameIsOpenFile`, sameFile.ts): the name, not followed,
+ * must be the very file that was opened, before a byte is written and before anything is removed by that name (#1563).
  *
  * Files are created 0600 and directories 0700: the vault holds the owner's statements in plain text.
  *
@@ -99,8 +104,14 @@ export async function assertHandleInside(handle: fs.FileHandle, realVaultRoot: s
   }
 }
 
-async function checkHandle(handle: fs.FileHandle, root: string, relFile: string): Promise<void> {
+/** Refuse an open that went through a link at the final name: the name, not followed, must be the file that was opened. */
+async function assertNameIsOpenFile(handle: fs.FileHandle, file: string, relFile: string): Promise<void> {
+  if (!(await nameIsOpenFile(handle, file))) throw refusal(relFile, 'it is a symbolic link or not a regular file');
+}
+
+async function checkHandle(handle: fs.FileHandle, root: string, relFile: string, file: string): Promise<void> {
   await assertHandleInside(handle, root, relFile);
+  await assertNameIsOpenFile(handle, file, relFile);
   const st = await handle.stat();
   if (!st.isFile() || st.nlink !== 1) throw refusal(relFile, 'it is not a regular file with a single name');
 }
@@ -120,6 +131,7 @@ export async function appendConfined(vaultRoot: string, relFile: string, content
     const refused = unrecoverableReason(key);
     if (refused) throw refusal(relFile, `it holds the bytes of a failed write that could not be cut back (${refused}); refusing further appends until the engine restarts, which sets that tail aside`);
     const OPEN = C.O_WRONLY | C.O_APPEND | C.O_NOFOLLOW | C.O_NONBLOCK;
+    if ((await nameKind(file)) === 'other') throw refusal(relFile, 'it is a symbolic link or not a regular file');
     let handle: fs.FileHandle;
     let created = false;
     try {
@@ -141,8 +153,10 @@ export async function appendConfined(vaultRoot: string, relFile: string, content
     let failure: { error: unknown } | null = null;
     try {
       await assertHandleInside(handle, root, relFile);
+      // Before `inside`: an open that followed a link (Windows, no O_NOFOLLOW) must not lead to removing that name below.
+      await assertNameIsOpenFile(handle, file, relFile);
       inside = true;
-      await checkHandle(handle, root, relFile);
+      await checkHandle(handle, root, relFile, file);
       before = (await handle.stat()).size;
       await handle.appendFile(created ? header + content : content, 'utf8');
       await handle.sync();
@@ -151,9 +165,12 @@ export async function appendConfined(vaultRoot: string, relFile: string, content
       failure = { error };
       // Cut the partial bytes back. Only a known length is ever truncated to: a failed stat must not be read as zero.
       if (!created && before !== null) {
-        await handle.truncate(before).then(() => handle.sync()).catch((cutError: unknown) => {
-          markUnrecoverable(key, cutError instanceof Error ? cutError.message : String(cutError));
-        });
+        const length = before;
+        await handle.truncate(length).then(() => handle.sync())
+          .catch(() => cutThroughSecondHandle(handle, file, length))
+          .catch((cutError: unknown) => {
+            markUnrecoverable(key, cutError instanceof Error ? cutError.message : String(cutError));
+          });
       }
     } finally {
       await handle.close().catch(() => undefined);
@@ -169,6 +186,26 @@ export async function appendConfined(vaultRoot: string, relFile: string, content
 }
 
 /**
+ * Cut `file` back to `length` through a second handle opened without O_APPEND. On Windows an append handle carries only the
+ * right to append (libuv opens O_APPEND as FILE_APPEND_DATA), so ftruncate on it fails with EPERM and a failed save could
+ * never be cut back (#1563). The second open is confined like the first: no link at the name, and it must be the very file
+ * the append handle has open, so nothing else is ever cut. The caller holds the file's append lock.
+ */
+async function cutThroughSecondHandle(appendHandle: fs.FileHandle, file: string, length: number): Promise<void> {
+  const cut = await fs.open(file, C.O_WRONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
+  try {
+    const [was, now] = await Promise.all([appendHandle.stat({ bigint: true }), cut.stat({ bigint: true })]);
+    if (was.dev !== now.dev || was.ino !== now.ino || !(await nameIsOpenFile(cut, file))) {
+      throw new Error('the file changed before a failed write could be cut back');
+    }
+    await cut.truncate(length);
+    await cut.sync();
+  } finally {
+    await cut.close().catch(() => undefined);
+  }
+}
+
+/**
  * Create a new vault file, durably: `content` is synced and so is the directory entry. It never replaces anything: a name
  * that is taken (a file, or a link at it, dangling or not) fails with EEXIST, and the caller picks another name.
  * Confined like every other write here. Returns the file's path.
@@ -178,13 +215,16 @@ export async function createConfined(vaultRoot: string, relFile: string, content
   const root = await realRoot(vaultRoot);
   const dir = (await walkDirs(root, relFile, dirs, true))!;
   const file = path.join(dir, name);
+  // Windows follows a dangling link even under O_EXCL: a taken name, link or not, is EEXIST before any open.
+  if ((await nameKind(file)) !== 'absent') throw Object.assign(new Error(`EEXIST: file already exists, open '${file}'`), { code: 'EEXIST' });
   const handle = await fs.open(file, C.O_WRONLY | C.O_CREAT | C.O_EXCL | C.O_NOFOLLOW | C.O_NONBLOCK, 0o600);
   let inside = false;
   let failure: { error: unknown } | null = null;
   try {
     await assertHandleInside(handle, root, relFile);
+    await assertNameIsOpenFile(handle, file, relFile);
     inside = true;
-    await checkHandle(handle, root, relFile);
+    await checkHandle(handle, root, relFile, file);
     await handle.writeFile(content, 'utf8');
     await handle.sync();
     await syncDirectory(dir);
@@ -210,16 +250,17 @@ export async function withConfinedFile<T>(vaultRoot: string, relFile: string, fn
   const root = await realRoot(vaultRoot);
   const dir = await walkDirs(root, relFile, dirs, false);
   if (dir === null) throw Object.assign(new Error(`ENOENT: no such file or directory, ${relFile}`), { code: 'ENOENT' });
+  const file = path.join(dir, name);
   let handle: fs.FileHandle;
   try {
-    handle = await fs.open(path.join(dir, name), C.O_RDWR | C.O_NOFOLLOW | C.O_NONBLOCK);
+    handle = await fs.open(file, C.O_RDWR | C.O_NOFOLLOW | C.O_NONBLOCK);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ELOOP' || code === 'ENXIO') throw refusal(relFile, 'it is a symbolic link or not a regular file');
     throw err;
   }
   try {
-    await checkHandle(handle, root, relFile);
+    await checkHandle(handle, root, relFile, file);
     return await fn(handle);
   } finally {
     await handle.close().catch(() => undefined);
@@ -232,6 +273,7 @@ export async function writeConfined(vaultRoot: string, relFile: string, content:
   const root = await realRoot(vaultRoot);
   const dir = (await walkDirs(root, relFile, dirs, true))!;
   const file = path.join(dir, name);
+  if ((await nameKind(file)) === 'other') throw refusal(relFile, 'it is a symbolic link or not a regular file');
   let handle: fs.FileHandle;
   try {
     // No O_TRUNC: the file is only emptied once it is known to be a regular file with a single name.
@@ -242,7 +284,7 @@ export async function writeConfined(vaultRoot: string, relFile: string, content:
     throw err;
   }
   try {
-    await checkHandle(handle, root, relFile);
+    await checkHandle(handle, root, relFile, file);
     await handle.truncate(0);
     await handle.writeFile(content, 'utf8');
   } finally {

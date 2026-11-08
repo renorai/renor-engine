@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import { spawnTree, killTree } from '../helpers/childTree';
 import { startWorkspace, restoreEnv, type Harness } from '../helpers/hiveHarness';
 import { loadMvpConfig } from '../../src/mvp/config';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 const ENGINE = path.resolve(__dirname, '../..');
 const WAIT = 20_000;
@@ -128,7 +129,7 @@ describe('stdio: invalid params are -32602 with one line (F4)', () => {
   }, 30_000);
 });
 
-describe('HTTP: a body is read only after the bearer check, and no error renders a stack (F3)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('HTTP: a body is read only after the bearer check, and no error renders a stack (F3)', () => {
   let h: Harness | undefined;
   afterEach(async () => {
     await h?.close();
@@ -208,7 +209,7 @@ describe('HTTP: a body is read only after the bearer check, and no error renders
   }, 30_000);
 });
 
-describe('HTTP: invalid params are -32602 with one line (F4)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('HTTP: invalid params are -32602 with one line (F4)', () => {
   let h: Harness | undefined;
   afterEach(async () => {
     await h?.close();
@@ -248,7 +249,7 @@ describe('HTTP: invalid params are -32602 with one line (F4)', () => {
   }, 30_000);
 });
 
-describe('SSE session mode: a DELETEd session answers 404 (F6)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('SSE session mode: a DELETEd session answers 404 (F6)', () => {
   let h: Harness | undefined;
   afterEach(async () => {
     await h?.close();
@@ -270,7 +271,7 @@ describe('SSE session mode: a DELETEd session answers 404 (F6)', () => {
   }, 30_000);
 });
 
-describe('MVP_MCP_MAX_SESSIONS ceiling (F5)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('MVP_MCP_MAX_SESSIONS ceiling (F5)', () => {
   let h: Harness | undefined;
   afterEach(async () => {
     await h?.close();

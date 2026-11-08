@@ -30,11 +30,23 @@ beforeEach(() => {
   mockOn.mockReturnThis();
 });
 
-afterEach(() => removeDb(DB));
+const openDbs: Array<ReturnType<typeof openDb>> = [];
+/** The test database, closed by afterEach before it is removed, so a failed expectation cannot leave it open. */
+function testDb() {
+  const db = openDb(DB);
+  openDbs.push(db);
+  runMigrations(db);
+  return db;
+}
+
+afterEach(() => {
+  for (const db of openDbs.splice(0)) db.close();
+  removeDb(DB);
+});
 
 describe('startWatcher', () => {
   it('registers add, change, and unlink handlers', () => {
-    const db = openDb(DB); runMigrations(db);
+    const db = testDb();
     startWatcher('/vault', db, {});
     const events = mockOn.mock.calls.map((c: any[]) => c[0]);
     expect(events).toContain('add');
@@ -44,7 +56,7 @@ describe('startWatcher', () => {
   });
 
   it('watches the vault directory', () => {
-    const db = openDb(DB); runMigrations(db);
+    const db = testDb();
     startWatcher('/vault', db, {});
     expect(chokidar.watch).toHaveBeenCalledWith(
       '/vault',
@@ -54,7 +66,7 @@ describe('startWatcher', () => {
   });
 
   it('unlink handler deletes note and relations', () => {
-    const db = openDb(DB); runMigrations(db);
+    const db = testDb();
     // Seed a note
     db.prepare("INSERT INTO notes VALUES ('/vault/test.md','Test',null,'h','2026-03-30','{}')").run();
     db.prepare("INSERT INTO entities (type,canonical_name,aliases_json,source_note,confidence,updated_at) VALUES (?,?,?,?,?,?)")
@@ -78,7 +90,7 @@ describe('startWatcher', () => {
     vi.useFakeTimers();
     try {
       const vault = '/var/lib/renor/acme';
-      const db = openDb(DB); runMigrations(db);
+      const db = testDb();
       vi.mocked(indexFile).mockRejectedValueOnce(errorNaming(vault));
       startWatcher(vault, db, {});
       const calls = captureConsole();

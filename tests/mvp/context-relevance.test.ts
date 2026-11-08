@@ -35,6 +35,7 @@ import { factText } from '../../src/retrieval/ledgerPresentation';
 import { loadMvpConfig } from '../../src/mvp/config';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import { seedWorkspace } from '../../scripts/eval/relevance-calibration';
+import { removeTestDir } from '../helpers/removeDb';
 
 /**
  * get_context relevance signal. Product path end to end (buildAgentContext over a real
@@ -49,7 +50,11 @@ const MATCHING = 'What is my dog name?';
 const UNRELATED = 'quantum chromodynamics gluon lagrangian';
 
 const tmp: string[] = [];
-afterEach(() => { for (const d of tmp.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+const openHandles: Array<{ close(): void }> = [];
+afterEach(() => {
+  for (const handle of openHandles.splice(0)) handle.close();
+  for (const d of tmp.splice(0)) removeTestDir(d);
+});
 
 /** Counts embedding calls and can hold document embeds back, to observe the background fill. */
 class CountingProvider implements EmbeddingProvider {
@@ -102,6 +107,7 @@ async function workspace(provider: EmbeddingProvider = new CountingProvider(), m
   const memoryDir = path.join(root, 'memory');
   fs.mkdirSync(memoryDir);
   const db = openDb(path.join(root, 'index.db'));
+  openHandles.push(db);
   runMigrations(db);
   const vectorIndex = new VectorIndex(db, provider.dimensions);
   vectorIndex.initTable();
@@ -193,8 +199,12 @@ describe('hosted configuration', () => {
         MVP_VERTEX_LOCATION: 'europe-west4',
       });
       const db = openDb(path.join(root, 'index.db'));
+      openHandles.push(db);
       runMigrations(db);
       const engine = attachEngine(db, loadMvpConfig());
+      // attachEngine opens the query-embedding cache beside the index (its owner, the server, closes it on shutdown).
+      const cache = engine.provider as { close?: () => void } | null;
+      if (cache?.close) openHandles.push({ close: () => cache.close!() });
       expect(engine.modelKey).toBe(Object.keys(CALIBRATED_BARS)[0]);
       expect(contextRelevanceArmed(engine, {})).toBe(CONTEXT_RELEVANCE_DEFAULT_ON);
       db.close();
@@ -290,6 +300,7 @@ describe('get_context over a real indexed workspace', () => {
   it('does not make up a verdict from nothing: no query vector, no signal', async () => {
     const w = await workspace();
     const empty = openDb(path.join(path.dirname(w.memoryDir), 'empty.db'));
+    openHandles.push(empty);
     runMigrations(empty);
     const vectorIndex = new VectorIndex(empty, w.provider.dimensions);
     vectorIndex.initTable();
@@ -681,6 +692,7 @@ async function manyFactsWorkspace(count: number) {
   const memoryDir = path.join(root, 'memory');
   fs.mkdirSync(memoryDir);
   const db = openDb(path.join(root, 'index.db'));
+  openHandles.push(db);
   runMigrations(db);
   const vectorIndex = new VectorIndex(db, provider.dimensions);
   vectorIndex.initTable();

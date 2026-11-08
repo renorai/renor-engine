@@ -56,6 +56,15 @@ afterEach(() => {
   Object.assign(process.env, BASE_ENV);
 });
 
+/**
+ * The compile cache is used only when its directory is owned by this user and closed to group and others, judged by POSIX
+ * owner and mode bits (compileCache.ts unsafeExistingDir). Native Windows reports every directory as writable by group and
+ * others, so there the cache is always declined, fail safe, and the engine starts without it; it serves the HTTP server,
+ * which is POSIX-only by design (helpers/httpServerPlatform.ts). The tests that need a cache to be enabled are skipped on
+ * win32 for that reason only (#1563); the refusals and the overlap checks run everywhere.
+ */
+const COMPILE_CACHE_NEEDS_POSIX_MODES = process.platform === 'win32';
+
 describe('MVP_COMPILE_CACHE_DIR', () => {
   let root: string;
 
@@ -204,7 +213,7 @@ describe('enabling the workspace compile cache', () => {
     root = workspaceRoot('enable');
   });
 
-  it('enables a cache in this workspace\'s own directory and creates it 0700', () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('enables a cache in this workspace\'s own directory and creates it 0700', () => {
     const dir = path.join(root, 'cache', 'compile');
     const report = enableInChild({
       MVP_MEMORY_DIR: path.join(root, 'memory'),
@@ -231,7 +240,7 @@ describe('enabling the workspace compile cache', () => {
     expect(fs.existsSync(path.join(root, 'cache'))).toBe(false);
   });
 
-  it('refuses an existing directory that group or others can write', () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('refuses an existing directory that group or others can write', () => {
     // Loading V8 code from a directory another account can write is loading code that account
     // chose. 0777 was accepted before this check existed.
     const dir = path.join(root, 'cache', 'compile');
@@ -360,7 +369,7 @@ describe('the release seed', () => {
     return { report, cached: entries(path.join(cacheDir, versioned)) };
   }
 
-  it('copies the release seed into an empty cache of this workspace, whatever uid the seed was made under', () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('copies the release seed into an empty cache of this workspace, whatever uid the seed was made under', () => {
     const { report, cached } = enableWithSeed(path.join(root, 'cache', 'compile'));
 
     expect(report.enabled).toBe(true);
@@ -369,7 +378,7 @@ describe('the release seed', () => {
     expect(fs.readFileSync(path.join(root, 'cache', 'compile', versioned, 'deadbeef'), 'utf8')).toBe('entry deadbeef');
   });
 
-  it('never mixes the seed into a cache that already holds entries of its own', () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('never mixes the seed into a cache that already holds entries of its own', () => {
     const cacheDir = path.join(root, 'cache', 'compile');
     fs.mkdirSync(path.join(cacheDir, versioned), { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(cacheDir, versioned, '11111111'), 'own entry');
@@ -380,7 +389,7 @@ describe('the release seed', () => {
     expect(cached).toEqual(['11111111']);
   });
 
-  it('does not read a seed directory that group or others can write', () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('does not read a seed directory that group or others can write', () => {
     fs.chmodSync(seed, 0o775);
     const { report, cached } = enableWithSeed(path.join(root, 'cache', 'compile'));
 
@@ -389,7 +398,7 @@ describe('the release seed', () => {
     expect(cached).toEqual([]);
   });
 
-  it('does not read a seed sub-directory writable by others, or one made by a different Node or V8 build', () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('does not read a seed sub-directory writable by others, or one made by a different Node or V8 build', () => {
     const sub = path.join(seed, versioned.replace(/-\d+$/, '-0'));
     fs.chmodSync(sub, 0o777);
     expect(enableWithSeed(path.join(root, 'cache', 'a')).report.seeded).toBe(0);
@@ -398,7 +407,7 @@ describe('the release seed', () => {
     expect(enableWithSeed(path.join(root, 'cache', 'b')).report.seeded).toBe(0);
   });
 
-  it('copies regular entries with hex names only: a symlink, a directory or another name is left', () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('copies regular entries with hex names only: a symlink, a directory or another name is left', () => {
     const sub = path.join(seed, versioned.replace(/-\d+$/, '-0'));
     fs.symlinkSync('/etc/hostname', path.join(sub, 'cafebabe'));
     fs.mkdirSync(path.join(sub, 'abcdef01'));
@@ -411,7 +420,7 @@ describe('the release seed', () => {
     expect(cached).toEqual(['0a1b2c3d', 'deadbeef']);
   });
 
-  it('starts as it always did when there is no seed, or the seed path is not a directory', () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('starts as it always did when there is no seed, or the seed path is not a directory', () => {
     expect(enableWithSeed(path.join(root, 'cache', 'a'), path.join(root, 'no-such-seed')).report.seeded).toBe(0);
     const file = path.join(root, 'a-file');
     fs.writeFileSync(file, 'x');
@@ -420,7 +429,7 @@ describe('the release seed', () => {
     expect(none.report.seeded).toBe(0);
   });
 
-  it('a seed made by compileSeed.js is used by the next start: the first start of a release finds the modules cached', () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('a seed made by compileSeed.js is used by the next start: the first start of a release finds the modules cached', () => {
     // The real thing, end to end: the seeding script fills a cache, and an engine start copies it. The copied entries are Node's own
     // (not stand-ins), so this is what a deploy followed by a first wake does.
     const seeded = path.join(root, 'real-seed');
@@ -475,7 +484,7 @@ describe('a start refused for an overlapping cache directory', () => {
     if (label !== 'auth') expect(fs.existsSync(dir)).toBe(false);
   });
 
-  it('control: the same start with a disjoint cache directory does fill it', async () => {
+  it.skipIf(COMPILE_CACHE_NEEDS_POSIX_MODES)('control: the same start with a disjoint cache directory does fill it', async () => {
     // Without this the two tests above would pass on a CLI that never writes a cache at all.
     const root = workspaceRoot('cli-ctl');
     const dir = path.join(root, 'cache', 'compile');

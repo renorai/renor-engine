@@ -5,6 +5,7 @@ import path from 'path';
 import { startWorkspace, restoreWorkspaceEnv, type Workspace } from '../helpers/mvpWorkspace';
 import { IMPORT_JOURNAL_DIR, forgetImportedNotes } from '../../src/importing/forgetImported';
 import { journalLogName } from '../../src/importing/journalLog';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * The import journal of a batch that applied, or did not finish applying (hosted.ts, journalLog.ts). Every reader that
@@ -26,7 +27,7 @@ const manifestOf = (batchId: string) => JSON.parse(fs.readFileSync(path.join(jou
   state: string; created: Array<{ relPath: string; hash: string; retired?: boolean }>; reasserted?: unknown[]; result?: unknown;
 };
 
-describe('the import journal of a batch', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the import journal of a batch', () => {
   it('leaves one whole manifest when it applied, and no log', async () => {
     ws = await startWorkspace(() => null);
     const preview = await ws.call('preview_import', { label: 'crash', files: notes });

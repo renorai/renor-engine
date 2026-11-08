@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
 import {
   captureNoteFacts,
@@ -13,12 +13,20 @@ import { runMigrations } from '../../src/db/schema';
 import { defaultDecisionModel, type DecisionModel, type DecisionRequest, type DecisionResult } from '../../src/extraction/decision-model';
 import { tmpPath } from '../helpers/tmpPath';
 import { factValue } from '../helpers/factValue';
+import { removeDb } from '../helpers/removeDb';
 
 const DB_PATH = tmpPath('test-c2-facts-writepath.db');
+const openDbs: ReturnType<typeof openDb>[] = [];
+
+afterEach(() => {
+  for (const db of openDbs.splice(0)) db.close();
+  removeDb(DB_PATH);
+});
 
 function freshDb(): ReturnType<typeof openDb> {
-  if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+  removeDb(DB_PATH);
   const db = openDb(DB_PATH);
+  openDbs.push(db);
   runMigrations(db);
   db.prepare(
     `INSERT INTO notes (path, title, kind, note_hash, modified_at, frontmatter_json)

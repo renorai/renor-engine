@@ -397,6 +397,7 @@ Off unless you give it a destination. The payload is metadata only (event names,
 | `CLAUDE_CONFIG_DIR` | `$HOME/.claude` | Claude Code's own config folder. `renor-engine connect claude-code` writes the memory rule to `CLAUDE.md` there. |
 | `CODEX_HOME` | `$HOME/.codex` | Codex's own config folder. `renor-engine connect codex` writes the memory rule to `AGENTS.md` there. |
 | `USERPROFILE` | the operating system's | Windows home folder; `renor-engine connect` uses it when `HOME` is unset. |
+| `APPDATA` | `%USERPROFILE%\AppData\Roaming` | Windows only: where `renor-engine doctor` looks for VS Code's `mcp.json`. Read only. |
 
 ## Evaluation harness
 

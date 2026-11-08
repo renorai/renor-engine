@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { refusal } from '../toolRefusal';
 import { syncDirectorySync } from '../memory/durableAppend';
+import { nameIsOpenFileSync, nameKindSync } from '../memory/sameFile';
 
 /**
  * The import journal's sidecar: `.renor-imports/<batchId>.jsonl`, one line per note a batch created or re-asserted.
@@ -47,10 +48,18 @@ export class JournalLog {
 }
 
 function openLog(file: string): number {
-  const isNew = !fs.existsSync(file);
+  const kind = nameKindSync(file);
+  // Windows follows a link even with O_CREAT; a link (dangling or not) at the name is refused before the open (#1563).
+  if (kind === 'other') throw refusal('unsafe_path', 'Unsafe import journal');
+  const isNew = kind === 'absent';
   // O_NOFOLLOW: a log reached through a symbolic link is refused, as a manifest is.
   const flags = fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW;
   const fd = fs.openSync(file, flags, 0o600);
+  // Windows has no O_NOFOLLOW, so the open above follows a link there: the name, not followed, must be the file opened (#1563).
+  if (!nameIsOpenFileSync(fd, file)) {
+    fs.closeSync(fd);
+    throw refusal('unsafe_path', 'Unsafe import journal');
+  }
   if (isNew) {
     // The new name is durable before its first line is acknowledged.
     // On Windows a directory cannot be fsynced and NTFS already journals the new name: syncDirectorySync says so (#1563).

@@ -691,6 +691,9 @@ const migrations: Migration[] = [
 
 ];
 
+/** The schema version a fully migrated index holds (what `renor-engine doctor` compares against). */
+export const LATEST_SCHEMA_VERSION: number = migrations[migrations.length - 1].version;
+
 export function runMigrations(db: Database.Database): void {
   db.prepare(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`).run();
 

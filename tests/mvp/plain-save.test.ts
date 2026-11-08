@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { loadMvpConfig } from '../../src/mvp/config';
 import { createMvpApp } from '../../src/mvp/server';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Saving a memory is one plain sentence: `remember({statement})`. The structured shape (subject, predicate and object
@@ -90,7 +91,7 @@ type Workspace = Awaited<ReturnType<typeof startWorkspace>>;
 
 const someItem = (items: string[], word: string) => items.some(item => item.includes(word));
 
-describe('a plain save: one argument, nothing to build', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a plain save: one argument, nothing to build', () => {
   let ws: Workspace;
   beforeAll(async () => { ws = await startWorkspace(); }, HOOK_TIMEOUT_MS);
   afterAll(async () => { await ws?.close(); });
@@ -142,7 +143,7 @@ describe('a plain save: one argument, nothing to build', () => {
   });
 });
 
-describe('a structured save: the old shape is accepted exactly as before', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a structured save: the old shape is accepted exactly as before', () => {
   let ws: Workspace;
   beforeAll(async () => { ws = await startWorkspace(); }, HOOK_TIMEOUT_MS);
   afterAll(async () => { await ws?.close(); });
@@ -189,7 +190,7 @@ describe('a structured save: the old shape is accepted exactly as before', () =>
   });
 });
 
-describe('what an agent is told, and what it is told when a save is refused', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('what an agent is told, and what it is told when a save is refused', () => {
   let ws: Workspace;
   beforeAll(async () => { ws = await startWorkspace(); }, HOOK_TIMEOUT_MS);
   afterAll(async () => { await ws?.close(); });
@@ -238,7 +239,7 @@ describe('what an agent is told, and what it is told when a save is refused', ()
   });
 });
 
-describe('what structure buys (pinned: dropping it is a decision, not an accident)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('what structure buys (pinned: dropping it is a decision, not an accident)', () => {
   let ws: Workspace;
   beforeAll(async () => {
     ws = await startWorkspace();

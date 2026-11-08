@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { loadConfig } from '../../src/config';
 import { loadMvpConfig } from '../../src/mvp/config';
 import { resolveEvidenceMode } from '../../src/evidence/gate';
+import { DOCTOR_CODES } from '../../src/doctor';
 
 /**
  * Anti-drift guard for docs/ENVIRONMENT-VARIABLES.md and docs/ENVIRONMENT-VARIABLES-REFERENCE.md.
@@ -45,6 +46,8 @@ const NOT_ENV: Record<string, string> = {
   SQLITE_NOTADB: 'a SQLite error code',
   EVIDENCE_MODEL_DEFAULT: 'the name of a constant of the evidence second pass (src/evidence/secondPass.ts), pinned in the index snapshot key',
   EVIDENCE_REASONING_EFFORTS: 'the name of a constant of the evidence second pass (src/evidence/secondPass.ts), pinned in the index snapshot key',
+  // `renor-engine doctor` failure codes (src/doctor.ts): output codes, not variables.
+  ...Object.fromEntries(DOCTOR_CODES.map(code => [code, 'a failure code of `renor-engine doctor`'])),
 };
 
 function sourceFiles(dir: string): string[] {

@@ -5,6 +5,7 @@ import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { freePort, startMvpServiceOnFreePort, type StartedMvpService } from './mvpPort';
+import { HTTP_SERVER_UNSUPPORTED } from './httpServerPlatform';
 
 /**
  * The port-race guard's own tests. A test that probes a port and starts the service on it loses the race when another
@@ -74,7 +75,7 @@ const picks = (...ports: number[]) => {
 };
 
 describe('startMvpServiceOnFreePort', () => {
-  it('starts on a fresh port when the first one was taken between the probe and the bind', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('starts on a fresh port when the first one was taken between the probe and the bind', async () => {
     const taken = await heldPort();
     const fresh = await freePort();
     const seen: number[] = [];
@@ -94,7 +95,7 @@ describe('startMvpServiceOnFreePort', () => {
     expect(String(((await metadata.json()) as { issuer?: unknown }).issuer)).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${fresh}/?$`));
   });
 
-  it('starts on the first port when nothing took it, with one attempt', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('starts on the first port when nothing took it, with one attempt', async () => {
     const port = await freePort();
     const offer = picks(port);
     const result = await startMvpServiceOnFreePort(configFactory(memoryDir()), undefined, { pickPort: offer.pick });
@@ -103,7 +104,7 @@ describe('startMvpServiceOnFreePort', () => {
     expect(offer.calls()).toBe(1);
   });
 
-  it('gives up after its attempts, with the bind error itself', async () => {
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('gives up after its attempts, with the bind error itself', async () => {
     const taken = await heldPort();
     const offer = picks(taken, taken, taken);
     await expect(startMvpServiceOnFreePort(configFactory(memoryDir()), undefined, { attempts: 3, pickPort: offer.pick }))

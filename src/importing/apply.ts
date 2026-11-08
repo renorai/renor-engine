@@ -13,6 +13,7 @@ import { ImportPlan, PlannedEvent, PlannedNote } from './plan';
 import { ImportBundle } from './types';
 import { secretGuardEnabled } from '../extraction/secretGuard';
 import { refuseFlaggedPlan } from './secretScreen';
+import { nameIsOpenFile, nameKind } from '../memory/sameFile';
 
 /**
  * The write layer.
@@ -348,12 +349,22 @@ export async function applyImportPlan(
  * caller has to remember.
  */
 async function openExclusive(target: string): Promise<Awaited<ReturnType<typeof fs.open>> | null> {
+  // On Windows 'wx' follows a dangling link at the name and creates its target outside: a taken name is taken, link or not.
+  if ((await nameKind(target)) !== 'absent') return null;
+  let handle: Awaited<ReturnType<typeof fs.open>>;
   try {
-    return await fs.open(target, 'wx', 0o600);
+    handle = await fs.open(target, 'wx', 0o600);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') return null;
     throw err;
   }
+  // A link planted after the check above: the name is taken (by the link), and nothing was created here that this import
+  // may later remove by that name (#1563).
+  if (!(await nameIsOpenFile(handle, target))) {
+    await handle.close();
+    return null;
+  }
+  return handle;
 }
 
 /**
@@ -376,7 +387,7 @@ async function openEmptyLeftover(target: string): Promise<fs.FileHandle | null> 
     throw err;
   }
   const opened = await handle.stat();
-  if (!isEmptyLeftover(opened) || opened.nlink !== 1) {
+  if (!isEmptyLeftover(opened) || opened.nlink !== 1 || !(await nameIsOpenFile(handle, target))) {
     await handle.close();
     return null;
   }

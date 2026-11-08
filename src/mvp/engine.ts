@@ -429,11 +429,18 @@ export function clientPath(memoryDir: string, stored: string): string {
   if (shown === undefined) {
     const resolved = path.resolve(stored);
     const root = path.resolve(memoryDir);
-    shown = resolved === root || resolved.startsWith(root + path.sep) ? path.relative(root, resolved) || stored : path.basename(stored);
+    // A vault-relative path is shown with '/' on every platform: it is an id the client sends back and the form the tools
+    // document, and on Windows path.relative separates with backslashes (#1563).
+    shown = resolved === root || resolved.startsWith(root + path.sep) ? toSlashes(path.relative(root, resolved)) || stored : path.basename(stored);
     if (clientPaths.size >= MAX_CLIENT_PATHS) clientPaths.clear();
     clientPaths.set(key, shown);
   }
   return shown;
+}
+
+/** A native relative path with '/' separators (a no-op where '/' is the separator). */
+function toSlashes(rel: string): string {
+  return path.sep === '/' ? rel : rel.split(path.sep).join('/');
 }
 
 export function resolveEngineEvidence(

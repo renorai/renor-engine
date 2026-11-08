@@ -15,6 +15,7 @@ import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server';
 import { engineRebuildEmbeddings, runningEmbeddingRebuild } from '../../src/mvp/engine';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Notes imported into a workspace that searches by meaning get their vectors (first-week scout F3/F8 residual; findings
@@ -195,7 +196,7 @@ async function workspaceWithVectors(memoryDir: string, provider: CountingHash) {
   return ws;
 }
 
-describe('notes imported with apply_import into a workspace that searches by meaning', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('notes imported with apply_import into a workspace that searches by meaning', () => {
   it('are embedded once, in the background, and then search_memory and get_context find a note by its own sentence', async () => {
     const memoryDir = tmp('import-embeddings-');
     const provider = new CountingHash();
@@ -309,7 +310,7 @@ describe('notes imported with apply_import into a workspace that searches by mea
   });
 });
 
-describe('notes imported with apply_import into a workspace that searches by keyword only', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('notes imported with apply_import into a workspace that searches by keyword only', () => {
   it('are found by keyword as before: nothing is marked or embedded, and the receipt says so', async () => {
     const ws = await start(tmp('import-embeddings-'), null);
     const preview = await ws.call('preview_import', { label: 'scout', files: FILES });
@@ -326,7 +327,7 @@ describe('notes imported with apply_import into a workspace that searches by key
   });
 });
 
-describe('notes imported with the renor-import command into a workspace that searches by meaning', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('notes imported with the renor-import command into a workspace that searches by meaning', () => {
   it('are embedded once by the workspace service when it next starts', async () => {
     const memoryDir = tmp('import-embeddings-');
     const ws = await workspaceWithVectors(memoryDir, new CountingHash());

@@ -20,6 +20,7 @@ import { warmFactVectors } from '../../src/mvp/contextRelevance';
 import type { Engine } from '../../src/mvp/engine';
 import { identityLine } from '../../src/mvp/identity';
 import { seedWorkspace } from '../../scripts/eval/relevance-calibration';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * get_context's facts lane on a returning user's workspace (first-week scout, findings F1 and F7).
@@ -125,7 +126,7 @@ async function keywordWorkspace(): Promise<(name: string, args?: Record<string, 
 const factLine = (f: Fact) => `${f.subject} · ${f.predicate} · ${f.object}`;
 const chars = (items: unknown[]) => items.reduce<number>((n, item) => n + JSON.stringify(item).length, 0);
 
-describe('the facts lane matches the words of the question, not its stop words (F1)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the facts lane matches the words of the question, not its stop words (F1)', () => {
   it("finds the time zone, not tickets that are 'in' progress, and nothing for a question never saved", async () => {
     // The scout's reproduction, verbatim (report §2, F1).
     const call = await keywordWorkspace();
@@ -198,7 +199,7 @@ async function atlasWeek(call: (name: string, args?: Record<string, unknown>) =>
   for (const [statement, subject, predicate, object, scope] of later) await call('remember', { statement, subject, predicate, object, ...(scope ? { scope } : {}) });
 }
 
-describe('facts do not crowd out the note that answers the question (F1)', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('facts do not crowd out the note that answers the question (F1)', () => {
   it('returns the Fly.io decision record within the default 800 tokens, with a dozen Atlas facts on file', async () => {
     const call = await keywordWorkspace();
     await atlasWeek(call);

@@ -5,14 +5,17 @@ import path from 'path';
 import { openDb } from '../../src/db/client';
 import { runMigrations } from '../../src/db/schema';
 import { readWhatsNew, whatsNewPageFromEnv } from '../../src/memory/whatsNew';
+import { removeTestDir } from '../helpers/removeDb';
 
 const NOW = new Date('2026-10-08T12:00:00.000Z');
 const dirs: string[] = [];
+const handles: ReturnType<typeof openDb>[] = [];
 
 function db() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whats-new-'));
   dirs.push(dir);
   const database = openDb(path.join(dir, 'renor.db'));
+  handles.push(database);
   runMigrations(database);
   return database;
 }
@@ -24,7 +27,8 @@ function save(database: ReturnType<typeof db>, at: string, author: string | null
 }
 
 afterEach(() => {
-  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  for (const handle of handles.splice(0)) handle.close();
+  for (const dir of dirs.splice(0)) removeTestDir(dir);
 });
 
 describe('whats_new', () => {

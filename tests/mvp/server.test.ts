@@ -10,6 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Single-user ChatGPT MVP — end-to-end vertical-slice tests over the REAL
@@ -149,7 +150,7 @@ afterAll(async () => {
   delete process.env.MVP_PORT;
 });
 
-describe('MVP vertical slice: owner OAuth 2.1 + remote MCP + persistent memory', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('MVP vertical slice: owner OAuth 2.1 + remote MCP + persistent memory', () => {
   let oauth: OAuthClient;
   let tokens: any;
 

@@ -10,6 +10,7 @@ import { attachEngine } from '../../src/mvp/engine';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService } from '../../src/mvp/server';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * Starting the service means owning the port. Express hands a failed bind to the same
@@ -165,7 +166,7 @@ function handlesInside(dir: string): string[] {
   return found;
 }
 
-describe('starting the service on a port', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('starting the service on a port', () => {
   it('fails with the listen error naming the port, and leaves the engine that holds it serving', async () => {
     const port = await freePort();
     const holder = await startMvpService(workspaceOn(port), null);

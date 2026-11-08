@@ -10,6 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { productEvidenceReport, type ProductEvidenceAttachment } from '../../src/evidence/attach';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * What every stranger's agent reads from a workspace: the tool list, the errors and the save
@@ -120,7 +121,7 @@ async function startWorkspace() {
 
 type Workspace = Awaited<ReturnType<typeof startWorkspace>>;
 
-describe('agent-facing text names no real person', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('agent-facing text names no real person', () => {
   let ws: Workspace;
   beforeAll(async () => { ws = await startWorkspace(); }, HOOK_TIMEOUT_MS);
   afterAll(async () => { await ws?.close(); });
@@ -154,7 +155,7 @@ describe('agent-facing text names no real person', () => {
 // What every connected client reads at every connection, whatever skill its user installed. A user's agents once logged
 // every event they handled, so reads returned echoes of those logs and rarely changed a decision (feedback 2026-10-06;
 // the skill that says the same to a new install is pinned in tests/agent-skill-tools.test.ts).
-describe('the server instructions ask for a read at the decision and a write of the why', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the server instructions ask for a read at the decision and a write of the why', () => {
   let ws: Workspace;
   let instructions: string;
   beforeAll(async () => {
@@ -197,7 +198,7 @@ describe('the server instructions ask for a read at the decision and a write of 
 
 // The empty `skippedNonUtf8Names` list the re-check saw on every save left with the incremental refresh
 // (found in review); this keeps it from coming back.
-describe('a save receipt carries no empty operator detail', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a save receipt carries no empty operator detail', () => {
   let ws: Workspace;
   beforeAll(async () => { ws = await startWorkspace(); }, HOOK_TIMEOUT_MS);
   afterAll(async () => { await ws?.close(); });

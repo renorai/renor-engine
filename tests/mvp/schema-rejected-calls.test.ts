@@ -19,6 +19,7 @@ import { flushTelemetry } from '../../src/mvp/telemetry';
 import { MAX_STATEMENT_LENGTH } from '../../src/memory/limits';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A call the tool's own input schema refuses never reaches a handler: the SDK answers it before `tracedTool` runs, so it left
@@ -176,7 +177,7 @@ const MODES: Array<[string, string]> = [
   ['SSE replies, a server per session (how it is hosted)', 'false'],
 ];
 
-describe.each(MODES)('tool_rejected: the real service, %s', (_mode, mcpJson) => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED).each(MODES)('tool_rejected: the real service, %s', (_mode, mcpJson) => {
   beforeEach(() => {
     process.env.MVP_MCP_JSON = mcpJson;
   });
@@ -290,7 +291,7 @@ describe.each(MODES)('tool_rejected: the real service, %s', (_mode, mcpJson) => 
 
 // A call on a session the engine lost (a restart, an idle sleep, the TTL sweep, the cap) is answered on a server built for that one
 // request, which is how a hosted tenant's agents are served most of the time. It is built by the same function, so it is counted.
-it('counts a call the schema refuses on a session the engine lost', async () => {
+it.skipIf(HTTP_SERVER_UNSUPPORTED)('counts a call the schema refuses on a session the engine lost', async () => {
   process.env.MVP_MCP_JSON = 'false';
   const telemetry = captureTelemetry();
   const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-rejected-'));

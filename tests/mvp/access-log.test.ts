@@ -9,6 +9,7 @@ import request from 'supertest';
 import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { createMvpApp, type MvpApp } from '../../src/mvp/server';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * ACCESS-LOG regressions (diagnostics-only middleware).
@@ -88,7 +89,7 @@ async function waitUntil(condition: () => boolean, timeoutMs = 20_000): Promise<
   }
 }
 
-describe('ACCESS-LOG: metadata-only HTTP outcome lines', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('ACCESS-LOG: metadata-only HTTP outcome lines', () => {
   it('emits outcome lines for register/authorize/login/token across status classes; nothing sensitive ever appears', async () => {
     const { app } = makeConfig();
     const markers: { ticket?: string; code?: string; secret?: string; verifier?: string; clientId?: string } = {};

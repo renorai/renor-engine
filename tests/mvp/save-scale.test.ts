@@ -16,6 +16,7 @@ import { engineRememberNote, TIMESTAMP_TICK_MS } from '../../src/mvp/engine';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { remember } from '../../src/memory/lifecycle';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A save costs what changed, not what the workspace holds (memory scout finding 14). The same workspace is built at
@@ -205,7 +206,7 @@ function armFor(ws: Workspace) {
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 
-describe('a save costs the same in a workspace sixteen times larger', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a save costs the same in a workspace sixteen times larger', () => {
   it('embeds the statement alone and reads back no more of the index, in note mode and in fact mode, at 1x and at 16x', async () => {
     // Both arms are up before either is measured, so the two are measured against the same host, minutes apart never.
     const arms = {} as Record<Scale, Workspace>;

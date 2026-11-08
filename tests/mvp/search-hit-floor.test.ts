@@ -11,6 +11,7 @@ import { SEARCH_RELEVANCE_GUIDANCE } from '../../src/mvp/contextRelevance';
 import { SESSION_EXPAND_REASON } from '../../src/retrieval/orchestrator';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import { CALIBRATED_BAR, CalibratedIdentityProvider } from '../helpers/calibratedIdentityProvider';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * search_memory's operator floor (mvp/hitFloor.ts), over the real MCP surface in memory.
@@ -108,7 +109,7 @@ const search = async (call: Awaited<ReturnType<typeof serve>>['call'], args: Rec
   return call('search_memory', { query: QUERY, ...toolArgs });
 };
 
-describe('the shipped default', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the shipped default', () => {
   it('uses 0.63 for Vertex-768 without a caller argument and 0 restores the old response shape', async () => {
     const { call } = await serve(new CalibratedIdentityProvider());
     delete process.env.RENOR_SEARCH_HIT_FLOOR;
@@ -185,7 +186,7 @@ describe('the shipped default', () => {
   });
 });
 
-describe('operator floor', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('operator floor', () => {
   it('shows each hit found by meaning in a note with its own similarity, rounded to three places', async () => {
     const { call } = await serve(new CalibratedIdentityProvider());
     const shown = await search(call, { floorSetting: 0.000001 });
@@ -275,7 +276,7 @@ describe('operator floor', () => {
   }, 60_000);
 });
 
-describe('the read-usefulness measure with an operator floor', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the read-usefulness measure with an operator floor', () => {
   // The engine counts what each read served (readUsefulness.ts), and an item is "used" only if a read served it: so it
   // counts the page the caller is shown. A hit the floor left out was not served.
   const spyOnReads = () => {
@@ -340,7 +341,7 @@ function renorBench(suite: 'v1' | 'v2') {
   return { populate, questions };
 }
 
-describe('on the pages the RenorBench dev questions get', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('on the pages the RenorBench dev questions get', () => {
   // Real pages hold what the small fixture does not: statements the session expansion added to the notes found (on v2,
   // most of a page), which a floor must follow to their notes rather than judge.
   for (const suite of ['v1', 'v2'] as const) {
@@ -394,7 +395,7 @@ describe('on the pages the RenorBench dev questions get', () => {
 });
 
 
-it('keeps relevance.fact when the floor frees slots but does not backfill its unlisted closest fact', async () => {
+it.skipIf(HTTP_SERVER_UNSUPPORTED)('keeps relevance.fact when the floor frees slots but does not backfill its unlisted closest fact', async () => {
   const { call } = await serve(new EvalHashEmbeddingProvider(), memoryDir => {
     fs.mkdirSync(path.join(memoryDir, 'Notes'), { recursive: true });
     for (let i = 0; i < 24; i++) fs.writeFileSync(path.join(memoryDir, 'Notes', `editor-${i}.md`),

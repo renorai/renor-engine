@@ -6,6 +6,7 @@ import { createMvpApp } from '../../src/mvp/server';
 import { loadMvpConfig } from '../../src/mvp/config';
 import { removeDailyHeaderFacts } from '../../src/indexer/pipeline';
 import * as pipeline from '../../src/indexer/pipeline';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 /**
  * A server removes the facts an earlier build made of the engine's own daily-note headers when it starts, before it
@@ -55,7 +56,7 @@ function config() {
   return loadMvpConfig();
 }
 
-describe('the cleanup a server does when it starts', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('the cleanup a server does when it starts', () => {
   it('runs once, over the whole index, before the server is returned', async () => {
     const app = createMvpApp(config(), null);
     expect(removeDailyHeaderFacts).toHaveBeenCalledTimes(1);

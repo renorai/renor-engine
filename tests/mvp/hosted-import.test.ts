@@ -12,6 +12,7 @@ import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server
 import { IMPORT_LIMITS } from '../../src/importing/hosted';
 import { KEY_SHAPES, Rng } from '../../scripts/eval/secret-guard/plantedSet';
 import type { Express } from 'express';
+import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
 const OWNER_EMAIL = 'owner@example.test';
 const OWNER_PASSWORD = 'synthetic-owner-secret-123';
@@ -131,7 +132,7 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
   return body;
 }
 
-describe('hosted vault import over authenticated MCP', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('hosted vault import over authenticated MCP', () => {
   it('keeps notes re-asserted by a later batch until that batch is undone', async () => {
     const t = await tenant();
     try {
@@ -531,7 +532,7 @@ describe('hosted vault import over authenticated MCP', () => {
 
 });
 
-describe('hosted vault import with the secret guard (RENOR_SECRET_GUARD) on', () => {
+describe.skipIf(HTTP_SERVER_UNSUPPORTED)('hosted vault import with the secret guard (RENOR_SECRET_GUARD) on', () => {
   // A planted synthetic key (scripts/eval/secret-guard/plantedSet.ts), as the guard's own tests use.
   const TOKEN = KEY_SHAPES.github(new Rng(20261003));
   const keysNote = { relativePath: 'Projects/keys.md', markdown: `# Keys\n\nThe deploy token is ${TOKEN}.\n` };
