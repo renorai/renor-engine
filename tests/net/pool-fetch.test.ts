@@ -16,7 +16,7 @@ import { DEFAULT_POOL_IDLE_MS, poolFetch } from '../../src/net/poolFetch';
  */
 
 // Every test here makes real HTTP requests, and two of them wait out real seconds (a connection's idle time); a loaded machine needs the room.
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig?.({ testTimeout: 20_000 }); // Bun's vitest shim has no setConfig; each long test below also passes its own timeout
 
 interface Origin {
   url: string;
@@ -52,7 +52,12 @@ afterEach(async () => {
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const ask = async (request: typeof fetch, url: string) => (await request(url)).text();
 
-describe('poolFetch', () => {
+// poolFetch is plain fetch where there is no undici global dispatcher (see src/net/poolFetch.ts), which is what Bun is: there is no
+// pool to configure, so these undici-pool assertions have nothing to observe there. Node runs all of them.
+const underBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+const describeNode = underBun ? describe.skip : describe;
+
+describeNode('poolFetch', () => {
   it('opens one connection for two calls a little more than 4 s apart, where fetch opens two', async () => {
     const [plain, pooled, hinted] = [await origin(), await origin(), await origin(3)];
     const request = poolFetch();

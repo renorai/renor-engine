@@ -2,6 +2,7 @@ import type Database from '../db/sqlite';
 import { databaseStamp } from '../db/readCache';
 import { prepareOnce } from '../db/statements';
 import { byPlace } from './semantic';
+import { words } from '../memory/factTerms';
 
 /** A chunk full-text search matched, with its BM25 score as `bm25()` gives it (lower is a better match). */
 export interface KeywordHit {
@@ -65,6 +66,30 @@ export function keywordSearch(db: Database.Database, match: string, limit: numbe
 /** The one off switch for the three keyword defaults (OR query, stemmed index, search_text fallback): exactly `0` restores all three. */
 export function keywordDefaultsOff(env: NodeJS.ProcessEnv = process.env): boolean {
   return (env.RENOR_KEYWORD_DEFAULTS ?? '').trim() === '0';
+}
+
+/** Question words no keyword expression is built from (the OR expression of H11b, the keyword variants). */
+export const FTS_STOP_WORDS = new Set([
+  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'which', 'who', 'where', 'when',
+  'why', 'how', 'do', 'does', 'did', 'to', 'for', 'of', 'in', 'on', 'at', 'with', 'and',
+  'or', 'my', 'your', 'our', 'their', 'his', 'her', 'it', 'this', 'that', 'about',
+  // Two-letter words that never name a topic. Not every two-letter word: CI, DB, AI, Go or IP often are the topic.
+  'am', 'as', 'be', 'by', 'he', 'if', 'me', 'so', 'up', 'we',
+]);
+
+/**
+ * H11b (default on; RENOR_KEYWORD_OR_ALL=0 restores the legacy path): the keyword lane issues one FTS expression, the
+ * question's content words joined by OR (BM25 ranks rare words highest), instead of the variants. Pre-registered in
+ * data/renor-goal-better-temporal-2/prereg/H11b-H18-H12.md.
+ */
+export function keywordOrAll(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !keywordDefaultsOff(env) && (env.RENOR_KEYWORD_OR_ALL ?? '').trim() !== '0';
+}
+
+/** The FTS expression of H11b: each content word quoted, joined by OR. */
+export function keywordOrMatch(query: string): string {
+  const terms = [...new Set(words(query).filter(word => !FTS_STOP_WORDS.has(word)))];
+  return terms.map(term => `"${term.replace(/"/g, '""')}"`).join(' OR ');
 }
 
 /** Searches a Porter-stemmed copy by default; RENOR_KEYWORD_STEM=0 or RENOR_KEYWORD_DEFAULTS=0 restores the legacy unstemmed index. */

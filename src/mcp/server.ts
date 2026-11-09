@@ -6,7 +6,8 @@ import { PassThrough, type Readable } from 'stream';
 import { VectorIndex } from '../embeddings/vectorIndex';
 import { retrieveContext } from '../retrieval/orchestrator';
 import { lookupEntity } from '../retrieval/entityLookup';
-import { appendDailyMemory } from '../memory/writer';
+import { appendDailyEntry } from '../memory/writer';
+import { appendedEntryId } from '../memorymap/memoryMap';
 import { remember, factsFor, resolveLedgerPath, DEFAULT_LEDGER_REL } from '../memory/lifecycle';
 import { indexFile } from '../indexer/pipeline';
 import { pickEntityName, pickTopK, quoteFtsQuery, shownPage } from '../retrieval/queryHelpers';
@@ -16,6 +17,7 @@ import { selectNoteIdentityHits, NOTE_IDENTITY_EXTRA } from '../retrieval/noteId
 import { isLedgerPreamble, keywordLedgerHits, ledgerNoteMatcher, presentLedgerEvents } from '../retrieval/ledgerPresentation';
 import { EvidenceExtractor } from '../evidence/secondPass';
 import { createEvidenceExtractor, resolveEvidenceToolOptions, type EvidenceToolOptions } from '../evidence/options';
+import { markCorrectedHits } from './correctedHits';
 import { attachSearchEvidence, collectEvidence, searchEvidenceEnabled, EVIDENCE_HIT_PATH } from '../evidence/attach';
 import { composeQueryContextFromDb, structuredContextEnabled } from '../context/composer';
 import type { Config } from '../config';
@@ -27,6 +29,8 @@ import { escapeInvisibleControls } from '../mvp/sanitize';
 import { matchingCurrentFactHits } from '../retrieval/factsFirst';
 import { HANDOFF_ARG_DESCRIPTIONS, HANDOFF_TOOL_DESCRIPTION, HANDOFF_TOOL_NAME, handoffNoteEnabled, runHandoffTool, startHandoffSweep } from '../memory/handoff';
 import { ENGINE_VERSION } from '../buildIdentity';
+import { layeredScopeEnabled, recordSaveOrigin } from '../mvp/layeredScope';
+import { originFromDirectory } from '../recall/origin';
 import * as z from 'zod';
 import { OUT_ASK_AGENT, OUT_HANDOFF, OUT_HIT, OUT_LIST_REQUESTS, OUT_REQUEST, OUT_WHATS_NEW, toolCarriesStructured } from '../mvp/outputSchemas';
 
@@ -54,6 +58,10 @@ export function createMcpTools(
   // The ledger is the engine's own record, not a memory: no read tool returns its header or the markup of its records.
   const vault = { memoryDir: config.vaultPath, ledgerRelPath: config.memoryLedger ?? DEFAULT_LEDGER_REL };
   const isLedger = ledgerNoteMatcher(vault);
+  // RENOR_LAYERED_SCOPE: a stdio server runs in the project its client opened, so its saves are said there (recall/origin.ts).
+  // Read once, when the first save asks: the working directory does not change under a running server.
+  let stdioOrigin: string | null | undefined;
+  const originHere = (): string | null => (stdioOrigin === undefined ? (stdioOrigin = originFromDirectory(process.cwd())) : stdioOrigin);
 
   // A save writes a file (the day's note, or the ledger) and nothing else, so search and keyword would not find it until
   // `renor index` ran again. Index the file just written, cut the way `renor index` cuts it, as the hosted save does.
@@ -112,7 +120,8 @@ export function createMcpTools(
         enabled,
       });
       // The evidence pass above read the sources as stored; what the caller is shown is what the user said.
-      const shown = presentLedgerEvents(attached.hits, isLedger);
+      // #1457: a hit a later hit on the page corrects is marked superseded and listed after its correction.
+      const shown = markCorrectedHits(presentLedgerEvents(attached.hits, isLedger));
       // C0 shared composer (ADR-0003 §5): opt-in via RENOR_STRUCTURED_CONTEXT
       // (default OFF — plain hits array, unchanged contract). When on, the
       // composed bounded context ships alongside the hits.
@@ -196,6 +205,9 @@ export function createMcpTools(
       const receipt = await remember(db, config.vaultPath, ledgerRel, { ...args, source: identity ?? undefined });
       // Nothing was written when the fact was already current, as the hosted save skips its refresh.
       if (receipt.action === 'nochange') return receipt;
+      if (layeredScopeEnabled() && receipt.eventId) {
+        recordSaveOrigin(db, { eventId: receipt.eventId, text: `${receipt.subject} ${receipt.predicate}: ${args.object}`, subject: receipt.subject, origin: originHere() });
+      }
       const failed = await indexSaved(resolveLedgerPath(config.vaultPath, ledgerRel));
       return failed ? { ...receipt, ...failed } : receipt;
     },
@@ -214,7 +226,14 @@ export function createMcpTools(
     async note(args: { text: string; date?: string; source?: string }) {
       const date = args.date ?? new Date().toISOString().substring(0, 10);
       const source = identity ?? 'mcp';
-      const filePath = await appendDailyMemory(config.vaultPath, date, { text: args.text, source }, config.memoryDir);
+      const written = await appendDailyEntry(config.vaultPath, date, { text: args.text, source }, config.memoryDir);
+      const filePath = written.filePath;
+      if (layeredScopeEnabled()) {
+        // The entry's memory_map id, so delete_retired_memory removes this row with the entry (layeredScope.ts forgetOrigins).
+        const notePath = clientPath(config.vaultPath, filePath).split('\\').join('/');
+        const noteId = appendedEntryId(notePath, written.entry);
+        if (noteId) recordSaveOrigin(db, { noteId, notePath, text: args.text, origin: originHere() });
+      }
       const failed = await indexSaved(filePath);
       return { ok: true, path: filePath, ...failed };
     },

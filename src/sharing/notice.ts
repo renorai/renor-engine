@@ -18,13 +18,13 @@ import { defaultInForce, defaultSharingDir, hostedEngine } from './state';
 
 export const NOTICE_FILE = 'sharing-notice.json';
 /** The id of the words below. Change the words, change the id. */
-export const NOTICE_WORDING_VERSION = 'engine-notice-2026-10-28';
+export const NOTICE_WORDING_VERSION = 'engine-notice-2026-11-07';
 export const TELEMETRY_DOC_URL = 'https://github.com/renorai/renor-engine/blob/main/docs/TELEMETRY.md';
 
 export type NoticeSurface = 'terminal' | 'agent';
 
 export const NOTICE_LINE =
-  'Renor sends anonymous usage numbers (never text, names or paths) to improve its search. '
+  'Renor sends anonymous usage numbers (never text, names or paths) to improve Renor for everyone. '
   + 'Turn them off any time: tell your agent, run `renor-engine telemetry off`, or set DO_NOT_TRACK=1. '
   + `Details: ${TELEMETRY_DOC_URL}`;
 

@@ -9,7 +9,7 @@ import { applyAnswerCheck } from '../answerCheck.js';
 import { contextItems } from '../readUsefulness.js';
 import { observeEnabled } from '../observations.js';
 import { workspaceIsEmpty, EMPTY_WORKSPACE_NOTE } from '../../memory/whatsNew.js';
-import { OUTPUT_SCHEMA_BOUND_NOTE, headerText, toolError } from './shared.js';
+import { OUTPUT_SCHEMA_BOUND_NOTE, callOrigin, headerText, toolError } from './shared.js';
 import type { ToolContext } from './setup.js';
 
 /** Registers get_context: the facts and saved memories that match a request. */
@@ -56,6 +56,7 @@ export function registerGetContextTool(ctx: ToolContext): void {
         query: args.query,
         scope: args.scope,
         connectionScope: headerText(extra?.requestInfo?.headers, 'x-renor-scope'),
+        origin: callOrigin(extra, config),
         maxTokens: args.max_tokens,
         includeHistory: args.include_history,
         reader: readerOf(extra),

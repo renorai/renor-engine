@@ -28,7 +28,7 @@ the dashboard sends its own) and who set it (`cli`, `setup`, `agent`, `dashboard
 ## How you are told, and how you choose
 
 - **The first-run notice.** One line, shown once per install and recorded in `sharing-notice.json` next to the install's own record
-  (`~/.config/renor`, or `RENOR_SHARING_DIR`): "Renor sends anonymous usage numbers (never text, names or paths) to improve its search. Turn them
+  (`~/.config/renor`, or `RENOR_SHARING_DIR`): "Renor sends anonymous usage numbers (never text, names or paths) to improve Renor for everyone. Turn them
   off any time: tell your agent, run `renor-engine telemetry off`, or set DO_NOT_TRACK=1. Details: this page." It is shown only while the default is
   what is in force (not after any choice, not under `DO_NOT_TRACK=1` or `RENOR_SHARING=off`, not on a hosted workspace, whose dashboard says its own
   words), on each place a person can read it, and each place is recorded on its own, because whoever starts the server is often not whoever talks

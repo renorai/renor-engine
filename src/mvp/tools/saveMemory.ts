@@ -3,7 +3,8 @@ import { refusal } from '../../toolRefusal.js';
 import { autoCorrectionEnabled, detectCorrection } from '../../memory/autoCorrection.js';
 import { remember, scopeFilterFor } from '../../memory/lifecycle.js';
 import { possibleDuplicates } from '../../memory/factConflicts.js';
-import { omittedWhenBlank, CITES_ARG, SCOPE_ARG, SOURCE_ARG_DESCRIPTION, OUT_CREATED_FACT, OUT_CLOSED_FACT, OUT_DUPLICATES, sourceOf, agentOf, oneLineHint, toolError } from './shared.js';
+import { omittedWhenBlank, CITES_ARG, SCOPE_ARG, SOURCE_ARG_DESCRIPTION, OUT_CREATED_FACT, OUT_CLOSED_FACT, OUT_DUPLICATES, sourceOf, agentOf, callOrigin, oneLineHint, toolError } from './shared.js';
+import { layeredScopeEnabled, recordSaveOrigin } from '../layeredScope.js';
 import type { ToolContext } from './setup.js';
 
 /** Registers save_memory: the lifecycle save of a value with its subject and predicate. */
@@ -54,6 +55,10 @@ export function registerSaveMemoryTool(ctx: ToolContext): void {
       });
       usefulness.cited(args.cites);
       if (receipt.action !== 'nochange') usefulness.updated(receipt.subject, receipt.predicate);
+      // RENOR_LAYERED_SCOPE: where this was said and whether it is about the user or a project (metadata, nothing moves).
+      if (layeredScopeEnabled() && receipt.action !== 'nochange' && receipt.eventId) {
+        recordSaveOrigin(db, { eventId: receipt.eventId, text: `${receipt.subject} ${receipt.predicate}: ${object}`, subject: receipt.subject, origin: callOrigin(extra, config), explicitScope: args.scope });
+      }
       // The same advisory hint `remember` gives a fact receipt (memory/factConflicts.ts): the fact is saved whatever
       // this read does, so its failure leaves the hint out instead of failing the save.
       let duplicates: ReturnType<typeof possibleDuplicates> = { values: [], total: 0 };

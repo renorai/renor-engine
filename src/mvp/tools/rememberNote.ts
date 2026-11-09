@@ -3,7 +3,8 @@ import { MAX_STATEMENT_LENGTH } from '../../memory/limits.js';
 import { assertReplaceable } from '../../memorymap/replacements.js';
 import { normalizeScope } from '../scope.js';
 import { engineRememberNote } from '../engine.js';
-import { omittedWhenBlank, TIMEZONE_ARG, CITES_ARG, REPLACES_ARG, SCOPE_ARG, SOURCE_ARG_DESCRIPTION, OUT_INDEX_PASS, OUT_REPLACEMENT, sourceOf, indexSavedNote, toolError } from './shared.js';
+import { omittedWhenBlank, TIMEZONE_ARG, CITES_ARG, REPLACES_ARG, SCOPE_ARG, SOURCE_ARG_DESCRIPTION, OUT_INDEX_PASS, OUT_REPLACEMENT, sourceOf, callOrigin, indexSavedNote, toolError } from './shared.js';
+import { layeredScopeEnabled, recordSaveOrigin } from '../layeredScope.js';
 import type { ToolContext } from './setup.js';
 
 /** Registers remember_note. */
@@ -42,6 +43,9 @@ export function registerRememberNoteTool(ctx: ToolContext): void {
       const inferred = args.replaces === undefined ? await inferReplacesFor(args.text, args.scope, source ?? 'mcp') : undefined;
       const body = await engineRememberNote(config, args.text, args.date, source, args.scope, args.timezone);
       recordNoteSave(body.file, args.text, source, body.scope);
+      if (layeredScopeEnabled() && body.id) {
+        recordSaveOrigin(db, { noteId: body.id, notePath: body.file, text: args.text, origin: callOrigin(extra, config), explicitScope: args.scope });
+      }
       usefulness.cited(args.cites);
       const replaces = args.replaces ?? inferred;
       const replaced = replaces !== undefined && body.id

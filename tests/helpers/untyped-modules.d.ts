@@ -5,6 +5,7 @@ declare module '*/scripts/gate/agent-gate.mjs';
 // The quick tier and the run's file order: plain ESM JavaScript beside the gate, with the tests that state them.
 declare module '*/scripts/gate/quick-select.mjs';
 declare module '*/scripts/gate/record-durations.mjs';
+declare module '*/scripts/gate/lint-baseline.mjs';
 // The merge-ready check's gate-record parser, which the quick tier's tests hold to its promise (a quick record is refused).
 declare module '*/merge-ready/gate-record.mjs';
 // Its status-description parser, which the status poster's tests hold to its promise (a listed known flake is not a flake).

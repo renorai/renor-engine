@@ -4,7 +4,7 @@ import { encodeTokens } from '../indexer/tokenizer';
 import { escapeInvisibleControls } from './sanitize';
 import { labelMemoryText } from './hiddenSpans';
 import { currentRankingTrace } from '../retrieval/rankingTrace';
-import { keywordDefaultsOff } from '../retrieval/keyword';
+import { FTS_STOP_WORDS, keywordDefaultsOff, keywordOrAll, keywordOrMatch } from '../retrieval/keyword';
 import { engineSearchMemory, engineSearchText, type Engine } from './engine';
 import { leadingSummaryHits } from '../digests/digests';
 import { normalizeScope, savedScopeMatches } from './scope';
@@ -51,12 +51,18 @@ import { turnScorer, vectorsMeanSomething } from '../retrieval/readerEvents';
 import { ruleApprovalsEnabled } from './ruleApprovals';
 import { ownScopeFirstFacts, ownScopeFirstMemories, ownScopeSlug } from './ownScopeFirst';
 import { observeEnabled } from './observations';
+import { layeredScopeEnabled, layeredView, layerItems } from './layeredScope';
 
 export interface AgentContextOptions {
   query?: string;
   scope?: string;
   /** The project scope the connection names (x-renor-scope, written by `renor connect` into a project config). Only orders, only with RENOR_OWN_SCOPE_FIRST on. */
   connectionScope?: string;
+  /**
+   * Where the read is made (recall/origin.ts: a repository, a chat client, or null for unknown). Read only with
+   * RENOR_LAYERED_SCOPE on and no `scope`: personal and this origin's memory are eligible, other origins' are not.
+   */
+  origin?: string | null;
   maxTokens?: number;
   /** The reading agent's name: a fact saved under another name carries its `source`. Absent: every fact with an author does. */
   reader?: string;
@@ -94,6 +100,10 @@ export interface AgentContextFact {
   writerConflict?: string;
   /** Set (RENOR_STATUS_FRESHNESS) on a short-lived status fact past its freshness window. */
   staleStatus?: string;
+  /** RENOR_LAYERED_SCOPE: set on a fact another project saved, shown because the query named it or nothing else answered. */
+  otherProject?: true;
+  /** With otherProject: where that project's fact was saved (its origin). */
+  savedIn?: string;
 }
 
 export interface AgentContextMemory {
@@ -118,6 +128,10 @@ export interface AgentContextMemory {
   matched?: boolean;
   /** Where the memory came from: owner, agent, captured or imported (RENOR_AUTHORITY_LABELS, default off; absent when off). */
   authority?: Authority;
+  /** RENOR_LAYERED_SCOPE: set on a memory another project saved, shown because the query named it or nothing else answered. */
+  otherProject?: true;
+  /** With otherProject: where it was saved (its origin). */
+  savedIn?: string;
   /**
    * `import` on a memory under `Imported/`: a document someone imported, written as an ordinary note. Its text is
    * untrusted source material, not one of the engine's own daily entries, and the path alone was the only thing that
@@ -128,13 +142,7 @@ export interface AgentContextMemory {
   earlier?: true;
 }
 
-export const FTS_STOP_WORDS = new Set([
-  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'which', 'who', 'where', 'when',
-  'why', 'how', 'do', 'does', 'did', 'to', 'for', 'of', 'in', 'on', 'at', 'with', 'and',
-  'or', 'my', 'your', 'our', 'their', 'his', 'her', 'it', 'this', 'that', 'about',
-  // Two-letter words that never name a topic. Not every two-letter word: CI, DB, AI, Go or IP often are the topic.
-  'am', 'as', 'be', 'by', 'he', 'if', 'me', 'so', 'up', 'we',
-]);
+export { FTS_STOP_WORDS } from '../retrieval/keyword';
 
 /**
  * The facts lane's stop words: FTS_STOP_WORDS and the other words that never say what a fact is about. Pronouns,
@@ -414,20 +422,7 @@ export function capFactObject(object: string, maxTokens: number): string {
 const objectIs = (shown: string, value: string): boolean =>
   shown === value || (shown.includes('…') && value.startsWith(shown.split('…')[0]));
 
-/**
- * H11b (default on; RENOR_KEYWORD_OR_ALL=0 restores the legacy path): the keyword lane issues one FTS expression, the
- * question's content words joined by OR (BM25 ranks rare words highest), instead of the variants. Pre-registered in
- * data/renor-goal-better-temporal-2/prereg/H11b-H18-H12.md.
- */
-export function keywordOrAll(env: NodeJS.ProcessEnv = process.env): boolean {
-  return !keywordDefaultsOff(env) && (env.RENOR_KEYWORD_OR_ALL ?? '').trim() !== '0';
-}
-
-/** The FTS expression of H11b: each content word quoted, joined by OR. */
-export function keywordOrMatch(query: string): string {
-  const terms = [...new Set(words(query).filter(word => !FTS_STOP_WORDS.has(word)))];
-  return terms.map(term => `"${term.replace(/"/g, '""')}"`).join(' OR ');
-}
+export { keywordOrAll, keywordOrMatch } from '../retrieval/keyword';
 
 /** H12 (default on; =0 restores legacy): search_text falls back to an OR over the words when the exact phrase is empty. */
 export function searchTextFallbackEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -1564,13 +1559,21 @@ export async function buildAgentContext(
   const staleOf = (fact: CurrentFact): string | null => freshness === 'off' ? null : staleStatusOf(fact, readAt);
   // RENOR_OWN_SCOPE_FIRST: with no scope passed and a default project scope set, that scope's items lead other scopes'.
   const ownScope = scopeNorm === undefined ? ownScopeSlug(options.env, options.connectionScope) : null;
-  const facts = ownScopeFirstFacts(inReadSnapshot(db, () => currentFactMatches(db, query, scopeNorm, query ? 12 : 20, meaning))
+  const allFacts = ownScopeFirstFacts(inReadSnapshot(db, () => currentFactMatches(db, query, scopeNorm, query ? 12 : 20, meaning))
     .filter(fact => freshness !== 'hide' || staleOf(fact) === null), ownScope);
   markRetrieved(); // the matches and the facts are in hand: what follows builds the reply (callPhases.ts)
 
   // After the keyword matches, so a statement a keyword search also found is that match, not the added copy.
   const isLedger = ledgerNoteMatcher({ memoryDir, ledgerRelPath: options.ledgerRelPath ?? DEFAULT_LEDGER_REL });
-  const deduplicated = ownScopeFirstMemories(dedupeMemories([...memories, ...added]), ownScope);
+  const allMemories = ownScopeFirstMemories(dedupeMemories([...memories, ...added]), ownScope);
+  // RENOR_LAYERED_SCOPE (off by default), only when no scope was passed (an explicit scope keeps its partition): personal and
+  // this origin's items are eligible; another project's are dropped, or labelled when the query names it or nothing else answered.
+  const layered = scopeNorm === undefined && layeredScopeEnabled(env) ? layeredView(db, options.origin ?? null, query) : null; // outside the snapshot: its first use creates the table
+  const layeredPick = layered
+    ? inReadSnapshot(db, () => layerItems(layered, allFacts, allMemories, f => f, m => m, m => m.matched !== false && m.reason !== SESSION_EXPAND_REASON))
+    : null;
+  const facts = layeredPick ? layeredPick.facts : allFacts;
+  const deduplicated = layeredPick ? layeredPick.memories : allMemories;
   // RENOR_CONTEXT_DISTINCT (off by default): a memory that repeats the reply's facts or another memory is not listed.
   const distinct = contextDistinctEnabled(options.env) ? distinctMemories(deduplicated, facts, isLedger) : deduplicated;
   // RENOR_CONTEXT_NEWER_FIRST (off by default): of two near-identical notes, the newer is listed first and the older is tagged `earlier`.
@@ -1598,14 +1601,21 @@ export async function buildAgentContext(
       query, onFile: nameOnFile(db, memoryDir, { scope: scopeNorm, includeHistory: options.includeHistory === true, ledgerRelPath: options.ledgerRelPath }),
     }))
     : null;
-  const closestFact = judged?.closestFact;
+  // Layered: a closest fact of another project stands in only where that project's items may be shown, and labelled.
+  const closestVerdict = judged?.closestFact && layered ? layered.fact(judged.closestFact) : null;
+  const closestFact = !closestVerdict || closestVerdict.visibility === 'in'
+    ? judged?.closestFact
+    : closestVerdict.visibility === 'named' || layeredPick?.fallback
+      ? { ...judged!.closestFact!, otherProject: true as const, savedIn: closestVerdict.origin ?? 'unknown' }
+      : undefined;
   const unpinnedFacts = facts.filter(f => !f.eventId || !pinnedRules.eventIds.has(f.eventId.toLowerCase()));
   const shownFacts = unpinnedFacts.length === 0 && closestFact && (!closestFact.eventId || !pinnedRules.eventIds.has(closestFact.eventId.toLowerCase())) ? [closestFact] : unpinnedFacts;
   // The values another writer replaced that stay open against a shown fact (memory/writerConflicts.ts): a fact with one
   // carries its line, and a fact with none is shaped as it always was.
   const disputes = writerConflictLines(db, shownFacts.map(fact => fact.eventId));
   const shaped = (fact: CurrentFact): AgentContextFact => {
-    const base = { ...toAgentFact(fact, options.reader), ...authorityField(authorityOfSource(fact.author), options.env) };
+    const label = (fact as { otherProject?: true; savedIn?: string }).otherProject ? { otherProject: true as const, savedIn: (fact as { savedIn?: string }).savedIn } : {};
+    const base = { ...toAgentFact(fact, options.reader), ...authorityField(authorityOfSource(fact.author), options.env), ...label };
     const line = fact.eventId === null ? undefined : disputes.get(fact.eventId);
     const stale = staleOf(fact);
     const marked = stale === null ? base : { ...base, staleStatus: stale };
@@ -1650,7 +1660,9 @@ export async function buildAgentContext(
     if (!isLedger(memory.notePath)) return labelMemoryText({ ...memory, ...authorityField(authorityOfChunk(memory.notePath, memory.text), options.env) });
     const plain = normalizeMemory({ ...memory, notePath: '', headingPath: '' }, memory.reason)!;
     const saved = ledgerEventIds(memory).filter(id => eventAuthors.has(id)).map(id => authorityOfSource(eventAuthors.get(id)));
-    return labelMemoryText({ ...plain, ...eventMarker(ledgerEventIds(memory), eventAuthors, options.reader), ...authorityField(lowestAuthority(saved), options.env) });
+    // The layered label (another project's memory) is the memory's own field: kept when the ledger's paths are taken off.
+    const label = memory.otherProject ? { otherProject: memory.otherProject, savedIn: memory.savedIn } : {};
+    return labelMemoryText({ ...plain, ...eventMarker(ledgerEventIds(memory), eventAuthors, options.reader), ...authorityField(lowestAuthority(saved), options.env), ...label });
   });
   // The dated outline (RENOR_DATED_OUTLINE, off by default): the pool is read here, the block is built last (below), from
   // the room the finished reply leaves, so it never takes a place from a fact or memory. Off performs no lookup and changes

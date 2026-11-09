@@ -19,7 +19,8 @@ import { withReplacements } from '../../memorymap/replacements.js';
 import { labelMemoryText } from '../hiddenSpans.js';
 import { applyAnswerCheck } from '../answerCheck.js';
 import { searchItems } from '../readUsefulness.js';
-import { EVENTS_HITS, DIGEST_HITS, SPAN_HITS, TIMELINE_HITS, EVIDENCE_WAIT_STATES, EVIDENCE_DAILY_CAP_STATE, markStoredHit, SearchHit, shortScore, toolError, searchResult } from './shared.js';
+import { EVENTS_HITS, DIGEST_HITS, SPAN_HITS, TIMELINE_HITS, EVIDENCE_WAIT_STATES, EVIDENCE_DAILY_CAP_STATE, markStoredHit, SearchHit, shortScore, toolError, searchResult, callOrigin } from './shared.js';
+import { layeredScopeEnabled, layeredView, layerItems } from '../layeredScope.js';
 import type { ToolContext } from './setup.js';
 
 /** Registers search_memory. */
@@ -87,7 +88,12 @@ export function registerSearchMemoryTool(ctx: ToolContext): void {
         // Filter the completed page without backfilling. If the operator raises the floor above the relevance
         // bar and removes the closest chunk, withhold its verdict: the unchanged tool guidance promises the match.
         const floored = floor === 0 ? null : applyHitFloor(hits, floor, searchHitFloorKeep());
-        const page = floored ? floored.hits : hits;
+        // RENOR_LAYERED_SCOPE (off by default), with no scope passed: another project's hits are left out, or labelled when the
+        // query names that project or no other hit is left (layeredScope.ts).
+        const unlayered = floored ? floored.hits : hits;
+        const page = args.scope === undefined && layeredScopeEnabled()
+          ? layerItems(layeredView(db, callOrigin(extra, config), args.query), [], unlayered, f => f, hit => hit as { notePath: string; text: string; headingPath?: string }).memories
+          : unlayered;
         let shownVerdict = verdict;
         // At the model's calibrated floor a relevant closest match already clears the floor, so the normal path
         // needs no second fact-lane assessment. Only a floor above its reported cosine could have removed it.

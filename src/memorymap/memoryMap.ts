@@ -7,6 +7,7 @@ import type Database from '../db/sqlite';
 import { parseNote } from '../indexer/parser';
 import { isIgnoredByVault } from '../indexer/walker';
 import { indexFile, type IndexOptions } from '../indexer/pipeline';
+import { forgetOrigins } from '../mvp/layeredScope';
 import { eraseRetiredFact, factEventId, listRetiredFacts, resolveLedgerPath, restoreFact, retireFact, type FactRetirementReceipt } from '../memory/lifecycle';
 import { writerConflictLines } from '../memory/writerConflicts';
 import { DAILY_FILE_RE, ENTRY_LINE_RE, decodeEntryLine, engineDailyHeader, entryInstant, isEmptyEngineDailyNote, parseEntryHeader, type EntryHeader } from '../memory/dailyNote';
@@ -1710,6 +1711,9 @@ async function bytesBelow(dir: string): Promise<number> {
  */
 async function eraseFact(ctx: MemoryMapContext, id: string): Promise<PurgeReceipt> {
   const receipt = await eraseRetiredFact(ctx.db, ctx.memoryDir, ctx.ledgerRelPath, id, ctx.indexOptions.vectorIndex);
+  // RENOR_LAYERED_SCOPE's row for the fact (layeredScope.ts) goes with it.
+  const eventId = factEventId(id);
+  if (eventId) forgetOrigins(ctx.db, { eventIds: [eventId] });
   if (ctx.evidenceCachePath) {
     const ledger = resolveLedgerPath(ctx.memoryDir, ctx.ledgerRelPath);
     dropEvidenceForStems(ctx.evidenceCachePath, [ledger, path.relative(path.resolve(ctx.memoryDir), ledger)]);
@@ -1816,6 +1820,11 @@ async function purgeRetiredJournal(ctx: MemoryMapContext, target: string, only?:
       );
       const noted = ctx.db.prepare(`DELETE FROM write_events WHERE action = 'note' AND note_path IN (?, ?) AND summary = ?`);
       for (const memoryId of memoryIds) named.run(memoryId);
+      // RENOR_LAYERED_SCOPE's rows (layeredScope.ts): an entry's by its id, a whole note's by its path.
+      forgetOrigins(ctx.db, {
+        noteIds: files.filter((r) => r.memory.kind === 'entry' && typeof r.memory.memoryId === 'string').map((r) => r.memory.memoryId as string),
+        notePaths: files.filter((r) => r.memory.kind !== 'entry').map((r) => r.memory.path),
+      });
       for (const r of files) {
         const rel = r.memory.path;
         stems.add(rel);

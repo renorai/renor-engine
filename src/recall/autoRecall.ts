@@ -21,6 +21,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { formatReceipt, receiptOn, type Recalled } from './receipt';
 import { inert } from '../../claude-code-plugin/hooks/inert.cjs';
+import { normalizeOrigin, originFromDirectory, ORIGIN_HEADER } from './origin';
 
 export const DEFAULT_URL = 'https://mcp.renor.cloud/mcp';
 export const DEFAULT_MAX_TOKENS = 400;
@@ -69,10 +70,17 @@ export interface RecallConfig {
   minSimilarity?: number;
   /** A memory scope (`project:<slug>`); unset, the whole workspace, as for an agent that passes none. */
   scope?: string;
+  /**
+   * Where the prompt is typed (recall/origin.ts): the working directory's git remote, else its repository folder.
+   * Sent as x-renor-origin only on opt-in: RENOR_LAYERED_SCOPE on in the hook's environment, or RENOR_AUTO_RECALL_ORIGIN
+   * set (`none` sends none). A server with RENOR_LAYERED_SCOPE on reads this project's and the user's personal memory.
+   */
+  origin?: string;
 }
 
 export type GetContextArgs = { query: string; max_tokens: number; scope?: string };
-export type GetContextCaller = (args: GetContextArgs, signal: AbortSignal) => Promise<string>;
+/** `origin` is the config's (RecallConfig.origin), for a caller that sends it (the HTTP caller as x-renor-origin). */
+export type GetContextCaller = (args: GetContextArgs, signal: AbortSignal, origin?: string) => Promise<string>;
 
 export interface RecallResult {
   /** The text added to the agent's context, or null when nothing is added. */
@@ -93,10 +101,16 @@ function clampInt(raw: string | undefined, fallback: number, min: number, max: n
   return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
 }
 
-/** `project:<slug>` from a working directory's last segment, the way the remember tool names a project scope. */
+/**
+ * `project:<slug>` from a working directory's last segment, cleaned the way the engine cleans a scope (src/mvp/scope.ts) and
+ * `renor connect` cleans a folder name (cli/lib/scope.mjs): lowercase, spaces and underscores to hyphens, any other
+ * character dropped (so `my.repo` is `project:myrepo` in all three), at most 64.
+ */
 export function scopeFromCwd(cwd: string | undefined): string | undefined {
   const base = (cwd ?? '').split(/[\\/]/).filter(Boolean).pop() ?? '';
-  const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const slug = base.toLowerCase()
+    .replace(/[_\s]+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '')
+    .slice(0, 64).replace(/-$/, '');
   return slug ? `project:${slug}` : undefined;
 }
 
@@ -128,6 +142,11 @@ export function loadRecallConfig(env: NodeJS.ProcessEnv = process.env, cwd?: str
   const parsed = parseFloor(env[FLOOR_ENV]);
   const unset = parsed.floor === undefined && !parsed.off && !parsed.invalid;
   const minSimilarity = parsed.floor ?? (unset && url === DEFAULT_URL ? DEFAULT_MIN_SIMILARITY : undefined);
+  // Opt-in: no repository identity leaves the machine unless the user asked for the layered read (RENOR_LAYERED_SCOPE in the
+  // hook's environment, as on the server) or named an origin. Off, the hook sends exactly what it always sent.
+  const rawOrigin = env.RENOR_AUTO_RECALL_ORIGIN?.trim();
+  const layered = /^(1|on|true|yes)$/i.test(env.RENOR_LAYERED_SCOPE?.trim() ?? '');
+  const origin = rawOrigin === 'none' ? null : rawOrigin ? normalizeOrigin(rawOrigin) : layered ? originFromDirectory(cwd) : null;
   return {
     enabled: on,
     url,
@@ -137,6 +156,7 @@ export function loadRecallConfig(env: NodeJS.ProcessEnv = process.env, cwd?: str
     minWords: clampInt(env.RENOR_AUTO_RECALL_MIN_WORDS, DEFAULT_MIN_WORDS, 1, 50),
     ...(minSimilarity === undefined ? {} : { minSimilarity }),
     ...(scope ? { scope } : {}),
+    ...(origin ? { origin } : {}),
   };
 }
 
@@ -172,8 +192,8 @@ export function recallRequest(prompt: string, config: RecallConfig): { args: Get
 
 interface Reply {
   ok?: boolean;
-  facts?: Array<{ subject?: string; predicate?: string; object?: string; scope?: string; untrusted?: boolean; authority?: unknown }>;
-  memories?: Array<{ text?: string; session_date?: string; matched?: boolean; untrusted?: boolean; replaced?: unknown; authority?: unknown }>;
+  facts?: Array<{ subject?: string; predicate?: string; object?: string; scope?: string; untrusted?: boolean; authority?: unknown; otherProject?: boolean }>;
+  memories?: Array<{ text?: string; session_date?: string; matched?: boolean; untrusted?: boolean; replaced?: unknown; authority?: unknown; otherProject?: boolean }>;
   relevance?: { relevant?: boolean; similarity?: number | null };
   dated_outline?: { note?: string; lines?: unknown[] };
   pinned_rules?: Array<{ predicate?: string; object?: string; scope?: string; source?: string; validFrom?: string; eventId?: string }>;
@@ -244,6 +264,8 @@ export function replyLines(replyText: string, config: Pick<RecallConfig, 'minSim
   }
   for (const f of relevanceReason ? [] : body.facts ?? []) {
     if (!f.subject || !f.predicate || f.object === undefined) continue;
+    // Another project's memory (RENOR_LAYERED_SCOPE labels it) is shown to an agent that asks, never injected unasked.
+    if (f.otherProject) continue;
     lines.push(capped(`${authorityTag(f.authority)}${f.untrusted ? '[untrusted] ' : ''}current fact: ${inert(`${f.subject} ${f.predicate}: ${f.object}`)}${f.scope ? ` (${inert(f.scope)})` : ''}`));
     kinds.push({ kind: 'fact' });
   }
@@ -258,6 +280,7 @@ export function replyLines(replyText: string, config: Pick<RecallConfig, 'minSim
   for (const m of relevanceReason ? [] : body.memories ?? []) {
     // A memory the query did not match is the reply's filler: discounted by get_context's own description.
     if (!m.text || m.matched === false) continue;
+    if (m.otherProject) continue;
     const date = typeof m.session_date === 'string' ? `${inert(m.session_date.slice(0, 10))} ` : '';
     lines.push(capped(`${authorityTag(m.authority)}${m.untrusted ? '[untrusted] ' : ''}${m.replaced ? '[replaced by a later correction] ' : ''}${date}${inert(m.text)}`));
     kinds.push({ kind: 'memory', ...(typeof m.session_date === 'string' ? { date: m.session_date } : {}) });
@@ -306,7 +329,7 @@ export async function autoRecall(prompt: string, config: RecallConfig, call: Get
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<'timeout'>(resolve => { timer = setTimeout(() => { controller.abort(); resolve('timeout'); }, config.timeoutMs); });
   try {
-    const reply = await Promise.race([call(request.args, controller.signal), timeout]);
+    const reply = await Promise.race([call(request.args, controller.signal, config.origin), timeout]);
     if (reply === 'timeout') return done({ context: null, reason: 'timeout', args: request.args });
     return done({ ...presentRecall(reply, config), args: request.args });
   } catch {
@@ -346,7 +369,7 @@ export function bearerEndpointAllowed(url: string): boolean {
 }
 
 export function httpGetContext(config: Pick<RecallConfig, 'url' | 'token'>, fetchImpl: typeof fetch = fetch): GetContextCaller {
-  return async (args, signal) => {
+  return async (args, signal, origin) => {
     if (!config.token) throw new Error('no token');
     if (!bearerEndpointAllowed(config.url)) {
       // One line, so a user who set http://localhost sees why recall is silent. The origin only: no path, query or credential.
@@ -368,6 +391,7 @@ export function httpGetContext(config: Pick<RecallConfig, 'url' | 'token'>, fetc
           accept: 'application/json, text/event-stream',
           authorization: `Bearer ${config.token}`,
           ...(session ? { 'mcp-session-id': session } : {}),
+          ...(origin ? { [ORIGIN_HEADER]: origin } : {}),
         },
         body: JSON.stringify({ jsonrpc: '2.0', ...body }),
       });
@@ -477,8 +501,8 @@ export async function runHook(stdin: string, env: NodeJS.ProcessEnv = process.en
   if (typeof input?.prompt !== 'string') return '';
   const config = loadRecallConfig(env, typeof input.cwd === 'string' ? input.cwd : undefined);
   if (!caller && !config.token) return '';
-  const result = await autoRecall(input.prompt, config, async (args, signal) => {
-    const reply = await (caller ?? httpGetContext(config))(args, signal);
+  const result = await autoRecall(input.prompt, config, async (args, signal, origin) => {
+    const reply = await (caller ?? httpGetContext(config))(args, signal, origin);
     // Apply SessionStart's durable per-session mark at presentation time without changing the get_context protocol.
     const shown = sessionPinned(input, env);
     if (shown.size === 0) return reply;

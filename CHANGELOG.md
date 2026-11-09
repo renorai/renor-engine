@@ -5,7 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.4.6 - 2026-11-08
+
+### Fixed
+
+- Self-hosted `search` with no embedding model (the default `npx renor-engine mcp` install) finds a saved note for a natural question such as "what test runner does acme-api use": the keyword stand-in matches the question's content words with OR over the stemmed index instead of the whole question as one exact phrase (#1456, #1584). `RENOR_KEYWORD_OR_ALL=0` or `RENOR_KEYWORD_DEFAULTS=0` restores the exact phrase.
+- Self-hosted `search` marks a note that a later note on the same page corrects with `superseded: { byChunkId, at }` and lists it after its correction (#1457, #1584). `RENOR_INFER_REPLACES=0` switches it off.
+- A PR that bumps `GATE_VERSION` can land on its own gate (#1583).
+
+### Tests
+
+- Raised the write-side CLI test timeout for loaded machines (#1592).
+- Fixed the Google code sign-in test flake (#913).
 
 ## 1.4.5 - 2026-11-08
 

@@ -13,6 +13,7 @@ import path from 'path';
 import { claimsReservedEntrySource } from '../factMarkers.js';
 import { authorityLabelsEnabled } from '../../memory/authority.js';
 import { scoreForReply } from '../agentMemory.js';
+import { originOfCall } from '../layeredScope.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { MvpConfig } from '../config.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -269,7 +270,7 @@ export function shortScore<T extends { score?: unknown }>(hit: T): T {
 }
 
 /** What a tool call can tell about the request it came in on: the headers the transport saw (lower-case names). */
-export type CallExtra = { requestInfo?: { headers?: Record<string, unknown> }; authInfo?: AuthInfo };
+export type CallExtra = { requestInfo?: { headers?: Record<string, unknown> }; authInfo?: AuthInfo; _meta?: Record<string, unknown> };
 
 /** A request header's first value, when it is a string. */
 export function headerText(headers: Record<string, unknown> | undefined, name: string): string | undefined {
@@ -346,6 +347,14 @@ export function agentOf(extra: CallExtra | undefined, config: MvpConfig): string
   const raw = trustedAgentRaw(extra, config);
   if (typeof raw !== 'string' || raw.trim() === '') return 'unnamed';
   return trustedIdentity(raw, !config.gatewaySecret);
+}
+
+/**
+ * Where this call was made (RENOR_LAYERED_SCOPE): the client's origin header or `_meta`, its project scope header, or a chat
+ * client's name; null when nothing says. Metadata for the layered read only: it grants and refuses nothing.
+ */
+export function callOrigin(extra: CallExtra | undefined, config: MvpConfig): string | null {
+  return originOfCall(extra, { agent: trustedAgentRaw(extra, config), directory: isDirectoryCall(extra?.requestInfo?.headers, config) });
 }
 
 /** Nameless connections must not share a feed, mark or inbox. */

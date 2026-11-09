@@ -56,7 +56,17 @@ const source = JSON.stringify({
 }, null, 2) + '\n';
 const target = path.join(__dirname, '..', '..', 'src', 'indexer', 'o200k.json');
 if (process.argv.includes('--check')) {
-  const same = fs.existsSync(target) && fs.readFileSync(target, 'utf8') === source;
+  // The deflate stream is runtime-specific (Bun's zlib writes different bytes for the same input), so a byte match is
+  // sufficient but not necessary: the committed file is current when it unpacks to exactly the bytes this run built.
+  let same = fs.existsSync(target) && fs.readFileSync(target, 'utf8') === source;
+  if (!same && fs.existsSync(target)) {
+    try {
+      const c = JSON.parse(fs.readFileSync(target, 'utf8'));
+      same = c.tokens === ranks.length && c.packedBytes === raw.length && c.packedSha256 === sha
+        && JSON.stringify(c.unreachable) === JSON.stringify(unreachable)
+        && zlib.inflateSync(Buffer.from(c.deflateBase64, 'base64')).equals(raw);
+    } catch { same = false; }
+  }
   console.log(same ? 'o200k.json is current' : 'o200k.json differs from what the generator writes');
   process.exit(same ? 0 : 1);
 }

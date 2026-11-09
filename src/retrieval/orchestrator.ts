@@ -13,7 +13,7 @@ import { lookupEntity } from './entityLookup';
 import { factsFirstHits } from './factsFirst';
 import { isConversationShaped } from './conversationShape';
 import { CALIBRATED_BARS, embeddingModelKey } from '../mvp/contextRelevance';
-import { keywordSearch } from './keyword';
+import { keywordOrAll, keywordOrMatch, keywordSearch } from './keyword';
 import { quoteFtsQuery, shownPage } from './queryHelpers';
 import { keywordLedgerHits } from './ledgerPresentation';
 import {
@@ -1045,10 +1045,15 @@ export async function retrieveContext(
   const semanticHits = vectorIndex && provider
     ? await semanticSearch(db, vectorIndex, provider, embeddedQuery, candidateLimit, queryProbe, opts.scope)
     : (() => {
-        const match = quoteFtsQuery(query);
+        // No embedding provider (the default self-hosted install): the keyword index stands in for the semantic lane.
+        // The question's content words joined by OR (H11b, the default; RENOR_KEYWORD_OR_ALL=0 or RENOR_KEYWORD_DEFAULTS=0
+        // restores the exact-phrase match), so "what test runner does acme-api use" finds the note that says "acme-api:
+        // tests run on vitest" (#1456). BM25 ranks the notes that carry the rarest and the most of the words first. A
+        // question of stop words only keeps the exact phrase.
+        const match = (keywordOrAll() ? keywordOrMatch(query) : '') || quoteFtsQuery(query);
         if (!match) return [];
-        // No embedding provider: the keyword index stands in for the semantic lane. Its rows are judged (ledger
-        // header and events the words are not in, then the scope) before the page is cut, as every keyword reader does.
+        // Its rows are judged (ledger header and events the words are not in, then the scope) before the page is cut, as
+        // every keyword reader does.
         return shownPage(
           rows => keywordSearch(db, match, rows),
           rows => {

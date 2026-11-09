@@ -8,7 +8,8 @@ import { autoCorrectionEnabled, detectCorrection } from '../../memory/autoCorrec
 import { remember, resolveLedgerPath, scopeFilterFor } from '../../memory/lifecycle.js';
 import { engineIndexChanged, engineRememberNote } from '../engine.js';
 import { possibleDuplicates } from '../../memory/factConflicts.js';
-import { blankStatementFilled, statementSchema, omittedWhenBlank, TIMEZONE_ARG, CITES_ARG, REPLACES_ARG, SCOPE_ARG, SOURCE_ARG_DESCRIPTION, OUT_INDEX_PASS, OUT_CREATED_FACT, OUT_CLOSED_FACT, OUT_DUPLICATES, OUT_REPLACEMENT, sourceOf, agentOf, unfinishedPass, indexSavedNote, oneLineHint, toolError } from './shared.js';
+import { blankStatementFilled, statementSchema, omittedWhenBlank, TIMEZONE_ARG, CITES_ARG, REPLACES_ARG, SCOPE_ARG, SOURCE_ARG_DESCRIPTION, OUT_INDEX_PASS, OUT_CREATED_FACT, OUT_CLOSED_FACT, OUT_DUPLICATES, OUT_REPLACEMENT, sourceOf, agentOf, callOrigin, unfinishedPass, indexSavedNote, oneLineHint, toolError } from './shared.js';
+import { layeredScopeEnabled, recordSaveOrigin } from '../layeredScope.js';
 import type { ToolContext } from './setup.js';
 
 /** Registers remember: save one statement (or a subject, predicate, object) to memory. */
@@ -105,6 +106,10 @@ export function registerRememberTool(ctx: ToolContext): void {
         });
         usefulness.cited(args.cites);
         if (receipt.action !== 'nochange') usefulness.updated(receipt.subject, receipt.predicate);
+        // RENOR_LAYERED_SCOPE: where this was said and whether it is about the user or a project (metadata, nothing moves).
+        if (layeredScopeEnabled() && receipt.action !== 'nochange' && receipt.eventId) {
+          recordSaveOrigin(db, { eventId: receipt.eventId, text: args.statement, subject: receipt.subject, origin: callOrigin(extra, config), explicitScope: args.scope });
+        }
         // The ledger holds the user's own words now, so index it: recall by
         // their phrasing (semantic or keyword) then reaches the fact. The fact
         // is already durable, so a failed refresh must not fail the receipt; the
@@ -156,6 +161,9 @@ export function registerRememberTool(ctx: ToolContext): void {
       const inferred = replaces === undefined ? await inferReplacesFor(args.statement, args.scope, source ?? 'mcp:remember') : undefined;
       const note = await engineRememberNote(config, args.statement, undefined, source ?? 'mcp:remember', args.scope, args.timezone);
       recordNoteSave(note.file, args.statement, source, note.scope);
+      if (layeredScopeEnabled() && note.id) {
+        recordSaveOrigin(db, { noteId: note.id, notePath: note.file, text: args.statement, origin: callOrigin(extra, config), explicitScope: args.scope });
+      }
       usefulness.cited(args.cites);
       const replaced = (replaces ?? inferred) !== undefined && note.id
         // The source the entry was written with (the default of this write, when none), so the link names the same one.

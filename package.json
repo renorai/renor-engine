@@ -1,6 +1,6 @@
 {
   "name": "renor-engine",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "Local-first semantic memory — indexing, multi-signal retrieval, MCP",
   "main": "dist/cli.js",
   "files": [
@@ -95,6 +95,7 @@
     "@types/supertest": "^7.2.0",
     "esbuild": "^0.28.2",
     "libpg-query": "17.7.4",
+    "oxlint": "1.86.0",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.2",
