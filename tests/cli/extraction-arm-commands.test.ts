@@ -379,6 +379,7 @@ describe('structured-row arm without a provider', () => {
     });
     const mcpEnv = armedEnv(vault);
     mcpEnv.DB_PATH = path.join(vault, '.semantic-memory', 'mcp.db');
+    mcpEnv.RENOR_SHARING = 'off'; // this test is about extraction, not sharing
     const mcp = execFileTree(process.execPath, [CLI, 'mcp'], {
       cwd: REPO_ROOT,
       env: mcpEnv,

@@ -1,6 +1,9 @@
 import { showNotice } from './notice';
 import { defaultSharingDir, effectiveLevel, installLimit, readConsent } from './state';
-import { chooseLevel, settlePendingDelete, shareNow, type SenderOptions } from './send';
+import { chooseLevel, debugOn, settlePendingDelete, shareNow, sharingEndpoint, type SenderOptions } from './send';
+import { settleOptOut } from './optout';
+import { flushUsageFor } from './usage';
+import path from 'node:path';
 
 /**
  * The install said off (`renor setup` answered No, or `renor-engine telemetry off` without a memory folder) while this workspace's
@@ -15,7 +18,7 @@ export async function applyInstallOff(options: SenderOptions): Promise<boolean> 
   const install = readConsent(defaultSharingDir(env), env);
   await chooseLevel({
     dir: options.dir, level: 'off', wording: install?.wording ?? 'install-off', adult: own.adult, source: install?.source ?? 'setup',
-    env, fetch: options.fetch, hosted: options.hosted,
+    env, fetch: options.fetch, hosted: options.hosted, countOptOut: false,
   });
   return true;
 }
@@ -48,13 +51,23 @@ export interface SharingLoop {
 export function startSharingLoop(options: SenderOptions & { intervalMs?: number; firstTickMs?: number; log?: (line: string) => void }): SharingLoop {
   const env = options.env ?? process.env;
   const intervalMs = options.intervalMs ?? shareIntervalMs(env);
-  let running = false;
-  const tick = async (): Promise<void> => {
-    if (running) return;
-    running = true;
+  let running: Promise<void> | null = null;
+  // A tick asked for while one runs waits for that one (the stdio server's exit flush waits for the send in flight), and starts no second.
+  const tick = (): Promise<void> => {
+    running ??= once().finally(() => { running = null; });
+    return running;
+  };
+  const once = async (): Promise<void> => {
     try {
       if (await applyInstallOff(options)) options.log?.('[sharing] off: this install chose not to share, so this workspace was turned off');
       await settlePendingDelete(options);
+      // The opt-out count (optout.ts), owed by this folder or by the install's own: sent whatever the level, never under DO_NOT_TRACK=1.
+      const installDir = defaultSharingDir(env);
+      for (const dir of path.resolve(options.dir) === installDir ? [options.dir] : [options.dir, installDir]) {
+        await settleOptOut({ dir, env, fetch: options.fetch, now: options.now, endpoint: () => sharingEndpoint(env), debug: options.debug === true || debugOn(env) });
+      }
+      // What this process counted since the last flush is written before the sender reads it (at level off it writes nothing).
+      flushUsageFor(options.dir);
       if (effectiveLevel(options.dir, env) === 'off') return;
       const result = await shareNow(options);
       if (result.status === 'sent') options.log?.(`[sharing] sent ${result.rows} row(s) at level ${result.level}`);
@@ -62,8 +75,6 @@ export function startSharingLoop(options: SenderOptions & { intervalMs?: number;
       else if (result.status === 'paused' || result.status === 'stopped') options.log?.(`[sharing] not sent: ${result.reason ?? 'unknown'}`);
     } catch (err) {
       options.log?.(`[sharing] tick failed: ${err instanceof Error ? err.message : 'unknown'}`);
-    } finally {
-      running = false;
     }
   };
   const timer = setInterval(() => void tick(), intervalMs);

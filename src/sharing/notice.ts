@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { defaultInForce, defaultSharingDir, hostedEngine } from './state';
+import { reachStep } from './usage';
 
 /**
  * The first-run notice: one plain line, shown once per install and recorded, on every surface where a person can read it.
@@ -76,7 +77,9 @@ function writeNotice(env: NodeJS.ProcessEnv, record: NoticeRecord): void {
 export function noticePending(dir: string, surface: NoticeSurface, env: NodeJS.ProcessEnv = process.env): boolean {
   if (hostedEngine(env)) return false;
   if (!defaultInForce(dir, env)) return false;
-  return readNotice(env)?.[surface] === undefined;
+  const record = readNotice(env);
+  // A surface that was shown an earlier wording is shown the current one once more.
+  return record?.[surface] === undefined || record.wording !== NOTICE_WORDING_VERSION;
 }
 
 /**
@@ -93,10 +96,14 @@ export function showNotice(dir: string, surface: NoticeSurface, print: (line: st
   }
   try {
     const previous = readNotice(env);
-    writeNotice(env, { ...(previous ?? { version: 1 as const }), version: 1, wording: NOTICE_WORDING_VERSION, [surface]: new Date(now()).toISOString() });
+    // The stamps of an earlier wording are dropped, so every surface shows the current words once. `asked` (renor setup's question) stays.
+    const kept = previous === null ? {} : previous.wording === NOTICE_WORDING_VERSION ? previous : (previous.asked !== undefined ? { asked: previous.asked } : {});
+    writeNotice(env, { ...kept, version: 1, wording: NOTICE_WORDING_VERSION, [surface]: new Date(now()).toISOString() });
   } catch {
     return false;
   }
+  // A funnel step (usage.ts): counted in memory only, and sent, like every row, only under the rules of the sender.
+  reachStep('notice_shown', now());
   return true;
 }
 

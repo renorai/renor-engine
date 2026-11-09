@@ -177,7 +177,7 @@ export async function realStdioConnection(vault: string, connectionName: string,
   const child = spawnTree(process.execPath, [path.resolve(__dirname, '../../dist/cli.js'), 'mcp'], {
     cwd: path.resolve(__dirname, '../..'),
     env: { PATH: process.env.PATH, VAULT_PATH: vault, EMBEDDING_PROVIDER: 'eval-hash',
-      RENOR_TELEMETRY_DISABLED: 'true', RENOR_EVIDENCE_MODE: 'off', RENOR_VAULT_STALENESS: 'off',
+      RENOR_TELEMETRY_DISABLED: 'true', RENOR_EVIDENCE_MODE: 'off', RENOR_VAULT_STALENESS: 'off', RENOR_SHARING: 'off',
       RENOR_CONNECTION_NAME: connectionName, ...extraEnv },
     stdio: ['pipe', 'pipe', 'pipe'],
   });

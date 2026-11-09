@@ -1,7 +1,8 @@
 import type { LearningExport, LearningLog } from '../learning/store';
 import type { ExampleReader } from './examples';
 import {
-  COUNT_BUCKETS, DELAY_BUCKETS, LENGTH_BUCKETS, modelIdentifier, RETRIEVAL_TOOL_NAMES, SAVE_TOOL_NAMES, type SharingLevel,
+  COUNT_BUCKETS, DELAY_BUCKETS, LENGTH_BUCKETS, RETRIEVAL_TOOL_NAMES, SAVE_TOOL_NAMES, coarsenRow, installAgeBucket, type InstallAge,
+  type SharingLevel,
 } from './fields';
 
 /**
@@ -31,6 +32,15 @@ export interface ProjectOptions {
   /** Rows with `at` at or below these are already sent. */
   watermarks: { retrieval: number; save: number; session: number };
   examples?: ExampleReader | null;
+  /**
+   * When this install was first seen (ms, the start of its UTC day, kept in the sharing state): each row carries how old the install was at the
+   * row's hour, as one of four ranges. Unset (a test, or a caller with no state), rows say null.
+   */
+  firstSeen?: number;
+}
+
+function ageAt(options: Pick<ProjectOptions, 'firstSeen'>, at: number): InstallAge | null {
+  return options.firstSeen === undefined ? null : installAgeBucket(options.firstSeen, at);
 }
 
 const asString = (value: unknown): string | null => (typeof value === 'string' ? value : null);
@@ -74,7 +84,6 @@ function tokenBucket(tokens: number | null): number | null {
   return bucket;
 }
 
-const round = (value: number | null): number | null => (value === null ? null : Math.round(value * 10_000) / 10_000);
 
 interface Event {
   at: number;
@@ -177,7 +186,7 @@ function retrievalRows(log: LearningExport, options: ProjectOptions, windowMs: n
         rank: asNumber(candidate.rank) ?? 0,
         kind,
         lane: asString(candidate.reason),
-        score: round(asNumber(candidate.score)),
+        score: asNumber(candidate.score),
         matched: asBool(candidate.matched),
         current: asBool(candidate.current),
         opened: label === null ? null : label.opened,
@@ -192,10 +201,10 @@ function retrievalRows(log: LearningExport, options: ProjectOptions, windowMs: n
     const row: Record<string, unknown> = {
       kind: 'retrieval-labelled/1',
       hour: hourOf(at),
+      install_age: ageAt(options, at),
       tool,
       ranker: asString(retrieval.ranker) ?? 'baseline',
-      build: asString(retrieval.build),
-      model: modelIdentifier(asString(retrieval.model)),
+      model: asString(retrieval.model),
       retrieval: asString(retrieval.retrieval),
       served: asNumber(retrieval.served) ?? candidates.length,
       reply_tokens_bucket: tokenBucket(asNumber(retrieval.reply_tokens)),
@@ -204,7 +213,8 @@ function retrievalRows(log: LearningExport, options: ProjectOptions, windowMs: n
       candidates,
     };
     if (options.level === 'data') row.query = queryKey === null ? null : options.examples?.query(queryKey) ?? null;
-    rows.push({ kind: 'retrieval', at, row });
+    // The coarse-values rule (fields.ts coarsenRow): lanes, ranker and model to their closed sets, scores to two places, counts capped.
+    rows.push({ kind: 'retrieval', at, row: coarsenRow(row) as Record<string, unknown> });
   }
   return rows;
 }
@@ -252,6 +262,7 @@ function saveRows(log: LearningExport, options: ProjectOptions, windowMs: number
     const row: Record<string, unknown> = {
       kind: 'save-outcome/1',
       hour: hourOf(at),
+      install_age: ageAt(options, at),
       tool,
       op: kind,
       item,
@@ -302,12 +313,14 @@ function sessionRows(log: LearningExport, options: ProjectOptions, windowMs: num
   const rows: ProjectedRow[] = [];
   for (const seen of [...sessions.values()].sort((a, b) => a.last - b.last)) {
     if (seen.last <= options.watermarks.session || seen.last > cutoff) continue;
-    rows.push(sessionRow(seen));
+    rows.push(sessionRow(seen, options));
   }
   return rows;
 }
 
-function sessionRow(seen: { first: number; last: number; tool: string; reads: number; saves: number; empty: number }): ProjectedRow {
+function sessionRow(
+  seen: { first: number; last: number; tool: string; reads: number; saves: number; empty: number }, options: Pick<ProjectOptions, 'firstSeen'>,
+): ProjectedRow {
   const firstCall = (RETRIEVAL_TOOL_NAMES as readonly string[]).includes(seen.tool) || (SAVE_TOOL_NAMES as readonly string[]).includes(seen.tool)
     ? seen.tool
     : 'other';
@@ -317,6 +330,7 @@ function sessionRow(seen: { first: number; last: number; tool: string; reads: nu
     row: {
       kind: 'session-aggregate/1',
       hour: hourOf(seen.first),
+      install_age: ageAt(options, seen.first),
       length_bucket: lengthBucket(seen.last - seen.first),
       reads_bucket: countBucket(seen.reads),
       saves_bucket: countBucket(seen.saves),
@@ -390,7 +404,7 @@ export function* projectFromLog(
   while (after < cutoff) {
     const spans = read(log => log.sessionSpans(after, cutoff, SAVE_TOOL_NAMES, limit));
     if (spans.length === 0) break;
-    yield spans.map(span => sessionRow({ ...span, tool: span.first_tool }));
+    yield spans.map(span => sessionRow({ ...span, tool: span.first_tool }, options));
     after = spans[spans.length - 1]!.last;
   }
 }

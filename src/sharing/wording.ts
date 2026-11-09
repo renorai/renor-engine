@@ -49,7 +49,7 @@ export function defaultWording(): string {
   return [
     NOTICE_LINE,
     '  Every field is listed by `renor-engine telemetry fields signals`, and `renor-engine telemetry preview` prints exactly what would be sent.',
-    '  They are stored under a random install identifier that stays the same until you turn sharing off.',
+    '  They are stored under a random install identifier that changes every calendar month; values are coarse (hours, ranges, rounded scores).',
     '  Turning it off stops recording and sending at once, and Renor is asked to delete what it holds for this install.',
     '  Sharing your memory text to help train Renor is a separate choice, never on unless you say yes: ask your agent, or run `renor-engine telemetry data`.',
     `  (words: ${DEFAULT_WORDING_VERSION})`,

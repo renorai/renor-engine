@@ -29,9 +29,14 @@ import { escapeInvisibleControls } from '../mvp/sanitize';
 import { matchingCurrentFactHits } from '../retrieval/factsFirst';
 import { HANDOFF_ARG_DESCRIPTIONS, HANDOFF_TOOL_DESCRIPTION, HANDOFF_TOOL_NAME, handoffNoteEnabled, runHandoffTool, startHandoffSweep } from '../memory/handoff';
 import { ENGINE_VERSION } from '../buildIdentity';
+import { errorClassOf, labelsOf, usageRecorder, type UsageRecorder } from '../sharing/usage';
+import { sharingDirFor } from '../sharing/state';
+import { resolveRerankTopN } from '../retrieval/plainWording';
 import { layeredScopeEnabled, recordSaveOrigin } from '../mvp/layeredScope';
 import { originFromDirectory } from '../recall/origin';
 import * as z from 'zod';
+import { AGENT_LEVELS, SHARING_TOOL_DESCRIPTION } from '../sharing/agentTool';
+import { askThrough, stdioLearning, type StdioLearning } from './learning';
 import { OUT_ASK_AGENT, OUT_HANDOFF, OUT_HIT, OUT_LIST_REQUESTS, OUT_REQUEST, OUT_WHATS_NEW, toolCarriesStructured } from '../mvp/outputSchemas';
 
 export function createMcpTools(
@@ -404,6 +409,25 @@ export const HANDOFF_TOOL = {
 };
 
 /**
+ * Listed only when the stdio server shares (stdioLearning is on): the same tool the service lists (mvp/server.ts), so the first-run
+ * notice's "tell your agent" works here too. It reads the level and lowers it; it never raises it (src/sharing/agentTool.ts).
+ */
+export const SHARING_LEVEL_TOOL = {
+  name: 'sharing_level',
+  description: SHARING_TOOL_DESCRIPTION,
+  inputSchema: {
+    type: 'object' as const,
+    properties: {
+      action: { type: 'string', enum: ['get', 'set'], description: 'get: what is shared now. set: change it, only when the user asks' },
+      level: { type: 'string', enum: [...AGENT_LEVELS], description: 'With set: off, anonymous or everything. Going up is the user\'s own yes, never yours: asked by the engine for anonymous, at a terminal for everything' },
+    },
+    required: ['action'],
+  },
+};
+
+const sharingToolArgs = z.object({ action: z.enum(['get', 'set']), level: z.enum(AGENT_LEVELS).optional() });
+
+/**
  * The stdin of the stdio server as lines the MCP transport can read, with a line that is not valid UTF-8 kept out.
  *
  * The transport decodes what it reads leniently, so an invalid byte would reach a tool as U+FFFD and be stored as
@@ -449,7 +473,9 @@ export function utf8Lines(source: Readable, onInvalid: () => void): Readable {
  * directly. A write-path regression asserted only on the internal function would pass even if
  * the published schema or the error envelope the client actually sees were wrong.
  */
-export function registerMcpHandlers(server: Server, tools: ReturnType<typeof createMcpTools>): void {
+export function registerMcpHandlers(
+  server: Server, tools: ReturnType<typeof createMcpTools>, usage: UsageRecorder | null = null, learning: StdioLearning | null = null,
+): void {
   // Looked up by the name the client sent: an argument shape is the tool's own to check.
   const byName = tools as unknown as Record<string, ((args: unknown) => Promise<unknown>) | undefined>;
   const hive = HIVE_TOOLS.filter(tool => typeof byName[tool.name] === 'function');
@@ -458,11 +484,21 @@ export function registerMcpHandlers(server: Server, tools: ReturnType<typeof cre
   const env = { ...process.env };
   const carries = (name: string) => toolCarriesStructured(name, env);
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...TOOLS, ...hive, ...handoff].map(tool => listedWithSchema(tool, carries(tool.name))),
+    tools: [...TOOLS, ...hive, ...handoff, ...(learning ? [SHARING_LEVEL_TOOL] : [])].map(tool => listedWithSchema(tool, carries(tool.name))),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    if (learning && name === SHARING_LEVEL_TOOL.name) {
+      try {
+        const parsed = sharingToolArgs.safeParse(args ?? {});
+        if (!parsed.success) throw new Error('sharing_level needs action "get" or "set", and with set a level: off, anonymous or everything');
+        const text = escapeInvisibleControls(JSON.stringify(await learning.sharingTool(parsed.data, askThrough(server))));
+        return { content: [{ type: 'text', text }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: escapeInvisibleControls(`Error: ${err instanceof Error ? err.message : String(err)}`) }], isError: true };
+      }
+    }
     const handler = byName[name];
     if (!handler) {
       if (HIVE_TOOLS.some(tool => tool.name === name)) {
@@ -470,15 +506,23 @@ export function registerMcpHandlers(server: Server, tools: ReturnType<typeof cre
       }
       return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }
+    // Anonymous usage counters (src/sharing/usage.ts): an in-memory increment per call, the client's own clientInfo, nothing from the call.
+    const started = Date.now();
+    usage?.client(server.getClientVersion());
     try {
-      const result = await handler(args ?? {});
+      // The learning log (src/mcp/learning.ts) records the call from the value it returned; it never changes it.
+      const result = learning ? await learning.run(name, args ?? {}, () => handler(args ?? {})) : await handler(args ?? {});
+      usage?.call(name, Date.now() - started, true, null, args);
       // One line, as the hosted tools answer: indentation is tokens an agent pays for and reads nothing from.
       // Escaped as the hosted server escapes its replies (mvp/server.ts): stored text is untrusted, and a raw bidi
       // override or zero-width character would reach the agent's transcript unrendered.
       const text = escapeInvisibleControls(JSON.stringify(result));
       // A refusal or error is text only (the catch below), as the hosted server answers it.
-      return { content: [{ type: 'text', text }], ...(carries(name) ? { structuredContent: structuredOf(JSON.parse(text)) } : {}) };
+      const reply = { content: [{ type: 'text', text }], ...(carries(name) ? { structuredContent: structuredOf(JSON.parse(text)) } : {}) };
+      // The first-run sharing notice rides on the first successful reply, before anything can be sent under the default.
+      return learning ? learning.withNotice(reply) : reply;
     } catch (err) {
+      usage?.call(name, Date.now() - started, false, errorClassOf(err));
       return { content: [{ type: 'text', text: escapeInvisibleControls(`Error: ${err instanceof Error ? err.message : String(err)}`) }], isError: true };
     }
   });
@@ -493,8 +537,25 @@ export async function startMcpServer(
   const server = new Server({ name: 'renor', version: ENGINE_VERSION }, { capabilities: { tools: {} } });
   const evidence = resolveEvidenceToolOptions(config);
   const tools = createMcpTools(db, vectorIndex, provider, config, evidence);
+  // Learning and sharing, as the HTTP service has them (src/mcp/learning.ts). Null under DO_NOT_TRACK=1 or RENOR_SHARING=off.
+  const learning = stdioLearning(config, { agent: () => server.getClientVersion()?.name?.trim() || 'unnamed' });
 
-  registerMcpHandlers(server, tools);
+  // The install's sharing folder (RENOR_SHARING_DIR, else ~/.config/renor): the counters are written there in the background, and only at a
+  // level above off; the sender sends them under its own rules (nothing before the first-run notice, nothing under DO_NOT_TRACK=1).
+  const usage = usageRecorder(sharingDirFor(null), {
+    transport: 'stdio',
+    labels: () => labelsOf({
+      embedding: config.embeddingProvider === 'eval-hash' ? 'other' : config.embeddingProvider, model: null, rerankTopN: resolveRerankTopN(),
+      vectors: vectorIndex !== undefined,
+    }),
+    sizes: () => {
+      const row = db.prepare('SELECT (SELECT COUNT(*) FROM notes) AS notes, (SELECT COUNT(*) FROM facts WHERE valid_to IS NULL) AS facts').get() as { notes: number; facts: number };
+      return { memories: row.notes + row.facts, notes: row.notes, facts: row.facts };
+    },
+  });
+  registerMcpHandlers(server, tools, usage, learning);
+  // A stdio session is often shorter than the background flush: what it counted is written as it exits (a small synchronous write).
+  process.once('exit', () => usage.flush());
   mapInvalidParams(server);
 
   // A frame that is not UTF-8 is not run: the transport would decode it as U+FFFD and a tool would store that.
@@ -522,4 +583,9 @@ export async function startMcpServer(
     transport.send(reply as unknown as JSONRPCMessage).catch(() => {});
   };
   await server.connect(transport);
+  if (learning) {
+    learning.startSender();
+    // A clean exit (the client closed stdin): one last send, with a short deadline, then nothing is left open.
+    process.stdin.once('end', () => { void learning.flush(); });
+  }
 }

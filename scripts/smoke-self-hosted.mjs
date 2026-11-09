@@ -28,12 +28,13 @@ console.log(temporary
   : `notes folder: ${vault} (yours; this check adds the test fact Ada favorite_color cerulean to its memory)`);
 
 // Only the folder is passed to the server, so it runs on its own defaults: nothing else from this shell reaches it, and no
-// key is set for any model. (The client adds HOME, PATH and a few other plain variables.)
+// key is set for any model. (The client adds HOME, PATH and a few other plain variables.) Sharing is off for the check: a check is
+// not a user, so it must not take the first-run notice the agent would show you, nor send anything (docs/TELEMETRY.md).
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [path.resolve('dist/cli.js'), 'mcp'],
   cwd: process.cwd(),
-  env: { VAULT_PATH: vault },
+  env: { VAULT_PATH: vault, RENOR_SHARING: 'off' },
   stderr: 'inherit',
 });
 const client = new Client({ name: 'renor-self-hosted-smoke', version: '1.0.0' });

@@ -39,6 +39,8 @@ const env = { ...process.env, HOME: home, USERPROFILE: home, npm_config_cache: p
 for (const name of Object.keys(env)) {
   if (/^(RENOR_|MVP_|EMBEDDING_|OPENAI_|OLLAMA_|VAULT_|MEMORY_|CHUNK_|INDEX_|PRIORITY_|LLM_|CONVERSATIONS_|DB_PATH$)/.test(name)) delete env[name];
 }
+// A check is not a user: no first-run notice is recorded for it and nothing is shared (docs/TELEMETRY.md).
+env.RENOR_SHARING = 'off';
 const child = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'inherit'] });
 
 let buffer = '';

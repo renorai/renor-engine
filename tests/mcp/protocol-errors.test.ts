@@ -27,7 +27,7 @@ function startStdio() {
   const child = spawnTree(process.execPath, [path.join(ENGINE, 'dist/cli.js'), 'mcp'], {
     cwd: ENGINE,
     env: { PATH: process.env.PATH, VAULT_PATH: vault, EMBEDDING_PROVIDER: 'eval-hash',
-      RENOR_TELEMETRY_DISABLED: 'true', RENOR_EVIDENCE_MODE: 'off', RENOR_VAULT_STALENESS: 'off' },
+      RENOR_TELEMETRY_DISABLED: 'true', RENOR_EVIDENCE_MODE: 'off', RENOR_VAULT_STALENESS: 'off', RENOR_SHARING: 'off' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   child.stdin!.on('error', () => {});

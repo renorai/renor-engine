@@ -27,6 +27,11 @@ export const STATE_FILE = 'sharing-state.json';
 export const CUTOFF_FILE = 'sharing-cutoff.json';
 /** The text of examples a `data` choice keeps until it is sent; it lives next to the two files. */
 export const EXAMPLES_FILE = 'sharing-examples.sqlite';
+/**
+ * The anonymous usage counters (usage.ts): the random install id the usage rows carry, and the counts not yet sent. Removed with the state on a
+ * deletion, and when a hosted workspace's secret rotates, so a new contributor never carries the old install id.
+ */
+export const USAGE_FILE = 'sharing-usage.json';
 
 export interface ConsentRecord {
   version: 1;
@@ -80,11 +85,23 @@ export interface SharingState {
    */
   trainingWatermarks?: { retrieval: number; save: number; session: number };
   /**
-   * Earlier install secrets of a hosted workspace, kept only here so Renor can still be asked to delete what they sent. The secret is rotated every time
-   * the owner switches text for training on or off, so the numbers' id after a tied period cannot be matched to the one before it. The server never learns
-   * that these belong together.
+   * Earlier bearers of this install or workspace (a hosted workspace's retired secrets, a self-hosted install's retired credentials), kept only here
+   * so Renor can still be asked to delete what they sent. The id rotates at the first send of every UTC calendar month (monthlyRotation), and a hosted
+   * workspace's also every time its owner switches text for training on or off, so one month's id cannot be matched to the next. The server never
+   * learns that these belong together. They are kept for as long as Renor may hold their rows (no fixed period: TELEMETRY.md), and removed with
+   * the rest of this file once `off` or `delete` has had every one of them deleted. At most MAX_RETIRED_BEARERS (a hundred years of months).
    */
   retiredSecrets?: string[];
+  /**
+   * The UTC month (`2026-11`) the current secret was first used to send in. At the first send of a later month the secret (and a self-hosted
+   * install's credential) is replaced, so an install is a new contributor every month. Absent until the first send.
+   */
+  secretMonth?: string;
+  /**
+   * When this install (or hosted workspace) was first seen by sharing: the start of that UTC day (ms). Kept only here, to say how old the install
+   * is as one of four ranges (fields.ts INSTALL_AGE_BUCKETS); the date itself is never sent. Set the first time the sender runs.
+   */
+  firstSeen?: number;
   /**
    * Training bearers (trainingBearer of a retired install secret) whose removal is still owed: the owner switched text for training off or on and
    * the secret rotated before the training contributor could be deleted (the endpoint was unreachable, or DO_NOT_TRACK=1 deferred it). Each is kept
@@ -422,11 +439,13 @@ export function readState(dir: string): SharingState | null {
       ? { trainingWatermarks: { retrieval: num(raw.trainingWatermarks.retrieval), save: num(raw.trainingWatermarks.save), session: num(raw.trainingWatermarks.session) } }
       : {}),
     ...(Array.isArray(raw.retiredSecrets) && raw.retiredSecrets.some(item => typeof item === 'string' && item.length >= 32)
-      ? { retiredSecrets: raw.retiredSecrets.filter((item): item is string => typeof item === 'string' && item.length >= 32).slice(-50) }
+      ? { retiredSecrets: raw.retiredSecrets.filter((item): item is string => typeof item === 'string' && item.length >= 32).slice(-MAX_RETIRED_BEARERS) }
       : {}),
     ...(Array.isArray(raw.retiredTrainingBearers) && raw.retiredTrainingBearers.some(item => typeof item === 'string' && item.length >= 32)
-      ? { retiredTrainingBearers: raw.retiredTrainingBearers.filter((item): item is string => typeof item === 'string' && item.length >= 32).slice(-50) }
+      ? { retiredTrainingBearers: raw.retiredTrainingBearers.filter((item): item is string => typeof item === 'string' && item.length >= 32).slice(-MAX_RETIRED_BEARERS) }
       : {}),
+    ...(typeof raw.secretMonth === 'string' && MONTH_SHAPE.test(raw.secretMonth) ? { secretMonth: raw.secretMonth } : {}),
+    ...(typeof raw.firstSeen === 'number' && Number.isFinite(raw.firstSeen) && raw.firstSeen > 0 ? { firstSeen: raw.firstSeen } : {}),
     ...(raw.trainingEverSent === true ? { trainingEverSent: true } : {}),
     ...(typeof raw.trainingUnmappedAt === 'number' ? { trainingUnmappedAt: raw.trainingUnmappedAt } : {}),
     ...(raw.trainingDeletePending === true ? { trainingDeletePending: true } : {}),
@@ -438,6 +457,25 @@ export function readState(dir: string): SharingState | null {
 function pausedOf(raw: unknown): Pick<SharingState, 'paused'> {
   if (!isRecord(raw) || (raw.code !== 'sharing_closed' && raw.code !== 'consent_required')) return {};
   return { paused: { code: raw.code, at: typeof raw.at === 'number' && Number.isFinite(raw.at) ? raw.at : 0 } };
+}
+
+/**
+ * How many retired bearers the state keeps. Each month adds at most one (plus one per hosted text switch or refused credential), so this is
+ * about a hundred years; it exists only so a damaged file cannot grow without end. Rows are kept by Renor with no fixed period, so a bearer is
+ * never dropped for its age: only a completed deletion removes them.
+ */
+export const MAX_RETIRED_BEARERS = 1200;
+
+const MONTH_SHAPE = /^\d{4}-\d{2}$/;
+
+/** `2026-11`: the UTC calendar month of a time. */
+export function monthOf(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 7);
+}
+
+/** The start (ms) of the UTC day of a time: the first-seen date is kept no finer than a day. */
+export function dayStart(ms: number): number {
+  return Math.floor(ms / 86_400_000) * 86_400_000;
 }
 
 /** The public name of a contributor: the SHA-256 of its secret, in hex. The endpoint knows only this, never the secret. */
@@ -455,22 +493,60 @@ export function trainingBearer(secret: string): string {
 
 /**
  * A new install secret (a new untied id), the old one retired so a deletion can still be asked for it. Nothing was sent under the new one yet, and
- * the training contributor (derived from the secret) starts over. Returns the new state.
+ * the training contributor (derived from the secret) starts over. A self-hosted install's credential (`token`, which is what it sends as its bearer)
+ * is retired with it and dropped, so its next send asks Renor for a new one: a new contributor id. Returns the new state.
  */
-export function rotateSecret(dir: string): SharingState {
+export function rotateSecret(dir: string, options: { keepUsage?: boolean } = {}): SharingState {
   const state = ensureState(dir);
-  const { trainingEverSent: _t, trainingDeletePending: _d, trainingWatermarks: _w, trainingUnmappedAt: _u, ...rest } = state;
+  const { trainingEverSent: _t, trainingDeletePending: _d, trainingWatermarks: _w, trainingUnmappedAt: _u, token: _token, secretMonth: _m, ...rest } = state;
   // The training contributor is derived from the secret being retired, so a training deletion still owed (or rows ever sent to it) must keep its bearer.
   const trainingOwed = state.trainingEverSent === true || state.trainingDeletePending === true;
-  const retiredTraining = [...new Set([...(state.retiredTrainingBearers ?? []), ...(trainingOwed ? [trainingBearer(state.secret)] : [])])].slice(-50);
+  const retiredTraining = [...new Set([...(state.retiredTrainingBearers ?? []), ...(trainingOwed ? [trainingBearer(state.secret)] : [])])].slice(-MAX_RETIRED_BEARERS);
+  // What the rows were sent under: a self-hosted install's credential, else (hosted, or an install from before credentials) the secret itself.
+  const bearer = state.token ?? state.secret;
+  // The usage rows' install id would match the old id to the new one: it goes with the secret. The monthly rotation keeps what the file
+  // counted (an install is not a new install every month, and days not yet sent are not lost) and only gives it a new random install id.
+  if (options.keepUsage === true) renewUsageInstallId(dir);
+  else fs.rmSync(path.join(dir, USAGE_FILE), { force: true });
   const next: SharingState = {
     ...rest,
     secret: randomBytes(32).toString('base64url'),
-    retiredSecrets: [...(state.retiredSecrets ?? []), ...(state.everSent || state.deletePending ? [state.secret] : [])].slice(-50),
+    retiredSecrets: [...new Set([...(state.retiredSecrets ?? []), ...(state.everSent || state.deletePending ? [bearer] : [])])].slice(-MAX_RETIRED_BEARERS),
     ...(retiredTraining.length > 0 ? { retiredTrainingBearers: retiredTraining } : {}),
     everSent: false,
   };
   writeState(dir, next);
+  return next;
+}
+
+/**
+ * A new random install id in the usage file (usage.ts), keeping everything else in it: the install row's sent flag, the days not yet sent, the
+ * funnel. A file that is missing or unreadable is left alone (usage.ts makes a fresh one with a fresh id when it next counts).
+ */
+function renewUsageInstallId(dir: string): void {
+  const file = path.join(dir, USAGE_FILE);
+  const raw = readJson(file);
+  if (!isRecord(raw) || typeof raw.installId !== 'string') return;
+  writeJson(dir, USAGE_FILE, { ...raw, installId: randomBytes(16).toString('hex') });
+}
+
+/**
+ * The monthly id (owner decision, 2026-11-08): called by the sender just before it sends, it gives the install a new contributor id at the first
+ * send of each UTC calendar month, so no id spans more than one month. A state that never sent just records the month (its id is unused, so
+ * there is nothing to separate). Returns the state to send under (the same object when nothing changed). It also records the first-seen day
+ * the first time it runs.
+ */
+export function monthlyRotation(dir: string, state: SharingState, now: number): SharingState {
+  const month = monthOf(now);
+  let next = state;
+  if (state.secretMonth !== month) {
+    const used = state.everSent || state.deletePending;
+    // A state that sent in an earlier month (or before this field existed) moves to a new id; an unused one only takes the month.
+    if (used) writeState(dir, state);
+    next = used ? { ...rotateSecret(dir, { keepUsage: true }), secretMonth: month } : { ...state, secretMonth: month };
+  }
+  if (next.firstSeen === undefined) next = { ...next, firstSeen: dayStart(now) };
+  if (next !== state) writeState(dir, next);
   return next;
 }
 
@@ -480,14 +556,18 @@ export function readCutoff(dir: string): number {
   return isRecord(raw) && raw.version === 1 && typeof raw.at === 'number' && Number.isFinite(raw.at) && raw.at > 0 ? raw.at : 0;
 }
 
-/** A state for a new contributor. Its watermarks start at `cutoff` (the deletion cutoff), so history that was deleted is never sent again. */
-export function freshState(cutoff = 0): SharingState {
+/**
+ * A state for a new contributor. Its watermarks start at `cutoff` (the deletion cutoff), so history that was deleted is never sent again. Its
+ * first-seen day is today: a state is made when a level above off is first in force here.
+ */
+export function freshState(cutoff = 0, now: number = Date.now()): SharingState {
   return {
     version: 1,
     secret: randomBytes(32).toString('base64url'),
     watermarks: { retrieval: cutoff, save: cutoff, session: cutoff },
     everSent: false,
     deletePending: false,
+    firstSeen: dayStart(now),
   };
 }
 
@@ -496,10 +576,10 @@ export function writeState(dir: string, state: SharingState): void {
 }
 
 /** The state, made on first use. Only a sender that has a level above off calls this. */
-export function ensureState(dir: string): SharingState {
+export function ensureState(dir: string, now: number = Date.now()): SharingState {
   const existing = readState(dir);
   if (existing !== null) return existing;
-  const made = freshState(readCutoff(dir));
+  const made = freshState(readCutoff(dir), now);
   writeState(dir, made);
   return made;
 }
@@ -516,7 +596,7 @@ export function removeLocalSharingData(dir: string, now: number = Date.now()): v
     );
     writeJson(dir, CUTOFF_FILE, { version: 1, at });
   }
-  for (const name of [STATE_FILE, EXAMPLES_FILE, `${EXAMPLES_FILE}-wal`, `${EXAMPLES_FILE}-shm`]) {
+  for (const name of [STATE_FILE, USAGE_FILE, EXAMPLES_FILE, `${EXAMPLES_FILE}-wal`, `${EXAMPLES_FILE}-shm`]) {
     fs.rmSync(path.join(dir, name), { force: true });
   }
 }

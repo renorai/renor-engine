@@ -9,11 +9,13 @@ import {
 } from './fields';
 import { LABEL_WINDOW_MS, projectFromLog, type ProjectedKind, type ProjectedRow } from './project';
 import {
-  EXAMPLES_FILE, contributorId, rotateSecret, trainingBearer, consentFor, effectiveLevel, ensureState, freshState, readConsent, readCutoff, readState, removeLocalSharingData,
-  writeConsent, writeState, type ConsentRecord, type SharingState,
+  EXAMPLES_FILE, MAX_RETIRED_BEARERS, contributorId, dayStart, monthlyRotation, rotateSecret, trainingBearer, consentFor, effectiveLevel, ensureState,
+  freshState, readConsent, readCutoff, readState, removeLocalSharingData, writeConsent, writeState, type ConsentRecord, type SharingState,
 } from './state';
 import path from 'node:path';
 import { noticeRecorded } from './notice';
+import { flushUsageFor, markUsageSent, usageRows, type UsageRow } from './usage';
+import { oweOptOut, viaOf } from './optout';
 
 /** Removes the example store's files, after closing this process's handle on them (Windows: EBUSY otherwise, #1563). */
 function removeExamples(dir: string): void {
@@ -81,9 +83,12 @@ export function sharingStatusUrl(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** Whether Renor's switch is open: only an answer of exactly {"open": true} is open; any error, redirect or other answer is closed. */
-export async function sharingStatusOpen(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+export async function sharingStatusOpen(env: NodeJS.ProcessEnv = process.env, cancel?: AbortSignal): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15_000);
+  // `cancel`: the caller is shutting down (the stdio server's exit flush) and wants the question dropped now. A dropped question is closed.
+  if (cancel?.aborted) controller.abort();
+  else cancel?.addEventListener('abort', () => controller.abort(), { once: true });
   try {
     const response = await fetch(sharingStatusUrl(env), { method: 'GET', redirect: 'manual', signal: controller.signal });
     if (response.status !== 200) {
@@ -118,9 +123,12 @@ export function sharingDefaultStatusUrl(env: NodeJS.ProcessEnv = process.env): s
 }
 
 /** Whether Renor's switch for the default is open: only exactly {"open": true}; any error, redirect or other answer is closed. */
-export async function sharingDefaultOpen(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+export async function sharingDefaultOpen(env: NodeJS.ProcessEnv = process.env, cancel?: AbortSignal): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15_000);
+  // `cancel`: the caller is shutting down (the stdio server's exit flush) and wants the question dropped now. A dropped question is closed.
+  if (cancel?.aborted) controller.abort();
+  else cancel?.addEventListener('abort', () => controller.abort(), { once: true });
   try {
     const response = await fetch(sharingDefaultStatusUrl(env), { method: 'GET', redirect: 'manual', signal: controller.signal });
     if (response.status !== 200) {
@@ -246,7 +254,7 @@ function bearerOf(state: SharingState, hosted: boolean | undefined): string {
  * any well-formed bearer whatever key signed it, so a retired token or the pre-credential secret is still the only way to ask for that contributor's rows.
  */
 function retireBearer(state: SharingState, bearer: string): void {
-  state.retiredSecrets = [...new Set([...(state.retiredSecrets ?? []), bearer])].slice(-50);
+  state.retiredSecrets = [...new Set([...(state.retiredSecrets ?? []), bearer])].slice(-MAX_RETIRED_BEARERS);
 }
 
 async function post(
@@ -326,7 +334,12 @@ function chunk(rows: ProjectedRow[], max: number): ProjectedRow[][] {
   return out;
 }
 
-function batchId(secret: string, kind: ProjectedKind, rows: ProjectedRow[]): string {
+/** A usage batch's id: its rows themselves (the same rows retried get the same id; different rows never share one). */
+function usageBatchId(secret: string, rows: Array<ProjectedRow | UsageRow>): string {
+  return createHash('sha256').update(JSON.stringify([secret, 'usage', rows.map(item => item.row)])).digest('hex').slice(0, 32);
+}
+
+function batchId(secret: string, kind: ProjectedKind, rows: Array<ProjectedRow | UsageRow>): string {
   // The same chunk gets the same id on a retry, so an answer lost on the way never makes the endpoint store it twice.
   return createHash('sha256')
     .update(JSON.stringify([secret, kind, rows[0]!.at, rows[rows.length - 1]!.at, rows.length]))
@@ -394,7 +407,7 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     return empty('paused', { reason: 'the first-run notice has not been shown yet; nothing is sent under the default until it has' });
   }
   const consent = viaDefault ? { wording: DEFAULT_WORDING_VERSION } : (record ?? (previewing ? { wording: CLI_WORDING_VERSION } : null));
-  if (consent === null || options.memoryDir === null) return empty('no-log', { reason: 'no learning log to read' });
+  if (consent === null) return empty('no-log', { reason: 'no learning log to read' });
 
   // A refusal for good paused sending: nothing goes out until it clears (debug only builds bodies, so it ignores the pause).
   const paused = debug ? undefined : readState(options.dir)?.paused;
@@ -426,17 +439,31 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     return empty('paused', { reason: "Renor's switch for the default is closed; nothing is sent" });
   }
 
-  const file = learningDbPath(options.memoryDir);
-  if (!fs.existsSync(file)) return empty('no-log', { reason: `no learning log at ${file}` });
-
-  const openLog = (): LearningLog | null =>
-    LearningLog.open(file, { retentionDays: learningRetentionDays(env), rawQueries: false, create: false, now: () => now });
+  // The learning log's rows, when there is a log; and the usage rows (usage.ts), which need none. The usage rows go with the numbers
+  // stream only (never tied to a workspace), at signals or above, under the same checks as every other row (above).
+  const file = options.memoryDir === null ? null : learningDbPath(options.memoryDir);
+  const openLog = (): LearningLog | null => (file === null || !fs.existsSync(file)
+    ? null
+    : LearningLog.open(file, { retentionDays: learningRetentionDays(env), rawQueries: false, create: false, now: () => now }));
   const probe = openLog();
-  if (probe === null) return empty('no-log', { reason: `no learning log at ${file}` });
-  probe.close();
+  const hasLog = probe !== null;
+  probe?.close();
+  // Debug changes nothing, so it reads the file as it is; a real run first writes what this process counted.
+  if (!training && !debug) flushUsageFor(options.dir);
+  let usage: UsageRow[] = training ? [] : usageRows(options.dir, now);
+  if (!hasLog && usage.length === 0) return empty('no-log', { reason: file === null ? 'no learning log to read' : `no learning log at ${file}` });
 
   // Debug reads the state if there is one and never makes it; a real send makes it on first use.
-  const state = debug ? (readState(options.dir) ?? freshState(readCutoff(options.dir))) : ensureState(options.dir);
+  let state = debug ? (readState(options.dir) ?? freshState(readCutoff(options.dir), now)) : ensureState(options.dir, now);
+  // The monthly id: the first send of each UTC month goes out under a new contributor id (a hosted workspace a new secret, a self-hosted install a
+  // new credential, asked for below). Only the usage numbers rotate: the training contributor is tied to its workspace on purpose, and while it
+  // sends the numbers are paused (above), so this never runs then. Debug changes nothing.
+  if (!debug && !training) {
+    const before = state.secret;
+    state = monthlyRotation(options.dir, state, now);
+    // A new month also gave the usage file a new install id: read its rows again, so none goes out under last month's.
+    if (state.secret !== before) usage = usageRows(options.dir, now);
+  }
   // The text stream starts at the switch-on time, never at 0: nothing created before it is ever sent tied, so nothing sent untied is repeated.
   if (training) {
     const from = Math.max(0, Date.parse(record?.changedAt ?? '') || 0, readCutoff(options.dir));
@@ -453,11 +480,11 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
   const examples: ExampleReader | null = level === 'data'
     ? { query: key => openStore()?.query(key) ?? null, memory: key => openStore()?.memory(key) ?? null }
     : null;
-  const slices = projectFromLog(() => {
+  const slices: Iterator<ProjectedRow[]> = hasLog ? projectFromLog(() => {
     const log = openLog();
     if (log === null) throw new Error(`the learning log at ${file} went away during the run`);
     return log;
-  }, { level, now, windowMs: options.windowMs, watermarks: { ...marks }, examples });
+  }, { level, now, windowMs: options.windowMs, watermarks: { ...marks }, examples, firstSeen: state.firstSeen ?? dayStart(now) }) : (function* (): Generator<ProjectedRow[]> {})();
   let skipped = 0;
   // The batches of one slice after another. The next slice is read only when the caller asks for the batch after the last one of this
   // slice, which it does only once that batch was sent: so the rows of a slice that fail their own contract move the watermark (they are
@@ -498,7 +525,25 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
       }
     }
   };
-  const pending = sliceBatches();
+  // A usage row that fails its own contract is never sent, and is marked done so it is not offered again.
+  const badUsage: string[] = [];
+  const goodUsage = usage.filter(item => {
+    try {
+      validateRow(item.row, level);
+      return true;
+    } catch {
+      skipped += 1;
+      badUsage.push(item.mark);
+      return false;
+    }
+  }).sort((a, b) => a.at - b.at);
+  type Batch = { kind: ProjectedKind | 'usage'; rows: Array<ProjectedRow | UsageRow> };
+  // The learning log's batches, then the usage rows' (their own batches, marked done in the usage file, never by a watermark).
+  const allBatches = function* (): Generator<Batch> {
+    yield* sliceBatches();
+    for (let index = 0; index < goodUsage.length; index += MAX_ROWS_PER_BATCH) yield { kind: 'usage', rows: goodUsage.slice(index, index + MAX_ROWS_PER_BATCH) };
+  };
+  const pending = allBatches();
   const firstBatch = pending.next();
   const batches = firstBatch.done === true ? [] : (function* () {
     yield firstBatch.value;
@@ -516,7 +561,10 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     }
   };
   if (firstBatch.done === true) {
-    if (!debug) forgetSentExamples();
+    if (!debug) {
+      forgetSentExamples();
+      markUsageSent(options.dir, badUsage);
+    }
     return empty('nothing', { skipped });
   }
 
@@ -529,10 +577,10 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     wording: consent.wording,
     adult: record ? record.adult === true : true,
   };
-  const body = (kind: ProjectedKind, rows: ProjectedRow[]): Record<string, unknown> => ({
+  const body = (kind: ProjectedKind | 'usage', rows: Array<ProjectedRow | UsageRow>): Record<string, unknown> => ({
     protocol: SHARING_PROTOCOL,
     action: 'batch',
-    batch_id: batchId(idSecret, kind, rows),
+    batch_id: kind === 'usage' ? usageBatchId(idSecret, rows) : batchId(idSecret, kind, rows),
     level,
     wording: consent.wording,
     rows: rows.map(item => item.row),
@@ -612,9 +660,14 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     }
     const last = batch.rows[batch.rows.length - 1]!.at;
     const key = batch.kind === 'retrieval' ? 'retrieval' : batch.kind === 'save' ? 'save' : 'session';
+    // A usage batch moves no watermark: its rows are marked done in the usage file instead.
+    const done = (): void => {
+      if (batch.kind === 'usage') markUsageSent(options.dir, (batch.rows as UsageRow[]).map(item => item.mark));
+      else marks[key] = Math.max(marks[key], last);
+    };
     if ((status < 200 || status >= 300) && code !== null && (TERMINAL_REFUSALS as readonly string[]).includes(code)) {
       // Refused for good: these rows are never sent again, whatever happens next, and nothing more is sent now.
-      marks[key] = Math.max(marks[key], last);
+      done();
       if (code === 'consent_off') {
         writeState(options.dir, state);
         // The workspace's record says off: apply it here, as choosing off does (it also asks for the deletion).
@@ -648,7 +701,7 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     if (status < 200 || status >= 300) {
       return { status: 'failed', level, rows: sent, batches: sentBatches, skipped, reason: `the endpoint answered ${status}${code !== null ? ` ${code}` : ''}` };
     }
-    marks[key] = Math.max(marks[key], last);
+    done();
     if (training) {
       state.trainingEverSent = true;
       delete state.trainingUnmappedAt;
@@ -658,6 +711,7 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     sentBatches += 1;
   }
   // Rows that failed the contract also moved the watermark (sliceBatches), so they are not recomputed forever.
+  markUsageSent(options.dir, badUsage);
   forgetSentExamples();
   return { status: 'sent', level, rows: sent, batches: sentBatches, skipped };
 }
@@ -782,6 +836,8 @@ export interface ChooseOptions {
    * so a caller that must not reach the network (an agent's tool call) records the off at once and the request follows within the hour.
    */
   deferRemoteDelete?: boolean;
+  /** Off only: whether this off is counted (optout.ts). False when it only mirrors an off already counted (the install's own). Default true. */
+  countOptOut?: boolean;
 }
 
 export interface ChooseResult {
@@ -804,8 +860,17 @@ export async function chooseLevel(options: ChooseOptions): Promise<ChooseResult>
   const previous = readConsent(options.dir, options.env);
   const now = (options.now ?? Date.now)();
   if (options.level === 'off') {
+    // Counted only as a change, and only for an install that was really sharing: a level above off was in force until now and rows were
+    // sent (so the notice had been shown, or a level chosen). Never under DO_NOT_TRACK=1, which oweOptOut checks.
+    let wasOn = false;
+    try {
+      wasOn = effectiveLevel(options.dir, options.env ?? process.env) !== 'off' && readState(options.dir)?.everSent === true;
+    } catch {
+      wasOn = false;
+    }
     const record: ConsentRecord = { version: 1, level: 'off', changedAt: new Date(now).toISOString(), wording: options.wording, adult: previous?.adult ?? false, source: options.source };
     writeConsent(options.dir, record, options.env);
+    if (wasOn && options.countOptOut !== false) oweOptOut(options.dir, viaOf(options.source), options.env ?? process.env, now);
     // Stop first: from this write on, no process records or sends anything. Then owe the deletion before discarding anything,
     // so a process that dies here leaves it pending (with the secret it needs) for settlePendingDelete.
     const owed = readState(options.dir);
@@ -860,7 +925,7 @@ export async function chooseLevel(options: ChooseOptions): Promise<ChooseResult>
     ...(numbersOff ? { numbersOff: true as const } : {}),
   };
   writeConsent(options.dir, record, options.env);
-  ensureState(options.dir);
+  ensureState(options.dir, now);
   let remoteDeleted: boolean | null = null;
   if (levelRank(options.level) < levelRank('data')) {
     removeExamples(options.dir);

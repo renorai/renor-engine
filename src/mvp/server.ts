@@ -35,7 +35,7 @@ import { serverTimingFor, requestTiming } from './serverTiming';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { isPlatformInitialize, emitTelemetry } from './telemetry';
 import { sanitizeErrorMessage } from './sanitize';
-import { createToolContext } from './tools/setup.js';
+import { createToolContext, workspaceUsage } from './tools/setup.js';
 import { registerAllTools } from './tools/index.js';
 import { finishToolSurface } from './tools/finalize.js';
 import { log, headerText, trustedIdentity, agentOf, isDashboardCall, isDirectoryCall } from './tools/shared.js';
@@ -763,6 +763,11 @@ export function createMvpApp(config: MvpConfig, engineOverride?: EmbeddingProvid
     }
     // A directory client is not a known agent: nothing can ask it, so its name is not recorded.
     if (!isDirectoryCall(req.headers, config)) noteConnectionName(agentOf({ authInfo, requestInfo: { headers: req.headers } }, config));
+    // The client's own name and version, from its initialize (a label for the usage heartbeat); never the platform's own calls.
+    if ((req.body as { method?: unknown } | undefined)?.method === 'initialize' && !isPlatformInitialize(req.body) && !isDashboardCall(req.headers, config)) {
+      const params = (req.body as { params?: { clientInfo?: { name?: unknown; version?: unknown } } }).params;
+      workspaceUsage(db, config, engine)?.client(params?.clientInfo);
+    }
     try {
       if (config.mcpJsonResponse) {
         // Stateless streamable HTTP: one transport and one McpServer per request. The SDK binds a server to one

@@ -146,14 +146,16 @@ describe('the first run with nothing set', () => {
     }
   }, BUDGET);
 
-  it('makes no network connection while it starts, saves a fact and searches for it', async () => {
+  // Sharing is the one thing a default stdio server sends (anonymous numbers, after the first-run notice; tests/mcp/stdio-sharing.test.ts
+  // proves it goes only to Renor's sharing endpoint). With it off, nothing else may connect: no model, no update check, nothing.
+  it('makes no network connection with sharing off while it starts, saves a fact and searches for it', async () => {
     const dir = scratch('renor-zero-network-');
     const log = path.join(dir, 'network.log');
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [path.join(ENGINE, 'dist', 'cli.js'), 'mcp'],
       cwd: ENGINE,
-      env: { VAULT_PATH: path.join(dir, 'vault'), NODE_OPTIONS: `--require=${RECORDER}`, RECORD_NETWORK_LOG: log },
+      env: { VAULT_PATH: path.join(dir, 'vault'), RENOR_SHARING: 'off', NODE_OPTIONS: `--require=${RECORDER}`, RECORD_NETWORK_LOG: log },
       stderr: 'ignore',
     });
     const client = new Client({ name: 'zero-setting-first-run-test', version: '1.0.0' });

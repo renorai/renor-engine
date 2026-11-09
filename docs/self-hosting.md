@@ -62,7 +62,7 @@ node scripts/smoke-self-hosted.mjs
 
 | `EMBEDDING_PROVIDER` | What search does |
 | --- | --- |
-| unset (default) | No embedding model, nothing leaves your machine. A note is found when the query contains its exact words; saved facts are found by subject and value. |
+| unset (default) | No embedding model, no note text leaves your machine. A note is found when the query contains its exact words; saved facts are found by subject and value. |
 | `local` | Downloads an embedding model (`Xenova/multilingual-e5-base` by default) on first use, then runs it on this machine. Search by meaning. |
 | `openai` | Embeds with OpenAI; needs `OPENAI_API_KEY`, and the text of your notes is sent to OpenAI. Search by meaning. |
 | `eval-hash` | Deterministic offline stand-in used by the tests. Makes no quality claim. |

@@ -6,6 +6,7 @@ import {
   chooseLevel, debugOn, deleteAllShared, settlePendingDelete, shareNow, sharingEndpoint, type Post,
 } from './send';
 import { consentFor, defaultInForce, defaultLevel, effectiveLevel, envOverride, foreignConsent, hasChosen, hostedEngine, readConsent, readState, sharingDirFor } from './state';
+import { pendingOptOut, settleOptOut } from './optout';
 import { ADULT_LINE, CLI_WORDING_VERSION, defaultWording, wordingFor } from './wording';
 
 /**
@@ -134,6 +135,8 @@ export async function runTelemetry(action: string, argument: string | undefined,
       }
       case 'off': {
         const result = await chooseLevel({ ...common, level: 'off', wording: CLI_WORDING_VERSION, adult: true, source: 'cli' });
+        // The one anonymous count that sharing was turned off (no id of any kind); silent, and kept to retry when it cannot be sent now.
+        await settleOptOut({ dir, env, fetch: io.fetch, now: io.now, endpoint: () => sharingEndpoint(env), debug: debugOn(env) }).catch(() => 'owed');
         if (!result.changed) io.out('Sharing was already off.');
         else io.out('Sharing is now: off. Recording for sharing has stopped.');
         io.out('Off is recorded as your choice, so a later change of the default does not turn it back on.');
@@ -181,11 +184,17 @@ export async function runTelemetry(action: string, argument: string | undefined,
           previewLevel: action === 'preview' && (argument === 'signals' || argument === 'data') ? argument : undefined,
         });
         if (action === 'send') await settlePendingDelete(common);
+        // An opt-out count still owed (optout.ts) is its own request, with no bearer: shown as it would be sent.
+        const optOut = action === 'preview' ? pendingOptOut(dir, env) : null;
         if (result.status === 'debug') {
           io.out(`# debug: nothing was sent and nothing was changed. These ${result.batches} request body(ies) are exactly what would be sent to ${sharingEndpoint(env)}:`);
           for (const payload of result.payloads ?? []) io.out(JSON.stringify(payload, null, 2));
         } else {
           io.out(`status: ${result.status}; level: ${result.level}; rows: ${result.rows}; batches: ${result.batches}${result.skipped ? `; skipped (failed their own contract): ${result.skipped}` : ''}${result.reason ? `; ${result.reason}` : ''}`);
+        }
+        if (optOut !== null) {
+          io.out(`# debug: an opt-out count is owed. This request body, sent with no bearer, is exactly what would be sent to ${sharingEndpoint(env)}:`);
+          io.out(JSON.stringify(optOut, null, 2));
         }
         return result.status === 'failed' ? 1 : 0;
       }

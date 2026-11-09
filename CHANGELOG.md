@@ -5,7 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.7 - 2026-11-09
+
+### Added
+
+- The stdio MCP server writes the learning log and shares signals by default, with the same notice, controls and final send attempt as the HTTP service (#1537).
+- Signals sharing includes anonymous usage rows and country at ingest, without storing the network address (#1539).
+- Signals sharing uses a rotating monthly contributor id, install-age ranges, coarse values and a three-contributor release rule (#1591).
+
+### Fixed
+
+- Correction recall marks the superseded note every time; two saves in the same second no longer lose the tie (#1600, fixes #1599).
+
 ## 1.4.6 - 2026-11-08
+
+### Added
+
+- Sharing (`signals`, the default): anonymous `install/1`, `heartbeat/1` and `funnel/1` rows (a random install id, environment and setup labels, the MCP client from a closed list, and call, latency, error and store-size buckets), and a one-time `opt-out/1` count with no identifier when sharing is turned off. Every field is listed in `docs/TELEMETRY.md`.
 
 ### Fixed
 

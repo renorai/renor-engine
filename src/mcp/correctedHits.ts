@@ -45,9 +45,18 @@ export function markCorrectedHits<T extends PageHit>(hits: T[], env: NodeJS.Proc
   const correctedBy = new Map<number, number>();
   entries.forEach((entry, i) => {
     if (!entry.hit.session_date || entry.hit.chunkId === undefined || !readsAsCorrection(entry.body)) return;
+    const correctionChunkId = entry.hit.chunkId;
     const candidates: Array<ReplaceCandidate & { index: number }> = [];
     entries.forEach((other, j) => {
-      if (j === i || !other.hit.session_date || other.hit.session_date >= entry.hit.session_date!) return;
+      if (j === i || !other.hit.session_date || other.hit.chunkId === undefined) return;
+      const earlierTimestamp = other.hit.session_date < entry.hit.session_date!;
+      // Daily-note entries are timestamped only to the second. When two saves land in that
+      // second, their chunks still preserve append order, so use it to break the tie. Do not
+      // impose that ordering across notes, which may have been indexed in either order.
+      const earlierOnSameNote = other.hit.session_date === entry.hit.session_date
+        && other.hit.notePath === entry.hit.notePath
+        && other.hit.chunkId < correctionChunkId;
+      if (!earlierTimestamp && !earlierOnSameNote) return;
       if (correctedBy.has(j)) return;
       candidates.push({ id: String(j), index: j, path: other.hit.notePath, excerpt: other.body, source: other.source, at: other.hit.session_date });
     });

@@ -1,6 +1,6 @@
 {
   "name": "renor-engine",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "description": "Local-first semantic memory — indexing, multi-signal retrieval, MCP",
   "main": "dist/cli.js",
   "files": [

@@ -26,6 +26,8 @@ import { isPhasedTool, CallPhases } from '../../callPhases.js';
 import { RankingTrace, withRankingTrace } from '../../retrieval/rankingTrace.js';
 import { requestTiming } from '../serverTiming.js';
 import { toolRefusalOf } from '../../toolRefusal.js';
+import { labelsOf, usageRecorder, type UsageRecorder } from '../../sharing/usage.js';
+import { resolveRerankTopN } from '../../retrieval/plainWording.js';
 import path from 'path';
 import { recordReplacement, replacementIndex } from '../../memorymap/replacements.js';
 import { inferReplacesEnabled, readsAsCorrection, inferReplaced } from '../inferReplaces.js';
@@ -40,6 +42,25 @@ import { ReadUsefulness } from '../readUsefulness.js';
 import type { Dreamer } from '../../memory/dreamer/dreamer.js';
 import { log, withOutputSchemaIf, jsonResultOf, CallExtra, sourceOf, agentOf, DIRECTORY_INSTRUCTIONS, withAnnotationTitle } from './shared.js';
 
+/**
+ * The anonymous usage counters of this workspace (src/sharing/usage.ts), or null when sharing is not configured. One recorder per sharing
+ * folder in the process: a call is an in-memory increment, written in the background and sent by the sender under its own rules.
+ */
+export function workspaceUsage(db: Database.Database, config: MvpConfig, engine: Engine): UsageRecorder | null {
+  if (config.sharingDir === undefined) return null;
+  const labels = () => labelsOf({
+    embedding: config.embeddingProvider, model: engine.modelKey ?? null, rerankTopN: resolveRerankTopN(), vectors: engine.vectorIndex !== null,
+  });
+  const sizes = () => {
+    const row = db.prepare('SELECT (SELECT COUNT(*) FROM notes) AS notes, (SELECT COUNT(*) FROM facts WHERE valid_to IS NULL) AS facts').get() as { notes: number; facts: number };
+    return { memories: row.notes + row.facts, notes: row.notes, facts: row.facts };
+  };
+  const usage = usageRecorder(config.sharingDir, { transport: 'http', labels, sizes });
+  // One recorder per folder in the process: the latest server's database and engine are the ones read.
+  usage.sources(labels, sizes);
+  return usage;
+}
+
 export function createToolContext(db: Database.Database, config: MvpConfig, engine: Engine, idle: Pick<IdleMonitor, 'track'> | null, digests: EngineDigests | null, usefulness: ReadUsefulness, connection: ConnectionStatus | null, announceFirst: boolean, telemetrySession: string | null = null, dashboard = false, directory = false, dreamer: Dreamer | null = null, toolProfile: 'coding' | null = null) {
   const withSchemas = toolOutputSchemasEnabled();
   const pageSchemas = withSchemas && pageOutputSchemasEnabled();
@@ -48,6 +69,8 @@ export function createToolContext(db: Database.Database, config: MvpConfig, engi
   // that is not hosted. A server that serves no session of its own (the stateless one, or one built for a session this
   // process forgot) has no first reply to announce on.
   const announcer = new ConnectionAnnouncer(connection, announceFirst);
+  // The platform's own calls (the dashboard) are not anyone's usage.
+  const usage = dashboard ? null : workspaceUsage(db, config, engine);
   const evidence = resolveEngineEvidence(config, process.env, idle);
   // RENOR_ANSWER_CHECK (default off): null unless armed and the evidence pass has a key; then a relevant verdict a model
   // reads as unanswered turns false. One per app, so every session shares its answers.
@@ -158,6 +181,7 @@ export function createToolContext(db: Database.Database, config: MvpConfig, engi
         const timing = requestTiming.getStore();
         if (timing && phases) timing.tool = { totalMs: performance.now() - startedAt, phases: phases.report(), cache: phases.queryCacheStatus() };
         learner?.observe(tool, args[0], result, ok, Date.now() - started, args[1], trace);
+        usage?.call(tool, Date.now() - started, ok, ok ? null : toolRefusalOf(result) ?? 'refused', args[0]);
         emitTelemetry({
           event: 'tool_use',
           tool,
@@ -170,6 +194,7 @@ export function createToolContext(db: Database.Database, config: MvpConfig, engi
         });
         return withSharingNotice(announcer.decorate(result, first));
       } catch (err) {
+        usage?.call(tool, Date.now() - started, false, err);
         emitTelemetry({
           event: 'tool_use',
           tool,

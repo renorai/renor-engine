@@ -62,7 +62,7 @@ function rpc(child: ChildProcess) {
 async function runA(rt: string, fixture: string, n: number) {
   const dir = copy(fixture);
   const t0 = performance.now();
-  const child = spawn(rt, [path.resolve(__dirname, '../../dist/cli.js'), 'mcp'], { cwd: dir, env: { ...process.env, VAULT_PATH: dir, RENOR_TELEMETRY: 'off' }, stdio: ['pipe', 'pipe', 'ignore'] });
+  const child = spawn(rt, [path.resolve(__dirname, '../../dist/cli.js'), 'mcp'], { cwd: dir, env: { ...process.env, VAULT_PATH: dir, RENOR_TELEMETRY: 'off', RENOR_SHARING: 'off' }, stdio: ['pipe', 'pipe', 'ignore'] });
   const r = rpc(child);
   await r.call('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'bvn', version: '0' } });
   r.note('notifications/initialized');

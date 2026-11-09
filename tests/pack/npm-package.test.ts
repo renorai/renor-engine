@@ -158,7 +158,8 @@ describe('npx renor-engine mcp, from the unpacked tarball', () => {
       command: process.execPath,
       args: [bin, 'mcp'],
       cwd: home,
-      env: { HOME: home, USERPROFILE: home, ...env },
+      // Sharing is not what this tests (tests/mcp/stdio-sharing.test.ts does): no notice, no learning log, no request.
+      env: { HOME: home, USERPROFILE: home, RENOR_SHARING: 'off', ...env },
       stderr: 'pipe',
     });
     const client = new Client({ name: 'renor-engine-pack-test', version: '1.0.0' });

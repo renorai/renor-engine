@@ -1,12 +1,15 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { Command } from 'commander';
+import { MIN_CONTRIBUTORS, keepCrowdedMonths, rowMonth } from '../../src/sharing/crowd';
 
 /**
  * Weekly real-world scoreboard: aggregates of the opt-in `shared_signal_rows`, split by Renor release.
  *
  * Privacy: the output holds counts, rates and intervals only. No row body, query, text, contributor id or workspace id is ever
- * printed. A cell backed by fewer than MIN_CONTRIBUTORS distinct contributors is suppressed (its numbers are not emitted).
+ * printed. The 3-people rule (src/sharing/crowd.ts): a cell keeps only the rows of months in which its own rows come from at least
+ * MIN_CONTRIBUTORS distinct contributors, and is suppressed (its numbers are not emitted) when fewer than that remain. Counted per month
+ * because a contributor id lasts one month (an install-month), so one install over three months must not pass for three people.
  * The database is read through a read-only connection string held in an environment variable named on the command line;
  * the string is handed to psql through the child's environment, never on its command line, and never printed.
  *
@@ -14,7 +17,7 @@ import { Command } from 'commander';
  * the operator supplies `--releases` as JSON `[{"release":"1.4.0","since":"2026-10-29T00:00:00Z"}, ...]`.
  */
 
-export const MIN_CONTRIBUTORS = 3;
+export { MIN_CONTRIBUTORS };
 
 export interface SignalRow {
   /** Opaque contributor id; used only to count distinct contributors, never output. */
@@ -26,10 +29,11 @@ export interface SignalRow {
 export interface ReleaseWindow { release: string; since: string }
 
 export interface Rate { n: number; of: number; rate: number; lo: number; hi: number }
-export type Cell<T> = { suppressed: true; contributors: number } | ({ suppressed: false; contributors: number } & T);
+export type Cell<T> = { suppressed: true } | ({ suppressed: false; contributors: number } & T);
 
 export interface ReleaseReport {
   release: string;
+  /** Rows and distinct contributors of the release's months that have at least MIN_CONTRIBUTORS contributors (0 when none has). */
   rows: number;
   contributors: number;
   retrievalMiss: Cell<Rate & { meanReplyTokensBucket: number | null }>;
@@ -70,9 +74,10 @@ function releaseOf(receivedAt: string, windows: ReleaseWindow[]): string {
 }
 
 function cell<T>(rows: SignalRow[], build: (rows: SignalRow[]) => T): Cell<T> {
-  const contributors = new Set(rows.map((r) => r.contributor)).size;
-  if (contributors < MIN_CONTRIBUTORS) return { suppressed: true, contributors };
-  return { suppressed: false, contributors, ...build(rows) };
+  const crowded = keepCrowdedMonths(rows, (r) => r.contributor, rowMonth);
+  // Suppressed means no number at all, not even how many (one or two) people stand behind it.
+  if (crowded.contributors < MIN_CONTRIBUTORS) return { suppressed: true };
+  return { suppressed: false, contributors: crowded.contributors, ...build(crowded.kept) };
 }
 
 function tally(values: unknown[]): Record<string, number> {
@@ -96,10 +101,12 @@ export function buildScoreboard(rows: SignalRow[], windows: ReleaseWindow[], now
     const saves = kind('save-outcome/1');
     const sessions = kind('session-aggregate/1');
     const count = (rs: SignalRow[], f: string) => rs.filter((r) => r.body[f] === true).length;
+    // The release's own totals follow the same rule: a count of rows from fewer than three people is a count about one of them.
+    const crowded = keepCrowdedMonths(all, (r) => r.contributor, rowMonth);
     return {
       release,
-      rows: all.length,
-      contributors: new Set(all.map((r) => r.contributor)).size,
+      rows: crowded.kept.length,
+      contributors: crowded.contributors,
       retrievalMiss: cell(retrieval, (rs) => {
         const tokens = rs.map((r) => r.body.reply_tokens_bucket).filter((v): v is number => typeof v === 'number');
         return {
@@ -136,7 +143,7 @@ export function renderMarkdown(sb: Scoreboard): string {
   const lines = [
     `# Real-world scoreboard (${sb.generatedAt})`,
     '',
-    `Opt-in shared signals only. Intervals are 95% Wilson. A cell with fewer than ${sb.minContributors} contributors is suppressed (—).`,
+    `Opt-in shared signals only. Intervals are 95% Wilson. A cell counts only months with at least ${sb.minContributors} contributors, and is suppressed (—) when none remain.`,
     '',
     '| release | rows | contributors | retrieval miss | save cited | save superseded | sessions with an empty read |',
     '| --- | --- | --- | --- | --- | --- | --- |',
