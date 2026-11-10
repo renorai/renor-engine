@@ -147,7 +147,7 @@ describe('docs/ENVIRONMENT-VARIABLES*.md', () => {
     const missing = [...read.keys()].filter(name => !documented.has(name)).sort();
     expect(
       missing,
-      'src/ reads these variables and the page has no row for them: add a row to docs/ENVIRONMENT-VARIABLES.md (a setting a user may want) or docs/ENVIRONMENT-VARIABLES-REFERENCE.md (an operator or experiment switch). '
+      'src/ reads these variables and the page has no row for them: add a row FILE docs/env-vars/<table>/<VAR_NAME>.md (a setting a user may want) or docs/env-vars-reference/<table>/<VAR_NAME>.md (an operator or experiment switch), then run `node scripts/shared-files/build.mjs` (both pages are generated). '
       + 'If a name is only a string written like a variable, add it to NOT_ENV in this test with what it is.\n'
       + missing.map(name => `  ${name}  (${[...read.get(name)!].join(', ')})`).join('\n'),
     ).toEqual([]);

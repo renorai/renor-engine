@@ -7,7 +7,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { loadMvpConfig } from '../../src/mvp/config';
 import { createMvpApp } from '../../src/mvp/server';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
-import { SEARCH_RELEVANCE_GUIDANCE } from '../../src/mvp/contextRelevance';
+import { SEARCH_RELEVANCE_GUIDANCE, warmFactVectors } from '../../src/mvp/contextRelevance';
 import { SESSION_EXPAND_REASON } from '../../src/retrieval/orchestrator';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import { CALIBRATED_BAR, CalibratedIdentityProvider } from '../helpers/calibratedIdentityProvider';
@@ -94,7 +94,7 @@ async function serve(provider: EmbeddingProvider | null, populate: (memoryDir: s
     return JSON.parse(text);
   };
   await call('index_memory', {});
-  return { call, client };
+  return { call, client, db: app.db };
 }
 
 type Hit = { notePath: string; text: string; reason: string; similarity?: number; score: number; weak_match?: true };
@@ -396,7 +396,8 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('on the pages the RenorBench dev questi
 
 
 it.skipIf(HTTP_SERVER_UNSUPPORTED)('keeps relevance.fact when the floor frees slots but does not backfill its unlisted closest fact', async () => {
-  const { call } = await serve(new EvalHashEmbeddingProvider(), memoryDir => {
+  const provider = new EvalHashEmbeddingProvider();
+  const { call, db } = await serve(provider, memoryDir => {
     fs.mkdirSync(path.join(memoryDir, 'Notes'), { recursive: true });
     for (let i = 0; i < 24; i++) fs.writeFileSync(path.join(memoryDir, 'Notes', `editor-${i}.md`),
       `Standup ${i}: my favorite editor setup discussion, notes about the editor theme and keymap.\n`);
@@ -405,21 +406,11 @@ it.skipIf(HTTP_SERVER_UNSUPPORTED)('keeps relevance.fact when the floor frees sl
   process.env.RENOR_CONTEXT_RELEVANCE_MIN = '0.4';
   await call('save_memory', { subject: 'user', predicate: 'preferred_editor', object: 'Neovim' });
   await call('index_memory', {});
-  let before: Body | undefined;
-  // The fact vector is embedded in the background; under a loaded gate that can take far longer than 500ms, so wait up
-  // to ~15s (Date.now is mocked here, hence a count rather than a deadline) instead of racing it.
-  for (let i = 0; i < 600; i++) {
-    // A fill that failed once holds the backend off until Date.now passes retryAfter (30 s); with the clock frozen that
-    // never happens and the fact stays unembedded. Move the clock on each lap so a failed fill is retried, not final.
-    vi.spyOn(Date, 'now').mockReturnValue(NOW + i * 31_000);
-    before = await search(call, { query: 'what is my favorite editor', top_k: 8, floorSetting: 0 });
-    if (before.relevance?.fact) break;
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
-  vi.spyOn(Date, 'now').mockReturnValue(NOW);
-  expect(before!.relevance).toMatchObject({ relevant: true, fact: { subject: 'user', predicate: 'preferred_editor', object: 'Neovim' } });
+  expect(await warmFactVectors(db, provider)).toBe(true);
+  const before = await search(call, { query: 'what is my favorite editor', top_k: 8, floorSetting: 0 });
+  expect(before.relevance).toMatchObject({ relevant: true, fact: { subject: 'user', predicate: 'preferred_editor', object: 'Neovim' } });
   const after = await search(call, { query: 'what is my favorite editor', top_k: 8, floorSetting: 1 });
   expect(after.hits).toEqual([]);
-  expect(after.relevance).toEqual(before!.relevance);
+  expect(after.relevance).toEqual(before.relevance);
   expect(after.floor).toMatchObject({ withheld: 8 });
 }, 60_000);
