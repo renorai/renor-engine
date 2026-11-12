@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+## 1.4.8 - 2026-11-12
+
+### Added
+
+- Anonymous sharing rows now say where they were made: cloud or self-hosted, the app family from a closed list, the release, the tool profile, and for self-hosted installs the OS family and Node major; retrieval and save rows add coarse buckets. Renor's own engines are marked internal. Nothing else is added; every field is listed in `docs/TELEMETRY.md`. Sharing off (`RENOR_SHARING=off`, `RENOR_SHARING_DEFAULT=off`, `DO_NOT_TRACK=1`) sends none of it (#1589).
+- The stdio MCP server sends its `install/1` and `heartbeat/1` rows in the first session, and a long session sends one each interval. The same switches turn them off (#1748).
+- `search_memory` falls back to searching the words when the exact phrase finds nothing (#1755).
+- The embedding model is inferred for OpenAI-compatible endpoints; `RENOR_EMBEDDING_SERVED_BY=off` restores the former behaviour (#1812).
+
+### Changed
+
+- `renor-engine connect` prints `RENOR_MCP_TOOLS=coding` in the MCP entry by default, and the stdio server then lists five tools (`search`, `keyword`, `facts`, `note`, `status`); `--tools full` restores the previous entry and tool list (#1482).
+- The stdio MCP server lists the hosted tool names by default; `RENOR_MCP_LEGACY_STDIO=1` restores the legacy names (#1772).
+- Deep search is the default read; `RENOR_DEEP_SEARCH=0` is lean mode (#1613).
+- The auto-recall hook has a relevance bar; no default floor ships, and `calibrate-bar.ts` sets one (#1624).
+- Thirteen switches that were off by default and unused were removed, so setting them no longer does anything; shipped behaviour is unchanged (#1614).
+
+### Fixed
+
+- Windows: the POSIX owner checks are skipped where `process.getuid` does not exist, so the engine starts there (#1766, part of #1563).
+- Chat requests to Claude 5.x models omit `temperature` (#1792).
+
 ## 1.4.7 - 2026-11-09
 
 ### Added

@@ -80,9 +80,17 @@ function positiveNumber(rawValue: string | undefined, name: string, fallback: nu
  * switch the read-time extractor on. A missing key returns why, and the dreamer stays off.
  */
 export function resolveDreamerModel(env: NodeJS.ProcessEnv = process.env): DreamerModelConfig | { off: string } {
-  const baseUrl = env.RENOR_CONSOLIDATE_BASE_URL?.trim() || DEFAULT_BASE_URL;
+  // RENOR_CONSOLIDATE_OWN_HW (off by default, research lever own-hw-consolidate): the dreamer calls an open-weight model served
+  // on our own hardware at RENOR_CONSOLIDATE_OWN_HW_BASE_URL (OpenAI-compatible, a key is optional), named by RENOR_CONSOLIDATE_MODEL,
+  // priced at 0 unless the price variables say otherwise. Unset: nothing below changes.
+  const ownHw = flag(env.RENOR_CONSOLIDATE_OWN_HW);
+  const ownUrl = env.RENOR_CONSOLIDATE_OWN_HW_BASE_URL?.trim();
+  if (ownHw && !ownUrl) return { off: 'RENOR_CONSOLIDATE_OWN_HW_BASE_URL is not set' };
+  if (ownHw && !env.RENOR_CONSOLIDATE_MODEL?.trim()) return { off: 'RENOR_CONSOLIDATE_MODEL is not set (own hardware has no default model)' };
+  const baseUrl = (ownHw ? ownUrl : env.RENOR_CONSOLIDATE_BASE_URL?.trim()) || DEFAULT_BASE_URL;
   const model = env.RENOR_CONSOLIDATE_MODEL?.trim() || DEFAULT_MODEL;
-  const keys = [...(env.RENOR_CONSOLIDATE_API_KEYS ?? '').split(','), env.RENOR_CONSOLIDATE_API_KEY ?? ''].map(k => k.trim()).filter(Boolean);
+  let keys = [...(env.RENOR_CONSOLIDATE_API_KEYS ?? '').split(','), env.RENOR_CONSOLIDATE_API_KEY ?? ''].map(k => k.trim()).filter(Boolean);
+  if (keys.length === 0 && ownHw) keys = ['local'];
   if (keys.length === 0) return { off: 'RENOR_CONSOLIDATE_API_KEY is not set' };
   const rawTokens = (env.RENOR_CONSOLIDATE_MAX_TOKENS ?? '').trim();
   if (rawTokens !== '' && !/^[1-9][0-9]*$/.test(rawTokens)) throw new Error(`Invalid RENOR_CONSOLIDATE_MAX_TOKENS "${rawTokens}": must be a positive integer`);
@@ -101,8 +109,8 @@ export function resolveDreamerModel(env: NodeJS.ProcessEnv = process.env): Dream
     dryRun: flag(env.RENOR_CONSOLIDATE_DRY_RUN),
     budget: {
       maxUsdPerDay: positiveNumber(env.RENOR_CONSOLIDATE_MAX_USD_PER_DAY, 'RENOR_CONSOLIDATE_MAX_USD_PER_DAY', DEFAULT_BUDGET.maxUsdPerDay),
-      priceInPerM: positiveNumber(env.RENOR_CONSOLIDATE_PRICE_IN_PER_M, 'RENOR_CONSOLIDATE_PRICE_IN_PER_M', DEFAULT_BUDGET.priceInPerM, true),
-      priceOutPerM: positiveNumber(env.RENOR_CONSOLIDATE_PRICE_OUT_PER_M, 'RENOR_CONSOLIDATE_PRICE_OUT_PER_M', DEFAULT_BUDGET.priceOutPerM, true),
+      priceInPerM: positiveNumber(env.RENOR_CONSOLIDATE_PRICE_IN_PER_M, 'RENOR_CONSOLIDATE_PRICE_IN_PER_M', ownHw ? 0 : DEFAULT_BUDGET.priceInPerM, true),
+      priceOutPerM: positiveNumber(env.RENOR_CONSOLIDATE_PRICE_OUT_PER_M, 'RENOR_CONSOLIDATE_PRICE_OUT_PER_M', ownHw ? 0 : DEFAULT_BUDGET.priceOutPerM, true),
     },
   };
 }

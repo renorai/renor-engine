@@ -4,7 +4,9 @@ import { Command } from 'commander';
 import { MIN_CONTRIBUTORS, keepCrowdedMonths, rowMonth } from '../../src/sharing/crowd';
 
 /**
- * Weekly real-world scoreboard: aggregates of the opt-in `shared_signal_rows`, split by Renor release.
+ * Weekly real-world scoreboard: aggregates of the opt-in `shared_signal_rows`, split by Renor release and by deployment (cloud or
+ * self-hosted). Rows Renor's own engines made (`internal: true`: gates, CI, evals, Renor's own workspaces) are left out by default and
+ * counted apart; `--include-internal` keeps them.
  *
  * Privacy: the output holds counts, rates and intervals only. No row body, query, text, contributor id or workspace id is ever
  * printed. The 3-people rule (src/sharing/crowd.ts): a cell keeps only the rows of months in which its own rows come from at least
@@ -13,8 +15,9 @@ import { MIN_CONTRIBUTORS, keepCrowdedMonths, rowMonth } from '../../src/sharing
  * The database is read through a read-only connection string held in an environment variable named on the command line;
  * the string is handed to psql through the child's environment, never on its command line, and never printed.
  *
- * A signal row carries no release of its own (only retrieval rows carry a `build`), so a release is a window of `received_at`:
- * the operator supplies `--releases` as JSON `[{"release":"1.4.0","since":"2026-10-29T00:00:00Z"}, ...]`.
+ * A row carries its release and deployment (engine/docs/TELEMETRY.md, "Where a row was made") since 2026-11-08. A row from an older
+ * engine carries neither: its release is a window of `received_at` (`--releases`, JSON `[{"release":"1.4.0","since":"2026-10-29T00:00:00Z"}, ...]`,
+ * `unassigned` before every window or without the file) and its deployment is `unknown`.
  */
 
 export { MIN_CONTRIBUTORS };
@@ -31,8 +34,12 @@ export interface ReleaseWindow { release: string; since: string }
 export interface Rate { n: number; of: number; rate: number; lo: number; hi: number }
 export type Cell<T> = { suppressed: true } | ({ suppressed: false; contributors: number } & T);
 
+export const DEPLOYMENT_ORDER = ['cloud', 'self-hosted', 'unknown'] as const;
+
 export interface ReleaseReport {
   release: string;
+  /** `cloud`, `self-hosted`, or `unknown` for a row from an engine released before the field. */
+  deployment: string;
   /** Rows and distinct contributors of the release's months that have at least MIN_CONTRIBUTORS contributors (0 when none has). */
   rows: number;
   contributors: number;
@@ -43,6 +50,8 @@ export interface ReleaseReport {
 export interface Scoreboard {
   generatedAt: string;
   minContributors: number;
+  /** Rows left out because Renor's own engine made them (`internal: true`); 0 when they were kept. */
+  internalExcluded: number;
   notRecorded: string[];
   releases: ReleaseReport[];
 }
@@ -86,16 +95,38 @@ function tally(values: unknown[]): Record<string, number> {
   return out;
 }
 
-export function buildScoreboard(rows: SignalRow[], windows: ReleaseWindow[], now: Date = new Date()): Scoreboard {
-  const byRelease = new Map<string, SignalRow[]>();
-  for (const r of rows) {
-    const rel = releaseOf(r.receivedAt, windows);
-    if (!byRelease.has(rel)) byRelease.set(rel, []);
-    byRelease.get(rel)!.push(r);
+export interface ScoreboardOptions {
+  /** Keep the rows Renor's own engines made (`internal: true`). Default false: they are left out and counted in `internalExcluded`. */
+  includeInternal?: boolean;
+}
+
+/** The row's own release when it carries one (a newer engine), else the window its receipt falls in. */
+function rowRelease(r: SignalRow, windows: ReleaseWindow[]): string {
+  return typeof r.body.release === 'string' && r.body.release !== '' ? r.body.release : releaseOf(r.receivedAt, windows);
+}
+
+function rowDeployment(r: SignalRow): string {
+  return r.body.deployment === 'cloud' || r.body.deployment === 'self-hosted' ? r.body.deployment : 'unknown';
+}
+
+export function buildScoreboard(rows: SignalRow[], windows: ReleaseWindow[], now: Date = new Date(), options: ScoreboardOptions = {}): Scoreboard {
+  const kept = options.includeInternal ? rows : rows.filter((r) => r.body.internal !== true);
+  const groups = new Map<string, { release: string; deployment: string; rows: SignalRow[] }>();
+  for (const r of kept) {
+    const release = rowRelease(r, windows);
+    const deployment = rowDeployment(r);
+    const key = JSON.stringify([release, deployment]);
+    if (!groups.has(key)) groups.set(key, { release, deployment, rows: [] });
+    groups.get(key)!.rows.push(r);
   }
-  const order = [...windows.map((w) => w.release), 'unassigned'].filter((r) => byRelease.has(r));
-  const releases: ReleaseReport[] = order.map((release) => {
-    const all = byRelease.get(release)!;
+  // Releases in the order of the windows, then any other release a row named (sorted), then `unassigned`; deployments in a fixed order.
+  const windowed = windows.map((w) => w.release);
+  const named = [...new Set([...groups.values()].map((g) => g.release))].filter((r) => !windowed.includes(r) && r !== 'unassigned').sort();
+  const releaseOrder = [...windowed, ...named, 'unassigned'];
+  const ordered = [...groups.values()].sort((a, b) =>
+    releaseOrder.indexOf(a.release) - releaseOrder.indexOf(b.release)
+    || DEPLOYMENT_ORDER.indexOf(a.deployment as (typeof DEPLOYMENT_ORDER)[number]) - DEPLOYMENT_ORDER.indexOf(b.deployment as (typeof DEPLOYMENT_ORDER)[number]));
+  const releases: ReleaseReport[] = ordered.map(({ release, deployment, rows: all }) => {
     const kind = (k: string) => all.filter((r) => r.body.kind === k);
     const retrieval = kind('retrieval-labelled/1').filter((r) => typeof r.body.relevant === 'boolean');
     const saves = kind('save-outcome/1');
@@ -105,6 +136,7 @@ export function buildScoreboard(rows: SignalRow[], windows: ReleaseWindow[], now
     const crowded = keepCrowdedMonths(all, (r) => r.contributor, rowMonth);
     return {
       release,
+      deployment,
       rows: crowded.kept.length,
       contributors: crowded.contributors,
       retrievalMiss: cell(retrieval, (rs) => {
@@ -132,6 +164,7 @@ export function buildScoreboard(rows: SignalRow[], windows: ReleaseWindow[], now
   return {
     generatedAt: now.toISOString(),
     minContributors: MIN_CONTRIBUTORS,
+    internalExcluded: rows.length - kept.length,
     notRecorded: ['saved/skipped/failed split (a save row exists only for a save that ran)', '"I already told you" signals', 'exact calls per session and token totals (bucketed only)'],
     releases,
   };
@@ -144,13 +177,14 @@ export function renderMarkdown(sb: Scoreboard): string {
     `# Real-world scoreboard (${sb.generatedAt})`,
     '',
     `Opt-in shared signals only. Intervals are 95% Wilson. A cell counts only months with at least ${sb.minContributors} contributors, and is suppressed (—) when none remain.`,
+    `Rows from Renor's own engines (internal) left out: ${sb.internalExcluded}.`,
     '',
-    '| release | rows | contributors | retrieval miss | save cited | save superseded | sessions with an empty read |',
-    '| --- | --- | --- | --- | --- | --- | --- |',
+    '| release | deployment | rows | contributors | retrieval miss | save cited | save superseded | sessions with an empty read |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
   ];
   for (const r of sb.releases) {
     lines.push(
-      `| ${r.release} | ${r.rows} | ${r.contributors} | ${r.retrievalMiss.suppressed ? '—' : pct(r.retrievalMiss)} | ${r.saveOutcome.suppressed ? '—' : pct(r.saveOutcome.cited)} | ${r.saveOutcome.suppressed ? '—' : pct(r.saveOutcome.superseded)} | ${r.sessions.suppressed ? '—' : pct(r.sessions.emptyReadSessions)} |`,
+      `| ${r.release} | ${r.deployment} | ${r.rows} | ${r.contributors} | ${r.retrievalMiss.suppressed ? '—' : pct(r.retrievalMiss)} | ${r.saveOutcome.suppressed ? '—' : pct(r.saveOutcome.cited)} | ${r.saveOutcome.suppressed ? '—' : pct(r.saveOutcome.superseded)} | ${r.sessions.suppressed ? '—' : pct(r.sessions.emptyReadSessions)} |`,
     );
   }
   lines.push('', 'Not recorded: ' + sb.notRecorded.join('; ') + '.');
@@ -168,17 +202,18 @@ export function fetchRows(dbEnvName: string, env: NodeJS.ProcessEnv = process.en
 
 export function main(argv: string[]): void {
   const program = new Command()
-    .requiredOption('--releases <file>', 'JSON file: [{"release":"1.4.0","since":"<ISO time>"}]')
+    .option('--releases <file>', 'JSON file: [{"release":"1.4.0","since":"<ISO time>"}], for rows from engines that do not name their release')
+    .option('--include-internal', "keep the rows Renor's own engines made (internal: true); left out by default")
     .option('--db-env <name>', 'name of the environment variable holding a READ-ONLY connection string')
     .option('--input <file>', 'rows JSON [{contributor,receivedAt,body}] instead of the database (fixtures)')
     .option('--out-json <file>', 'write the JSON report here')
     .option('--out-md <file>', 'write the markdown table here (default: stdout)');
   program.parse(argv, { from: 'user' });
-  const o = program.opts<{ releases: string; dbEnv?: string; input?: string; outJson?: string; outMd?: string }>();
+  const o = program.opts<{ releases?: string; includeInternal?: boolean; dbEnv?: string; input?: string; outJson?: string; outMd?: string }>();
   if (!o.dbEnv === !o.input) throw new Error('give exactly one of --db-env or --input');
-  const windows = JSON.parse(fs.readFileSync(o.releases, 'utf8')) as ReleaseWindow[];
+  const windows = o.releases ? (JSON.parse(fs.readFileSync(o.releases, 'utf8')) as ReleaseWindow[]) : [];
   const rows = o.input ? (JSON.parse(fs.readFileSync(o.input, 'utf8')) as SignalRow[]) : fetchRows(o.dbEnv!);
-  const sb = buildScoreboard(rows, windows);
+  const sb = buildScoreboard(rows, windows, new Date(), { includeInternal: o.includeInternal === true });
   if (o.outJson) fs.writeFileSync(o.outJson, JSON.stringify(sb, null, 2) + '\n');
   const md = renderMarkdown(sb);
   if (o.outMd) fs.writeFileSync(o.outMd, md);

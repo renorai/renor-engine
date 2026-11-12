@@ -39,7 +39,7 @@ import { createToolContext, workspaceUsage } from './tools/setup.js';
 import { registerAllTools } from './tools/index.js';
 import { finishToolSurface } from './tools/finalize.js';
 import { log, headerText, trustedIdentity, agentOf, isDashboardCall, isDirectoryCall } from './tools/shared.js';
-export { OUTPUT_SCHEMA_BOUND_NOTE, DASHBOARD_HEADER, DIRECTORY_HEADER, toolError, SEARCH_REFUSAL_REASONS } from './tools/shared.js';
+export { DASHBOARD_HEADER, DIRECTORY_HEADER, toolError, SEARCH_REFUSAL_REASONS } from './tools/shared.js';
 
 export interface MvpApp {
   app: express.Express;

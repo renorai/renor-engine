@@ -10,11 +10,12 @@ import { leadingSummaryHits } from '../digests/digests';
 import { normalizeScope, savedScopeMatches } from './scope';
 import { contextDistinctEnabled, distinctMemories } from './contextDistinct';
 import { contextNewerFirstEnabled, newerFirstMemories } from './contextNewerFirst';
+import { adaptiveDepthRules, shortPageDrops } from './contextAdaptiveDepth';
 import { claimsReservedEntrySource, eventMarker, factAuthorsByEvent } from './factMarkers';
 import { authorMarker } from '../memory/sourceName';
 import { authorityField, authorityOfChunk, authorityOfSource, lowestAuthority, type Authority } from '../memory/authority';
 import type { HitOrder } from '../retrieval/orchestrator';
-import { orderHits, SESSION_EXPAND_REASON, sessionDateMs } from '../retrieval/orchestrator';
+import { contextTopK, defaultContextMaxTokens, orderHits, SESSION_EXPAND_REASON, sessionDateMs } from '../retrieval/orchestrator';
 import type { EvidenceToolOptions } from '../evidence/options';
 import type { EvidenceExtractor } from '../evidence/secondPass';
 import { productEvidenceReport, type ProductEvidenceState } from '../evidence/attach';
@@ -49,14 +50,13 @@ import { APPROVED_RULES_NOTE, loadPinnedRules, PINNED_RULES_NOTE } from './pinne
 import { buildDatedOutline, replyCeiling, datedOutlineBudget, datedOutlineEnabled, datedOutlineMinSimilarity, listOutlineCandidates, withoutReplaced, withDatedOutline, MIN_OUTLINE_TOKENS, type OutlineCandidate } from './datedOutline';
 import { turnScorer, vectorsMeanSomething } from '../retrieval/readerEvents';
 import { ruleApprovalsEnabled } from './ruleApprovals';
-import { ownScopeFirstFacts, ownScopeFirstMemories, ownScopeSlug } from './ownScopeFirst';
 import { observeEnabled } from './observations';
 import { layeredScopeEnabled, layeredView, layerItems } from './layeredScope';
 
 export interface AgentContextOptions {
   query?: string;
   scope?: string;
-  /** The project scope the connection names (x-renor-scope, written by `renor connect` into a project config). Only orders, only with RENOR_OWN_SCOPE_FIRST on. */
+  /** The project scope the connection names (x-renor-scope, written by `renor connect` into a project config). Read only as the scope of an observation read (RENOR_OBSERVE). */
   connectionScope?: string;
   /**
    * Where the read is made (recall/origin.ts: a repository, a chat client, or null for unknown). Read only with
@@ -973,7 +973,7 @@ interface Budgeted {
  * passed over. The list is laid out newest first, and a budget that kept the longest run of the layout cut the oldest matches
  * first however close they were: retrieval ablations, 2026-10-06 (docs/evals/results/CUT-BY-SCORE-20261007.md, which also reads what the cut by score trades away).
  */
-export function matchBudgetOrder(memories: ReadonlyArray<AgentContextMemory>): number[] {
+export function matchBudgetOrder(memories: ReadonlyArray<AgentContextMemory>, serviceQuery?: string): number[] {
   const leading = leadingSummaryHits(memories);
   const lead: number[] = [];
   const scored: number[] = [];
@@ -987,7 +987,32 @@ export function matchBudgetOrder(memories: ReadonlyArray<AgentContextMemory>): n
   // A score that is not a number ranks last among the scored matches, never first: it cannot displace a match.
   const score = (i: number): number => (Number.isFinite(memories[i].score) ? memories[i].score! : Number.NEGATIVE_INFINITY);
   scored.sort((a, b) => score(b) - score(a) || a - b);
+  // RENOR_SERVICE_NOTE_FIRST: a match that names the service or project the question names (a "Decision for <service>" note)
+  // goes before the generic matches; the order inside each group is the score order above.
+  if (serviceQuery !== undefined) {
+    const names = serviceNames(serviceQuery);
+    if (names.length > 0) {
+      const named = (i: number): boolean => {
+        const head = `${memories[i].headingPath ?? ''}\n${String(memories[i].text).slice(0, 200)}`.toLowerCase();
+        return names.some(name => head.includes(name));
+      };
+      return [...lead, ...scored.filter(named), ...scored.filter(i => !named(i)), ...found];
+    }
+  }
   return [...lead, ...scored, ...found];
+}
+
+export const SERVICE_NOTE_FIRST_FLAG = 'RENOR_SERVICE_NOTE_FIRST';
+
+/** The service-name ordering of the budget (RENOR_SERVICE_NOTE_FIRST): off by default, and the order is then what it always was. */
+export function serviceNoteFirstEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env[SERVICE_NOTE_FIRST_FLAG] ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+/** The service or project names in a question: identifiers joined by - _ or . (invoice-service, auth-proxy), lower case. */
+export function serviceNames(query: string): string[] {
+  return [...new Set((query.toLowerCase().match(/[a-z0-9]+(?:[-_.][a-z0-9]+)+/g) ?? []).filter(name => /[a-z]{3}/.test(name)))];
 }
 
 /**
@@ -1210,6 +1235,8 @@ export interface BudgetPlan {
   sessionStatements?: ReadonlyArray<Item>;
   /** How much of the question a piece says (`statementRelevance`): ranks the reserved session's pieces and decides whether `keep` comes first. */
   relevance?: (item: Item) => number;
+  /** The question, when RENOR_SERVICE_NOTE_FIRST is on: a match naming the service in it is taken first. */
+  serviceQuery?: string;
 }
 
 export function applyBudget(
@@ -1246,7 +1273,7 @@ function budgetWith(
   memoryEvents: ReadonlyArray<readonly string[]>,
   allowance: number,
   cost: (item: Item) => number,
-  { keep, closest, recent, mates = [], sessionStatements = [], relevance }: BudgetPlan = {},
+  { keep, closest, recent, mates = [], sessionStatements = [], relevance, serviceQuery }: BudgetPlan = {},
   ordered = false,
 ): Budgeted {
   const added = (memory: number): boolean => memories[memory].reason === SESSION_EXPAND_REASON;
@@ -1352,7 +1379,7 @@ function budgetWith(
   // fits the allowance is never passed over: while nothing is passed over, a later match that does not fit ends the run, so a
   // budget that holds the top match keeps the best matches (cut by score), not the next ones that happen to be small. The top
   // match is passed over only when it can never fit: a reply cut back from over budget must not swap it for a smaller one.
-  const ranked = matchBudgetOrder(memories);
+  const ranked = matchBudgetOrder(memories, serviceQuery);
   const topMatch = ranked.find(i => !repeats(i) && !kept.has(i));
   let passedOver = false;
   for (const i of ranked) {
@@ -1484,11 +1511,8 @@ export async function buildAgentContext(
 ) {
   const query = (options.query ?? '').trim();
   const scopeNorm = options.scope === undefined ? undefined : normalizeScope(options.scope);
-  // Research lever RENOR_CONTEXT_TOKEN_BUDGET: a whole positive number caps the reply budget; unset or invalid changes nothing.
   const env = options.env ?? process.env;
-  const budgetRaw = env.RENOR_CONTEXT_TOKEN_BUDGET;
-  const budgetCap = budgetRaw !== undefined && /^[1-9][0-9]*$/.test(budgetRaw.trim()) ? Math.max(128, Number(budgetRaw.trim())) : Infinity;
-  const maxTokens = Math.min(Math.max(options.maxTokens ?? 800, 128), replyCeiling(options.env ?? process.env), budgetCap);
+  const maxTokens = Math.min(Math.max(options.maxTokens ?? defaultContextMaxTokens(env), 128), replyCeiling(env));
   // Off performs no lookup and changes no reply byte. On, failure is deliberately fail-open: pinned rules are additive.
   let pinnedRules: ReturnType<typeof loadPinnedRules> = { rules: [], pendingRules: [], eventIds: new Set(), tokens: 0 };
   try { pinnedRules = loadPinnedRules(db, scopeNorm, options.reader, options.env ?? process.env, maxTokens); } catch { /* omit the field */ }
@@ -1509,7 +1533,8 @@ export async function buildAgentContext(
   if (query) {
     // Preserve the uncapped get_context default; an explicit environment cap still wins.
     const observationScope = options.scope ?? options.connectionScope;
-    const semantic = await engineSearchMemory(db, engine, memoryDir, query, 8, scopeNorm, options.evidence, options.includeHistory === true, options.ledgerRelPath, probe, undefined, 0, false, false, false, observationScope);
+    // Deep search (orchestrator.ts): 50 matches when the reply has room for the deep page, else the lean 8.
+    const semantic = await engineSearchMemory(db, engine, memoryDir, query, contextTopK(maxTokens, env), scopeNorm, options.evidence, options.includeHistory === true, options.ledgerRelPath, probe, undefined, 0, false, false, observationScope);
     semanticAvailable = semantic.ok;
     notice = semantic.notice; // semantic search is off while the embeddings are rebuilt, or the provider failed it: say so
     if (semantic.error === 'semantic-unavailable' && semantic.notice) degraded.push('semantic');
@@ -1519,6 +1544,14 @@ export async function buildAgentContext(
         if (!semantic.ok && (!hit || typeof hit !== 'object' || !('source' in hit) || hit.source !== 'observation')) continue;
         const normalized = normalizeMemory(hit, 'semantic', options.reader);
         if (normalized) (normalized.reason === SESSION_EXPAND_REASON ? added : memories).push(normalized);
+      }
+      // RENOR_CONTEXT_ADAPTIVE_DEPTH (off by default): when the top matches are clearly enough, the short page replaces the deep one.
+      const depthRules = adaptiveDepthRules(options.env);
+      const shortDrops = depthRules ? shortPageDrops(memories, query, depthRules) : null;
+      if (shortDrops) {
+        const kept = memories.filter(m => !shortDrops.has(m));
+        memories.length = 0;
+        memories.push(...kept);
       }
     }
     // Bounded-wait evidence (RENOR_EVIDENCE_ASYNC) can answer before the table exists. get_context then says so in the
@@ -1557,15 +1590,13 @@ export async function buildAgentContext(
   const freshness = statusFreshnessMode(options.env);
   const readAt = Date.now();
   const staleOf = (fact: CurrentFact): string | null => freshness === 'off' ? null : staleStatusOf(fact, readAt);
-  // RENOR_OWN_SCOPE_FIRST: with no scope passed and a default project scope set, that scope's items lead other scopes'.
-  const ownScope = scopeNorm === undefined ? ownScopeSlug(options.env, options.connectionScope) : null;
-  const allFacts = ownScopeFirstFacts(inReadSnapshot(db, () => currentFactMatches(db, query, scopeNorm, query ? 12 : 20, meaning))
-    .filter(fact => freshness !== 'hide' || staleOf(fact) === null), ownScope);
+  const allFacts = inReadSnapshot(db, () => currentFactMatches(db, query, scopeNorm, query ? 12 : 20, meaning))
+    .filter(fact => freshness !== 'hide' || staleOf(fact) === null);
   markRetrieved(); // the matches and the facts are in hand: what follows builds the reply (callPhases.ts)
 
   // After the keyword matches, so a statement a keyword search also found is that match, not the added copy.
   const isLedger = ledgerNoteMatcher({ memoryDir, ledgerRelPath: options.ledgerRelPath ?? DEFAULT_LEDGER_REL });
-  const allMemories = ownScopeFirstMemories(dedupeMemories([...memories, ...added]), ownScope);
+  const allMemories = dedupeMemories([...memories, ...added]);
   // RENOR_LAYERED_SCOPE (off by default), only when no scope was passed (an explicit scope keeps its partition): personal and
   // this origin's items are eligible; another project's are dropped, or labelled when the query names it or nothing else answered.
   const layered = scopeNorm === undefined && layeredScopeEnabled(env) ? layeredView(db, options.origin ?? null, query) : null; // outside the snapshot: its first use creates the table
@@ -1936,8 +1967,9 @@ export async function buildAgentContext(
   const statements = candidateMemories.filter((_, i) => statement(i)).map(memoryWithProvenance);
   // The facts are cut from their end and the matches by score, but the match the verdict reports takes its room first when
   // that would not list it, and so does the newest match above the relevance bar (`recent`) when it fits.
+  const serviceNoteFirst = serviceNoteFirstEnabled(options.env ?? process.env);
   const budget = (allowance: number): Budgeted => {
-    const place = (keep?: Item) => pinned(applyBudget(candidateFacts, factEvents, itemMemories, itemEvents, allowance, cost, { keep, closest: missed, recent, mates, sessionStatements, relevance: item => ('text' in item ? statementRelevance(item.text, query) : 0) }), allowance);
+    const place = (keep?: Item) => pinned(applyBudget(candidateFacts, factEvents, itemMemories, itemEvents, allowance, cost, { keep, closest: missed, recent, mates, sessionStatements, ...(serviceNoteFirst ? { serviceQuery: query } : {}), relevance: item => ('text' in item ? statementRelevance(item.text, query) : 0) }), allowance);
     const plain = place();
     return match !== undefined && !holds(plain) ? place(match) : plain;
   };

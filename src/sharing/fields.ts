@@ -54,6 +54,11 @@ export interface FieldSpec {
   maxLength?: number;
   /** Sent only at this level or above. */
   level?: Exclude<SharingLevel, 'off'>;
+  /**
+   * The field may be absent: an engine released before it existed does not send it, and its rows are still accepted. This engine always
+   * sends it (a test holds the projector to every listed field). Absent is read as "not known", like null.
+   */
+  optional?: boolean;
   /** A number's bucket (the coarse-values rule, below): every int or number field must declare one, and a value outside it is refused. */
   bucket?: NumberBucket;
 }
@@ -128,6 +133,24 @@ export const RETRIEVAL_TOOL_NAMES = ['get_context', 'search_memory', 'retrieve_m
 export const SAVE_TOOL_NAMES = ['remember', 'save_memory', 'remember_note'] as const;
 export const CANDIDATE_KIND_NAMES = ['fact', 'note', 'unkeyed'] as const;
 export const SAVE_ITEM_NAMES = ['fact', 'note', 'event', 'unkeyed'] as const;
+
+// What every row says about where it was made (2026-11-08: the owner asked for as much as stays anonymous). Each is a closed list or a
+// number: the list is the whole vocabulary, so a value names a family of installs, never one. A value outside a list is sent as `other`
+// (or null where the field allows it), never as the value itself.
+/** Renor's hosted service (the engine runs behind the gateway, MVP_GATEWAY_SECRET) or an install someone runs themselves. */
+export const DEPLOYMENTS = ['cloud', 'self-hosted'] as const;
+/** The AI application on the other end, reduced from the MCP client's declared name (sharing/context.ts appFamily). */
+export const APP_FAMILIES = ['claude-code', 'cursor', 'codex', 'chatgpt', 'claude-ai', 'hermes', 'dsh', 'other'] as const;
+/** The Node.js major of a self-hosted install, as a closed list (an odd, older or newer major is `other`); null on cloud. */
+export const NODE_MAJORS = ['18', '20', '22', '24', 'other'] as const;
+/** The tool set the connection was given (contextProfile.ts): every tool, the coding preset, the lean preset, or a named list. */
+export const TOOL_PROFILES = ['full', 'coding', 'lean', 'custom'] as const;
+/** The embedding provider family behind semantic search (mvp/config.ts embeddingProvider), `none` when retrieval is keyword only. */
+export const EMBEDDING_FAMILIES = ['none', 'local', 'openai', 'vertex', 'other'] as const;
+/** How the call arrived: over MCP (an AI application), or from the owner's dashboard (the platform reading for the owner). */
+export const VIA_NAMES = ['mcp', 'dashboard'] as const;
+/** How long the engine took to answer the call, as a class. */
+export const LATENCY_BUCKETS = ['<50ms', '<200ms', '<1s', '<5s', '>=5s'] as const;
 
 /** The longest text one example may carry, in characters. A longer text is cut at this length by the projector. */
 export const MAX_EXAMPLE_TEXT = 2000;
@@ -218,6 +241,8 @@ const ENVIRONMENT_FIELDS: Record<string, FieldSpec> = {
   os: { type: 'string', oneOf: OS_FAMILIES },
   arch: { type: 'string', oneOf: ARCHES },
   ci: { type: 'boolean' },
+  // true when the engine ran as Renor's own (CONTEXT_FIELDS.internal); optional because an older engine leaves it out.
+  internal: { type: 'boolean', optional: true },
   transport: { type: 'string', oneOf: TRANSPORTS },
 };
 
@@ -239,6 +264,23 @@ export const ERROR_ENTRY_FIELDS: Record<string, FieldSpec> = {
 
 const bool: FieldSpec = { type: 'boolean' };
 const boolOrNull: FieldSpec = { type: 'boolean', nullable: true };
+// The engine's released version is sent as major.minor only (MAJOR_MINOR_PATTERN, the coarse-values rule); a pre-release or a fork's own tag
+// is sent as null, because such a value can be rare enough to point at one install.
+
+/**
+ * The fields every row kind carries about where it was made. All optional at the endpoint (an older engine leaves them out); this engine
+ * always sends them. `internal` is true when the engine ran as Renor's own (RENOR_SHARING_INTERNAL=1, or a CI or test runner's marker):
+ * those rows are kept apart from real usage and never counted as a user's.
+ */
+export const CONTEXT_FIELDS: Record<string, FieldSpec> = {
+  deployment: { type: 'string', oneOf: DEPLOYMENTS, optional: true },
+  internal: { type: 'boolean', optional: true },
+  release: { type: 'string', nullable: true, pattern: MAJOR_MINOR_PATTERN, optional: true },
+  app: { type: 'string', nullable: true, oneOf: APP_FAMILIES, optional: true },
+  profile: { type: 'string', nullable: true, oneOf: TOOL_PROFILES, optional: true },
+  os: { type: 'string', nullable: true, oneOf: OS_FAMILIES, optional: true },
+  node: { type: 'string', nullable: true, oneOf: NODE_MAJORS, optional: true },
+};
 
 /** Fields of one entry of `candidates` in a retrieval-labelled row. */
 export const CANDIDATE_FIELDS: Record<string, FieldSpec> = {
@@ -270,6 +312,13 @@ export const ROW_FIELDS: Record<RowKind, Record<string, FieldSpec>> = {
     reply_tokens_bucket: { type: 'int', nullable: true, bucket: { kind: 'pow2', max: MAX_TOKEN_BUCKET } },
     relevant: boolOrNull,
     truncated: boolOrNull,
+    ...CONTEXT_FIELDS,
+    semantic: { type: 'boolean', nullable: true, optional: true },
+    embedding: { type: 'string', nullable: true, oneOf: EMBEDDING_FAMILIES, optional: true },
+    via: { type: 'string', oneOf: VIA_NAMES, optional: true },
+    latency_bucket: { type: 'string', nullable: true, oneOf: LATENCY_BUCKETS, optional: true },
+    scored: { type: 'int', nullable: true, optional: true, bucket: { kind: 'range', min: 0, max: MAX_COUNT } },
+    lean: { type: 'boolean', nullable: true, optional: true },
     query: { type: 'string', nullable: true, maxLength: MAX_EXAMPLE_TEXT, level: 'data' },
     // candidates is an array of objects; it is checked against CANDIDATE_FIELDS.
   },
@@ -286,6 +335,9 @@ export const ROW_FIELDS: Record<RowKind, Record<string, FieldSpec>> = {
     cited: bool,
     superseded: bool,
     retired: bool,
+    ...CONTEXT_FIELDS,
+    via: { type: 'string', oneOf: VIA_NAMES, optional: true },
+    latency_bucket: { type: 'string', nullable: true, oneOf: LATENCY_BUCKETS, optional: true },
     text: { type: 'string', nullable: true, maxLength: MAX_EXAMPLE_TEXT, level: 'data' },
   },
   'session-aggregate/1': {
@@ -297,6 +349,8 @@ export const ROW_FIELDS: Record<RowKind, Record<string, FieldSpec>> = {
     saves_bucket: { type: 'string', oneOf: COUNT_BUCKETS },
     empty_reads_bucket: { type: 'string', oneOf: COUNT_BUCKETS },
     first_call: { type: 'string', oneOf: [...RETRIEVAL_TOOL_NAMES, ...SAVE_TOOL_NAMES, 'other'] },
+    opens_bucket: { type: 'string', oneOf: COUNT_BUCKETS, optional: true },
+    ...CONTEXT_FIELDS,
   },
   'install/1': {
     kind: { type: 'string', oneOf: ['install/1'] },
@@ -327,6 +381,7 @@ export const ROW_FIELDS: Record<RowKind, Record<string, FieldSpec>> = {
     install_age: installAge,
     session: { type: 'string', pattern: INSTALL_ID },
     step: { type: 'string', oneOf: FUNNEL_STEPS },
+    internal: { type: 'boolean', optional: true },
   },
 };
 
@@ -491,6 +546,7 @@ export function coarsenRow(row: unknown): unknown {
   if (typeof out.ranker === 'string' && !(RANKER_NAMES as readonly string[]).includes(out.ranker)) out.ranker = 'other';
   if (typeof out.model === 'string') out.model = modelIdentifier(out.model);
   out.served = cap(out.served);
+  if (Object.prototype.hasOwnProperty.call(out, 'scored')) out.scored = cap(out.scored);
   const tokens = out.reply_tokens_bucket;
   if (typeof tokens === 'number' && Number.isInteger(tokens)) {
     let bucket = 1;
@@ -558,6 +614,7 @@ function checkObject(path: string, specs: Record<string, FieldSpec>, value: unkn
     if (skip.includes(name)) continue;
     if (spec.level !== undefined && levelRank(spec.level) > levelRank(level)) continue;
     if (spec.level !== undefined && !(name in record)) continue; // a text field may be absent
+    if (spec.optional === true && !(name in record)) continue; // an older engine's row
     if (!(name in record)) throw new RowError(`${path}.${name} is missing`);
     checkValue(`${path}.${name}`, spec, record[name]);
   }

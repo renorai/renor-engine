@@ -25,7 +25,7 @@ import { remember, StaleExpectationError } from '../memory/lifecycle';
 import { ruleApprovalsEnabled } from '../mvp/ruleApprovals';
 import { scanSecrets } from './secretScanner';
 import {
-  ANTHROPIC_CAPTURE_PRICE_PER_MILLION, captureConfigDigest, captureMaxUsd, captureServerConfig, captureUserContent, extractCapture,
+  capturePrice, captureConfigDigest, captureMaxUsd, captureServerConfig, captureUserContent, extractCapture,
   type CaptureConfig, type CaptureDiagnostics, type CapturePrice,
 } from './captureModel';
 
@@ -40,9 +40,16 @@ const DEDUPE_OVERLAP = 0.8;
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_DELTA_CHARS = 12000;
+/** RENOR_CAPTURE_VERBATIM_TURNS: the most characters of one user turn kept as a verbatim excerpt. */
+export const VERBATIM_EXCERPT_CHARS = 400;
 /** A lock older than this was left by a process that died; it is taken over. The lock is held for milliseconds. */
 const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 2_000;
+
+/** Research lever, off unless set: store bounded verbatim excerpts of the (already secret-screened) user turns. */
+export function verbatimTurnsEnabled(env: NodeJS.ProcessEnv): boolean {
+  return /^(1|on|true|yes)$/i.test(env.RENOR_CAPTURE_VERBATIM_TURNS?.trim() ?? '');
+}
 
 export interface CaptureTurnsDeps {
   env: NodeJS.ProcessEnv;
@@ -244,7 +251,25 @@ export function createCaptureTurns(deps: CaptureTurnsDeps): (body: unknown) => P
       if (screened.kept.length === 0) return finish({ status: 200, body: { ok: true, saved: 0, pending_rules: 0 } });
       const messages = screened.kept;
 
-      const price: CapturePrice | undefined = ANTHROPIC_CAPTURE_PRICE_PER_MILLION[cfg.model];
+      // Lever (default off, no model call): a bounded verbatim excerpt of each screened user turn, saved as a dated note.
+      let verbatimSaved = 0;
+      if (verbatimTurnsEnabled(deps.env)) {
+        const verbatimDay = new Date(now()).toISOString().slice(0, 10);
+        for (const message of messages) {
+          if (message.role !== 'user') continue;
+          const excerpt = message.text.trim().slice(0, VERBATIM_EXCERPT_CHARS);
+          const key = normalise(excerpt);
+          if (!key || isDuplicate(key)) continue;
+          if (scanSecrets(excerpt) !== null) continue;
+          try {
+            await deps.saveNote(`User said: ${excerpt}`, verbatimDay);
+            remembered(key);
+            verbatimSaved++;
+          } catch { /* a failed excerpt write never blocks the model capture */ }
+        }
+      }
+
+      const price: CapturePrice | undefined = capturePrice(cfg);
       if (!price) return finish({ status: 503, body: { error: 'model_price_unknown' } });
       if (now() < cooldownUntil) return finish({ status: 503, body: { error: 'cooling_down' } });
 
@@ -334,7 +359,7 @@ export function createCaptureTurns(deps: CaptureTurnsDeps): (body: unknown) => P
       if (counts.note_write_failed + counts.rule_write_failed > 0) {
         return finish({ status: 500, body: { error: 'capture_save_failed', saved, pending_rules: pending } });
       }
-      return finish({ status: 200, body: { ok: true, saved, pending_rules: pending } });
+      return finish({ status: 200, body: { ok: true, saved: saved + verbatimSaved, pending_rules: pending } });
     } catch {
       return finish({ status: 500, body: { error: 'capture_failed' } });
     }

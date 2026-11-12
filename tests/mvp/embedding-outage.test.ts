@@ -314,9 +314,16 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace whose every save failed to
 
     // The index holds no vector, so the search itself would not ask the provider: it is asked, fails, and says so.
     const documents = provider.documentRequests;
+    // The question is a sentence, not a phrase in the note: the keyword fallback searches its words (any-word), so the note is found and marked as a keyword match.
     const search = await ws.call('search_memory', { query: QUESTION });
-    expect(search.body).toMatchObject({ ok: false, error: 'semantic-unavailable', hits: [] });
+    expect(search.isError).toBe(false);
+    expect(search.body).toMatchObject({ ok: true, fallback: 'keyword' });
+    expect(search.body.hits.map((h: { text: string }) => h.text).join('\n')).toContain(NOTE);
     expect(search.body.notice).toContain(OUTAGE);
+    // A query no note shares a word with still answers semantic-unavailable and why.
+    const none = await ws.call('search_memory', { query: 'zebra xylophone quartz' });
+    expect(none.body).toMatchObject({ ok: false, error: 'semantic-unavailable', hits: [] });
+    expect(none.body.notice).toContain(OUTAGE);
     const context = await ws.call('get_context', { query: QUESTION });
     expect(context.body).toMatchObject({ ok: true, retrieval: 'keyword' });
     expect(context.body.notice).toContain(OUTAGE);

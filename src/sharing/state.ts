@@ -119,6 +119,8 @@ export interface SharingState {
   trainingUnmappedAt?: number;
   /** Rows were sent at some time, so the endpoint may hold some for this contributor. */
   everSent: boolean;
+  /** The sender's last attempt that had something to say (kept on this machine only, never sent): when, and how it ended. `renor-engine telemetry status` prints it. */
+  lastSend?: { at: number; status: string; rows: number };
   /** A removal is owed to the endpoint (it could not be reached when it was asked for). Retried before anything else. */
   deletePending: boolean;
   /**
@@ -435,6 +437,9 @@ export function readState(dir: string): SharingState | null {
     watermarks: { retrieval: num(marks.retrieval), save: num(marks.save), session: num(marks.session) },
     everSent: raw.everSent === true,
     deletePending: raw.deletePending === true,
+    ...(isRecord(raw.lastSend) && typeof raw.lastSend.at === 'number' && Number.isFinite(raw.lastSend.at) && typeof raw.lastSend.status === 'string'
+      ? { lastSend: { at: raw.lastSend.at, status: raw.lastSend.status.slice(0, 20), rows: num(raw.lastSend.rows) } }
+      : {}),
     ...(isRecord(raw.trainingWatermarks)
       ? { trainingWatermarks: { retrieval: num(raw.trainingWatermarks.retrieval), save: num(raw.trainingWatermarks.save), session: num(raw.trainingWatermarks.session) } }
       : {}),

@@ -89,6 +89,23 @@ export function resolveEvidenceProvider(env: NodeJS.ProcessEnv = process.env): {
   return { baseUrl, keys };
 }
 
+/** Model asked of the own-hardware server when RENOR_EVIDENCE_OWN_HW_MODEL is unset: a 7-14B open-weight instruct model. */
+export const OWN_HW_EVIDENCE_MODEL_DEFAULT = 'qwen2.5:14b-instruct';
+
+/**
+ * RENOR_EVIDENCE_OWN_HW_URL (default off: unset or blank): run the evidence extractor on a self-hosted OpenAI-compatible
+ * server (Ollama, vLLM) instead of the hosted model. RENOR_EVIDENCE_OWN_HW_MODEL names the model. Returns null when off,
+ * which leaves the resolver exactly as it was. A malformed URL throws, like an invalid RENOR_EVIDENCE_MODE.
+ */
+export function resolveOwnHwEvidence(env: NodeJS.ProcessEnv = process.env): { baseUrl: string; model: string } | null {
+  const raw = (env.RENOR_EVIDENCE_OWN_HW_URL ?? '').trim();
+  if (raw === '') return null;
+  let url: URL;
+  try { url = new URL(raw); } catch { throw new Error('Invalid RENOR_EVIDENCE_OWN_HW_URL: must be an http(s) URL'); }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Invalid RENOR_EVIDENCE_OWN_HW_URL: must be an http(s) URL');
+  return { baseUrl: raw, model: (env.RENOR_EVIDENCE_OWN_HW_MODEL ?? '').trim() || OWN_HW_EVIDENCE_MODEL_DEFAULT };
+}
+
 /** Where the evidence pass caches, and where an opted-in workspace's daily allowance is counted: RENOR_EVIDENCE_CACHE, else beside the index. */
 export function evidenceCachePath(config: { dbPath: string }, env: NodeJS.ProcessEnv = process.env): string {
   return env.RENOR_EVIDENCE_CACHE?.trim() || path.join(path.dirname(config.dbPath), 'evidence-cache.db');
@@ -113,7 +130,12 @@ export function resolveEvidenceChat(
     ...(transport.maxRetries !== undefined ? { maxRetries: transport.maxRetries } : {}),
   };
   let chat: EvidenceChat | undefined;
-  if (optin) {
+  const ownHw = optin ? null : resolveOwnHwEvidence(env);
+  if (ownHw) {
+    // Own hardware (RENOR_EVIDENCE_OWN_HW_URL): a self-hosted OpenAI-compatible server that needs no key, so no turn leaves
+    // Renor. The placeholder is sent as a bearer token the server ignores; it is never a provider key.
+    chat = createOllamaChat({ baseUrl: ownHw.baseUrl, keys: ['own-hw'], ...bounds });
+  } else if (optin) {
     const optinKey = optinEndpointAllowed(baseUrl) ? readOptinKey(optin.keyFile) : null;
     if (optinKey) {
       const dailyCap = optin.dailyCap;
@@ -130,7 +152,7 @@ export function resolveEvidenceChat(
     chat = createOllamaChat({ baseUrl, keys, ...bounds });
   }
   // The opt-in is the gemma4:31b decision: a stray RENOR_EVIDENCE_MODEL does not change what the privacy page names.
-  const model = optin ? EVIDENCE_MODEL_DEFAULT : env.RENOR_EVIDENCE_MODEL?.trim() || EVIDENCE_MODEL_DEFAULT;
+  const model = optin ? EVIDENCE_MODEL_DEFAULT : ownHw ? ownHw.model : env.RENOR_EVIDENCE_MODEL?.trim() || EVIDENCE_MODEL_DEFAULT;
   return { model, ...(chat ? { chat } : {}), optin };
 }
 

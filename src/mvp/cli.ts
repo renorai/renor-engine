@@ -6,6 +6,7 @@
 // ~930 ms module-load phase, measured on Node 22 against an empty workspace).
 import { enableWorkspaceCompileCache } from './compileCache';
 enableWorkspaceCompileCache();
+import { stopLine } from './stopLine';
 
 import { loadMvpConfig } from './config';
 import { startMvpService, MVP_MCP_PATH } from './server';
@@ -64,7 +65,9 @@ async function main() {
     const byDefault = defaultInForce(config.sharingDir);
     console.log(`[mvp] Sharing           : ${effectiveLevel(config.sharingDir)} (${byDefault ? 'the default: nobody has chosen. Turn it off with `renor-engine telemetry off`' : "the owner's choice; off sends nothing"})`);
   }
+  const startedAt = Date.now();
   const shutdown = async () => {
+    console.log(stopLine(Date.now() - startedAt));
     sharingLoop?.stop();
     try {
       await mvp.close();

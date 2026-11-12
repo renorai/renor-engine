@@ -1,9 +1,13 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { APPS, RULE_END, RULE_START, RULE_TEXT, RULE_TOOLS, installRule, removeRule, rulePath } from '../../src/connect';
-import { TOOLS } from '../../src/mcp/server';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { APPS, RULE_END, RULE_START, RULE_TEXT, RULE_TEXT_HOSTED, RULE_TOOLS, installRule, mcpEntry, removeRule, rulePath } from '../../src/connect';
+import { HOSTED_STDIO_NAMES } from '../../src/mcp/hostedSurface';
+import { TOOLS, STDIO_CODING_TOOLS, createMcpTools, registerMcpHandlers } from '../../src/mcp/server';
 
 const dirs: string[] = [];
 function sandbox() {
@@ -75,5 +79,61 @@ describe('renor-engine connect CLI', () => {
     const out = execFileSync(process.execPath, [CLI, 'connect', 'grok', '--no-rule'], { cwd, env: { ...process.env, ...env }, encoding: 'utf8' });
     expect(out).toContain('renor-engine');
     expect(fs.existsSync(path.join(cwd, 'AGENTS.md'))).toBe(false);
+  });
+});
+
+describe('renor-engine connect --tools (stdio coding preset)', () => {
+  beforeAll(() => { process.env.RENOR_MCP_LEGACY_STDIO = '1'; });
+  afterAll(() => { delete process.env.RENOR_MCP_LEGACY_STDIO; });
+  it('prints the coding env by default and today\'s entry byte for byte with --tools full', () => {
+    expect(mcpEntry()).toEqual({ command: 'renor-engine', args: ['mcp'], env: { RENOR_MCP_TOOLS: 'coding' } });
+    expect(JSON.stringify(mcpEntry({ tools: 'full' }))).toBe('{"command":"renor-engine","args":["mcp"]}');
+  });
+  it('names the save tool the preset lists; full keeps today\'s rule', () => {
+    const a = sandbox(); const b = sandbox();
+    // RENOR_MCP_LEGACY_STDIO=1 keeps the rule that names the older stdio tools; the default rule names the hosted names.
+    const legacy = { RENOR_MCP_LEGACY_STDIO: '1' };
+    installRule('codex', { ...a.env, ...legacy }, a.cwd);
+    installRule('codex', { ...b.env, ...legacy }, b.cwd, { tools: 'full' });
+    const coding = fs.readFileSync(rulePath('codex', a.env, a.cwd), 'utf8');
+    const full = fs.readFileSync(rulePath('codex', b.env, b.cwd), 'utf8');
+    expect(full).toContain(RULE_TEXT);
+    expect(coding).toContain('Save with note when');
+    expect(coding).not.toContain('remember_fact');
+    for (const name of ['search', 'note']) expect(STDIO_CODING_TOOLS).toContain(name);
+  });
+  it('by default the rule names get_context and remember, both listed by the stdio server', () => {
+    const a = sandbox();
+    installRule('codex', a.env, a.cwd);
+    const rule = fs.readFileSync(rulePath('codex', a.env, a.cwd), 'utf8');
+    expect(rule).toContain(RULE_TEXT_HOSTED);
+    for (const name of ['get_context', 'remember']) expect(HOSTED_STDIO_NAMES).toContain(name);
+    expect(rule).not.toMatch(/remember_fact|\bnote\b with/);
+  });
+
+  async function listed(toolsEnv: string | undefined): Promise<string[]> {
+    const prev = process.env.RENOR_MCP_TOOLS;
+    if (toolsEnv === undefined) delete process.env.RENOR_MCP_TOOLS; else process.env.RENOR_MCP_TOOLS = toolsEnv;
+    try {
+      const server = new Server({ name: 'renor', version: '1.0.0' }, { capabilities: { tools: {} } });
+      registerMcpHandlers(server, {} as ReturnType<typeof createMcpTools>);
+      const [ct, st] = InMemoryTransport.createLinkedPair();
+      const client = new Client({ name: 't', version: '0.1.0' }, { capabilities: {} });
+      await Promise.all([server.connect(st), client.connect(ct)]);
+      const res = await client.listTools();
+      const refused = await client.callTool({ name: 'entity', arguments: { name: 'x' } });
+      await client.close();
+      if (toolsEnv === 'coding') expect(refused.isError).toBe(true);
+      return res.tools.map((t) => t.name);
+    } finally {
+      if (prev === undefined) delete process.env.RENOR_MCP_TOOLS; else process.env.RENOR_MCP_TOOLS = prev;
+    }
+  }
+  it('lists exactly the five coding tools under coding; unset and all list every tool unchanged', async () => {
+    expect(await listed('coding')).toEqual(TOOLS.map((t) => t.name).filter((n) => (STDIO_CODING_TOOLS as readonly string[]).includes(n)));
+    expect((await listed('coding')).sort()).toEqual(['facts', 'keyword', 'note', 'search', 'status']);
+    const all = TOOLS.map((t) => t.name);
+    expect(await listed(undefined)).toEqual(all);
+    expect(await listed('all')).toEqual(all);
   });
 });

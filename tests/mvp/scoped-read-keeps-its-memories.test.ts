@@ -176,7 +176,8 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a scoped read keeps the memories of it
     await saveScope(crowded);
     for (const text of NEARER) await crowded.note(text);
     // The other notes are the nearer ones: a read of every scope does not reach the scope's two.
-    const everywhere = await crowded.call('get_context', { query: QUESTION });
+    // At the lean 800-token page (the default before 2026-11-09): the deep default reads 50 matches and reaches them anyway.
+    const everywhere = await crowded.call('get_context', { query: QUESTION, max_tokens: 800 });
     expect(everywhere.memories.filter((m: { text: string }) => mine.some(text => m.text.includes(text)))).toEqual([]);
 
     const scoped = await scopedReads(crowded, SCOPE, QUESTION, mine);

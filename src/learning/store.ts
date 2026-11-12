@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { scanSecrets } from '../extraction/secretScanner';
 import {
+  CALL_CONTEXT_COLUMNS,
   CANDIDATE_KINDS,
   LEARNING_DDL,
   LEARNING_SCHEMA_NAME,
@@ -84,6 +85,21 @@ export interface RetrievalRecord {
   truncated: boolean | null;
   /** RENOR_CONTEXT_LEAN_ITEMS was on for this reply: its memories carry no note path, so their candidates are unkeyed. */
   leanItems: boolean;
+  /** Where the call came from, as closed-list values (schema.ts CALL_CONTEXT_COLUMNS). Absent: null. */
+  context?: CallContext;
+}
+
+/** One finished session as LearningLog.sessionSpans sums it. */
+export interface SessionSpan {
+  first: number; last: number; first_tool: string; reads: number; saves: number; empty: number; opens: number;
+  app: string | null; release: string | null; profile: string | null;
+}
+
+/** schema.ts CALL_CONTEXT_COLUMNS, as the tap hands them over: already reduced to closed lists (src/sharing/context.ts). */
+export interface CallContext {
+  app: string | null;
+  release: string | null;
+  profile: string | null;
 }
 
 export interface MemoryOpRecord {
@@ -98,6 +114,7 @@ export interface MemoryOpRecord {
   subjectKey: string | null;
   replacedKey: string | null;
   ms: number;
+  context?: CallContext;
 }
 
 export interface FeedbackRecord {
@@ -150,11 +167,20 @@ const ORDER: Record<(typeof LEARNING_TABLES)[number], string> = {
 
 /** The columns the sharing projection reads (src/sharing/project.ts), per table: exportServedWindow selects these and nothing else. */
 export const SHARING_COLUMNS = {
-  retrievals: ['id', 'at', 'tool', 'session_key', 'agent_key', 'query_key', 'retrieval', 'ranker', 'model', 'build', 'served', 'reply_tokens', 'relevant', 'truncated'],
+  retrievals: [
+    'id', 'at', 'tool', 'actor', 'session_key', 'agent_key', 'query_key', 'retrieval', 'ranker', 'model', 'build', 'served', 'ms', 'reply_tokens',
+    'relevant', 'truncated', 'lean_items', ...CALL_CONTEXT_COLUMNS,
+  ],
   candidates: ['id', 'retrieval_id', 'rank', 'kind', 'memory_key', 'subject_key', 'score', 'reason', 'matched', 'current'],
-  memory_ops: ['id', 'at', 'session_key', 'agent_key', 'tool', 'op', 'kind', 'memory_key', 'subject_key', 'replaced_key'],
+  memory_ops: ['id', 'at', 'actor', 'session_key', 'agent_key', 'tool', 'op', 'kind', 'memory_key', 'subject_key', 'replaced_key', 'ms', ...CALL_CONTEXT_COLUMNS],
   feedback: ['id', 'at', 'session_key', 'agent_key', 'tool', 'memory_key', 'subject_key', 'observed'],
 } as const;
+
+/**
+ * How many candidates the ranker scored for a retrieval, served or not: the size of the pool the reply was cut from. Only the count is
+ * read; the unserved candidates themselves are never exported for sharing.
+ */
+const SCORED_COLUMN = ', (SELECT COUNT(*) FROM candidates c WHERE c.retrieval_id = retrievals.id) AS scored';
 
 /** Ids of one table fit below this, so `tableIndex * span + id` is one safe integer. */
 export const LEARNING_CURSOR_SPAN = 2 ** 40;
@@ -198,6 +224,7 @@ export class LearningLog {
       db.pragma('busy_timeout = 5000');
       db.exec(LEARNING_DDL);
       const secret = ensureMeta(db, now());
+      addCallContext(db);
       return new LearningLog(file, db, secret, options.retentionDays, options.rawQueries, now);
     } catch (err) {
       db.close();
@@ -225,13 +252,14 @@ export class LearningLog {
     return this.write(() => {
       const info = this.db.prepare(
         `INSERT INTO retrievals (at, tool, actor, session_key, agent_key, query_key, query_text, query_redacted, scope_key, retrieval,
-           ranker, model, build, served, ms, reply_tokens, relevant, truncated, lean_items)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ranker, model, build, served, ms, reply_tokens, relevant, truncated, lean_items, app, release, profile)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         at, record.tool, record.actor, record.sessionKey, record.agentKey, record.queryKey, keepRaw ? raw : null,
         queryRedacted ? 1 : 0, record.scopeKey, record.retrieval, record.ranker, record.model, record.build,
         record.candidates.filter(candidate => candidate.rank !== null).length, record.ms, record.replyTokens, flag(record.relevant),
-        flag(record.truncated), record.leanItems ? 1 : 0,
+        flag(record.truncated), record.leanItems ? 1 : 0, record.context?.app ?? null, record.context?.release ?? null,
+        record.context?.profile ?? null,
       );
       const id = Number(info.lastInsertRowid);
       const columns = [
@@ -254,11 +282,12 @@ export class LearningLog {
   recordMemoryOp(record: MemoryOpRecord): void {
     this.write(() => {
       this.db.prepare(
-        `INSERT INTO memory_ops (at, actor, session_key, agent_key, tool, op, kind, memory_key, subject_key, replaced_key, ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO memory_ops (at, actor, session_key, agent_key, tool, op, kind, memory_key, subject_key, replaced_key, ms, app, release, profile)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         record.at ?? this.now(), record.actor, record.sessionKey, record.agentKey, record.tool, record.op, record.kind,
-        record.memoryKey, record.subjectKey, record.replacedKey, record.ms,
+        record.memoryKey, record.subjectKey, record.replacedKey, record.ms, record.context?.app ?? null, record.context?.release ?? null,
+        record.context?.profile ?? null,
       );
     });
   }
@@ -355,7 +384,8 @@ export class LearningLog {
         ? this.db.prepare(
           `SELECT ${columns} FROM candidates WHERE rank IS NOT NULL AND retrieval_id IN (SELECT id FROM retrievals WHERE at > ? AND at <= ?) ORDER BY ${ORDER.candidates}`,
         ).all(from, until) as Array<Record<string, unknown>>
-        : this.db.prepare(`SELECT ${columns} FROM ${table} WHERE at > ? AND at <= ? ORDER BY ${ORDER[table]}`).all(from, until) as Array<Record<string, unknown>>;
+        : this.db.prepare(`SELECT ${columns}${table === 'retrievals' ? SCORED_COLUMN : ''} FROM ${table} WHERE at > ? AND at <= ? ORDER BY ${ORDER[table]}`)
+          .all(from, until) as Array<Record<string, unknown>>;
     }
     return {
       schema: LEARNING_SCHEMA_NAME,
@@ -386,25 +416,27 @@ export class LearningLog {
    * Each session's span and counts over the retention window, done in SQLite (no row is held here): the sessions whose LAST event
    * is in (after, until], oldest last first. `limit` caps how many; the sessions sharing the last one's time are all kept.
    * `first_tool` is the tool of its earliest event (retrievals before memory_ops, then by id, on a tie); `saves` counts the
-   * create/supersede operations of `saveTools`; `empty` the retrievals that served nothing.
+   * create/supersede operations of `saveTools`; `empty` the retrievals that served nothing; `opens` the memories the agent opened
+   * (read_memory). `app`, `release` and `profile` are those of its earliest event (schema.ts CALL_CONTEXT_COLUMNS).
    */
-  sessionSpans(after: number, until: number, saveTools: readonly string[], limit = Number.MAX_SAFE_INTEGER): Array<{
-    first: number; last: number; first_tool: string; reads: number; saves: number; empty: number;
-  }> {
+  sessionSpans(after: number, until: number, saveTools: readonly string[], limit = Number.MAX_SAFE_INTEGER): Array<SessionSpan> {
     this.maybePrune();
     const cutoff = this.cutoff();
     const tools = saveTools.map(() => '?').join(', ');
     const events = `WITH ev AS (
-        SELECT session_key AS k, at, 0 AS src, id, tool, 1 AS rd, 0 AS sv, CASE WHEN served = 0 THEN 1 ELSE 0 END AS em
+        SELECT session_key AS k, at, 0 AS src, id, tool, 1 AS rd, 0 AS sv, CASE WHEN served = 0 THEN 1 ELSE 0 END AS em, 0 AS op_,
+            app, release, profile
           FROM retrievals WHERE session_key IS NOT NULL AND at >= ?
         UNION ALL
-        SELECT session_key, at, 1, id, tool, 0, CASE WHEN tool IN (${tools}) AND op IN ('create', 'supersede') THEN 1 ELSE 0 END, 0
+        SELECT session_key, at, 1, id, tool, 0, CASE WHEN tool IN (${tools}) AND op IN ('create', 'supersede') THEN 1 ELSE 0 END, 0,
+            CASE WHEN tool = 'read_memory' THEN 1 ELSE 0 END, app, release, profile
           FROM memory_ops WHERE session_key IS NOT NULL AND at >= ?
       ), ranked AS (
-        SELECT k, at, tool, rd, sv, em, ROW_NUMBER() OVER (PARTITION BY k ORDER BY at, src, id) AS n FROM ev
+        SELECT k, at, tool, rd, sv, em, op_, app, release, profile, ROW_NUMBER() OVER (PARTITION BY k ORDER BY at, src, id) AS n FROM ev
       ), spans AS (
-        SELECT k, MIN(at) AS first, MAX(at) AS last, SUM(rd) AS reads, SUM(sv) AS saves, SUM(em) AS empty,
-          MAX(CASE WHEN n = 1 THEN tool END) AS first_tool
+        SELECT k, MIN(at) AS first, MAX(at) AS last, SUM(rd) AS reads, SUM(sv) AS saves, SUM(em) AS empty, SUM(op_) AS opens,
+          MAX(CASE WHEN n = 1 THEN tool END) AS first_tool, MAX(CASE WHEN n = 1 THEN app END) AS app,
+          MAX(CASE WHEN n = 1 THEN release END) AS release, MAX(CASE WHEN n = 1 THEN profile END) AS profile
         FROM ranked GROUP BY k
       )`;
     const params = [cutoff, ...saveTools, cutoff];
@@ -415,8 +447,8 @@ export class LearningLog {
       if (row !== undefined) end = row.last;
     }
     return this.db.prepare(`${events}
-      SELECT first, last, reads, saves, empty, first_tool FROM spans WHERE last > ? AND last <= ? ORDER BY last, first`)
-      .all(...params, after, end) as Array<{ first: number; last: number; first_tool: string; reads: number; saves: number; empty: number }>;
+      SELECT first, last, reads, saves, empty, opens, first_tool, app, release, profile FROM spans WHERE last > ? AND last <= ? ORDER BY last, first`)
+      .all(...params, after, end) as SessionSpan[];
   }
 
   /** What a paged export names in the manifest in place of the rows: the schema, the window and the rows per table. */
@@ -546,6 +578,25 @@ function ensureMeta(db: Database.Database, now: number): Buffer {
   const secret = Buffer.from(meta.get('secret') ?? '', 'hex');
   if (secret.length !== 32) throw new Error('the learning log has no usable key secret; refusing to use it');
   return secret;
+}
+
+/**
+ * Adds the call-context columns (schema.ts CALL_CONTEXT_COLUMNS) to a version-2 log made before them. Nullable, so the rows already in it
+ * read null and nothing is rewritten. Idempotent: a column that is there is left alone.
+ */
+function addCallContext(db: Database.Database): void {
+  for (const table of ['retrievals', 'memory_ops'] as const) {
+    const have = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name));
+    for (const column of CALL_CONTEXT_COLUMNS) {
+      if (have.has(column)) continue;
+      try {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+      } catch (err) {
+        // Another process opening the same log may have added it between the check and the ALTER: that is the result wanted.
+        if (!/duplicate column name/i.test(err instanceof Error ? err.message : String(err))) throw err;
+      }
+    }
+  }
 }
 
 const open = new Map<string, LearningLog>();

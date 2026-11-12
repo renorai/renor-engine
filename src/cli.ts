@@ -538,7 +538,13 @@ program
   .description(`Connect a local app to this engine: print its MCP entry and write the memory rule into its instructions file. Apps: ${APPS.join(", ")}`)
   .option("--no-rule", "print the MCP entry only; do not touch the instructions file")
   .option("--remove", "remove the memory rule block (by its markers) and nothing else")
-  .action((app: string, opts: { rule: boolean; remove?: boolean }) => {
+  .option("--tools <set>", "coding (default): the short coding tool list; full: every tool, as before", "coding")
+  .action((app: string, opts: { rule: boolean; remove?: boolean; tools: string }) => {
+    if (opts.tools !== "coding" && opts.tools !== "full") {
+      process.stderr.write(`renor-engine connect: --tools must be coding or full, not "${opts.tools}"\n`);
+      process.exit(1);
+    }
+    const tools = opts.tools;
     if (!isApp(app)) {
       process.stderr.write(`renor-engine connect: unknown app "${app}". Apps: ${APPS.join(", ")}\n`);
       process.exit(1);
@@ -549,12 +555,12 @@ program
       process.stdout.write(`${r.state === "removed" ? "Removed the Renor memory rule from" : "No Renor memory rule in"} ${r.path}\n`);
       return;
     }
-    process.stdout.write(`Add this MCP server to ${app}:\n${JSON.stringify({ renor: mcpEntry() }, null, 2)}\n`);
+    process.stdout.write(`Add this MCP server to ${app}:\n${JSON.stringify({ renor: mcpEntry({ tools }) }, null, 2)}\n`);
     if (!opts.rule) {
       process.stdout.write(`Memory rule skipped (--no-rule). It would go in ${rulePath(app, process.env, cwd)}\n`);
       return;
     }
-    const r = installRule(app, process.env, cwd);
+    const r = installRule(app, process.env, cwd, { tools });
     process.stdout.write(`Memory rule ${r.state}: ${r.path}\n`);
   });
 

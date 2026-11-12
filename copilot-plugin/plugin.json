@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "renor",
+  "version": "1.0.0",
+  "description": "Durable memory for your coding agents: recall past decisions before answering, save the why that should outlive the session.",
+  "author": {
+    "name": "Renor",
+    "url": "https://renor.cloud"
+  },
+  "homepage": "https://renor.cloud",
+  "repository": "https://github.com/renorai/renor-engine",
+  "license": "MIT",
+  "keywords": ["memory", "context", "recall", "decisions", "mcp"]
+}

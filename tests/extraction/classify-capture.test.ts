@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { LocalRulesDecisionModel, classifyNote, type NoteClass } from '../../src/extraction/decision-model';
-import { classifyCaptureEnabled, planCapture } from '../../src/extraction/classifyCapture';
 
 const LABELS = ['decision', 'preference', 'fact', 'result', 'request', 'noise'] as const;
 type Label = (typeof LABELS)[number];
@@ -90,19 +89,8 @@ describe('classify_capture local rules', () => {
     expect(result).toMatchObject({ task: 'classify_capture', decision: 'decision', costUSDCents: 0 });
   });
 
-  it('the flag is off unless set, and a secret is dropped rather than stored', () => {
-    expect(classifyCaptureEnabled({})).toBe(false);
-    expect(planCapture('We decided to keep the preview on port 4177.', 'firstmate', {})).toEqual({ disposition: 'off' });
-    const on = { RENOR_CLASSIFY_CAPTURE: 'on' };
-    expect(planCapture('We decided to keep the preview on port 4177.', 'firstmate', on)).toEqual({
-      disposition: 'structured',
-      kind: 'decision',
-      statement: 'We decided to keep the preview on port 4177.',
-      author: 'firstmate-auto',
-    });
-    expect(planCapture('Thanks.', 'firstmate', on)).toEqual({ disposition: 'raw', kind: 'noise' });
-    expect(planCapture('Can you check the build before the post?', 'firstmate', on)).toEqual({ disposition: 'raw', kind: 'request' });
-    expect(planCapture('password: correct-horse', 'firstmate', on)).toEqual({ disposition: 'drop', kind: 'sensitive' });
+  it('drops a secret: the local rules class it sensitive', () => {
+    expect(classifyNote('password: correct-horse')).toBe('sensitive');
   });
 
   it('measures the 48 hand-labelled notes', () => {

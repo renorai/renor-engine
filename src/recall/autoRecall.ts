@@ -21,7 +21,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { formatReceipt, receiptOn, type Recalled } from './receipt';
 import { inert } from '../../claude-code-plugin/hooks/inert.cjs';
-import { normalizeOrigin, originFromDirectory, ORIGIN_HEADER } from './origin';
+import { hookRelevanceBar, HOSTED_RECALL_MODEL_KEY, normalizeOrigin, originFromDirectory, ORIGIN_HEADER } from './origin';
 
 export const DEFAULT_URL = 'https://mcp.renor.cloud/mcp';
 export const DEFAULT_MAX_TOKENS = 400;
@@ -34,12 +34,10 @@ export const DEFAULT_TIMEOUT_MS = 1500;
 export const HOSTED_TIMEOUT_MS = 3500;
 export const DEFAULT_MIN_WORDS = 3;
 /**
- * The relevance floor when the hook is on, RENOR_AUTO_RECALL_MIN_SIMILARITY is unset and the endpoint is the hosted one
- * (DEFAULT_URL). It is a cosine for the hosted model's embeddings only (vertex:gemini-embedding-001:768, the one
- * calibrated model in contextRelevance.ts), chosen on the owner's private real-use sessions (in-sample, not reproducible
- * from this repository). A bar never carries over to another model, so another endpoint gets no default floor.
+ * The hosted hook's per-model floor. It deliberately remains undefined while the gemini-embedding-001/768 placeholder
+ * in origin.ts is uncalibrated; the offline laptop scores, not the product's different relevance fixture, will turn it on.
  */
-export const DEFAULT_MIN_SIMILARITY = 0.68;
+export const DEFAULT_MIN_SIMILARITY = hookRelevanceBar(HOSTED_RECALL_MODEL_KEY);
 export const FLOOR_ENV = 'RENOR_AUTO_RECALL_MIN_SIMILARITY';
 /** get_context's own limits (src/mvp/server.ts inputSchema): query at most 1000 characters, max_tokens 128 to 4000. */
 const QUERY_MAX_CHARS = 1000;
@@ -427,11 +425,17 @@ export interface HookIo {
   warn?: (line: string) => void;
 }
 
+/** Owner and mode are POSIX facts: native Windows has no uid and reports 0o666 for every file, so there neither can be judged and only the type checks apply. */
+function ownsAndMode(st: fs.Stats, modeOk: boolean): boolean {
+  if (process.platform === 'win32' && process.getuid === undefined) return true;
+  return st.uid === process.getuid?.() && modeOk;
+}
+
 /** True when `dir` is a real directory owned by this user with mode exactly 0700 (not a link, not shared). */
 function ownPrivateRuntimeDir(dir: string): boolean {
   try {
     const st = fs.lstatSync(dir);
-    return st.isDirectory() && st.uid === process.getuid?.() && (st.mode & 0o777) === 0o700;
+    return st.isDirectory() && ownsAndMode(st, (st.mode & 0o777) === 0o700);
   } catch { return false; }
 }
 
@@ -450,7 +454,7 @@ export function pinnedStateDir(env: NodeJS.ProcessEnv): string {
 function privateDirectory(dir: string): boolean {
   try {
     const st = fs.lstatSync(dir);
-    return st.isDirectory() && st.uid === process.getuid?.() && (st.mode & 0o077) === 0;
+    return st.isDirectory() && ownsAndMode(st, (st.mode & 0o077) === 0);
   } catch { return false; }
 }
 
@@ -459,7 +463,7 @@ function readPrivateFile(file: string): string | null {
   try {
     fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const st = fs.fstatSync(fd);
-    if (!st.isFile() || st.uid !== process.getuid?.() || (st.mode & 0o777) !== 0o600) return null;
+    if (!st.isFile() || !ownsAndMode(st, (st.mode & 0o777) === 0o600)) return null;
     return fs.readFileSync(fd, 'utf8');
   } catch { return null; } finally { if (fd !== undefined) fs.closeSync(fd); }
 }

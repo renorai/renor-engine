@@ -1,6 +1,5 @@
 import * as z from 'zod';
 import { unstorableControls } from '../../memory/controls.js';
-import { OUT_HIT } from '../outputSchemas.js';
 import { engineSearchText } from '../engine.js';
 import { searchTextFallbackEnabled, keywordOrMatch } from '../agentMemory.js';
 import { markAuthority, markFactHits } from '../factMarkers.js';
@@ -27,13 +26,6 @@ export function registerSearchTextTool(ctx: ToolContext): void {
       top_k: z.number().int().min(1).max(50).optional().describe('Max hits (default 20)'),
       scope: z.string().optional().describe('Memory scope: "global" (default) or scope:<slug> / project:<slug>'),
     },
-    outputSchema: z.looseObject({
-      ok: z.boolean(),
-      results: z.array(OUT_HIT),
-      error: z.string().optional(),
-      detail: z.string().optional(),
-      scope: z.string().optional(),
-    }),
   }, async (args, extra) => {
     try {
       const topK = args.top_k ?? 20;

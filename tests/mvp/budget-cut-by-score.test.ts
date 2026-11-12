@@ -7,7 +7,7 @@ import { runMigrations } from '../../src/db/schema';
 import { indexVault } from '../../src/indexer/pipeline';
 import { VectorIndex } from '../../src/embeddings/vectorIndex';
 import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
-import { buildAgentContext, matchBudgetOrder, replyTokens, type AgentContextMemory } from '../../src/mvp/agentMemory';
+import { buildAgentContext, matchBudgetOrder, serviceNames, serviceNoteFirstEnabled, replyTokens, type AgentContextMemory } from '../../src/mvp/agentMemory';
 import { engineSearchMemory, type Engine } from '../../src/mvp/engine';
 
 /**
@@ -235,5 +235,20 @@ describe('matchBudgetOrder', () => {
   it('counts a match that the words also found as scored, and leaves what the expansion added out', () => {
     const list = [memory('session-expand', 0), memory('semantic+content+fts', 0.4), memory('fts+note-identity', 3), memory('semantic', 0.6)];
     expect(matchBudgetOrder(list)).toEqual([3, 1, 2]);
+  });
+
+  it('takes the match that names the service in the question first, only when asked to', () => {
+    const daily = (score: number): AgentContextMemory => ({ notePath: 'daily.md', text: 'Fixed a flaky test with fake timers', reason: 'semantic', score });
+    const decision: AgentContextMemory = { notePath: 'notes.md', headingPath: 'Decision for invoice-service', text: 'Decision for invoice-service: tests run on vitest, not jest', reason: 'semantic', score: 0.3 };
+    const list = [daily(0.9), daily(0.8), decision];
+    expect(matchBudgetOrder(list)).toEqual([0, 1, 2]);
+    expect(matchBudgetOrder(list, 'which test runner does invoice-service use?')).toEqual([2, 0, 1]);
+    expect(matchBudgetOrder(list, 'which test runner do we use?')).toEqual([0, 1, 2]);
+  });
+
+  it('reads service names and the switch', () => {
+    expect(serviceNames('Auth-Proxy and invoice_service, v1.2 no')).toEqual(['auth-proxy', 'invoice_service']);
+    expect(serviceNoteFirstEnabled({})).toBe(false);
+    expect(serviceNoteFirstEnabled({ RENOR_SERVICE_NOTE_FIRST: 'on' })).toBe(true);
   });
 });

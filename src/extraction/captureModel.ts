@@ -53,7 +53,26 @@ export type CaptureResult = {
   inTokens: number | null; outTokens: number | null; cacheWriteTokens: number | null; cacheReadTokens: number | null; usd: number | null;
 };
 export type CapturePrice = { input: number; output: number };
-export interface CaptureConfig { model: string; key: string; maxUsdCall: number; maxUsdDay: number }
+/** `ownHwUrl` is set only by RENOR_CAPTURE_OWN_HW_URL (research lever, default off): the capture call then goes to that endpoint. */
+export interface CaptureConfig { model: string; key: string; maxUsdCall: number; maxUsdDay: number; ownHwUrl?: string }
+
+/**
+ * RENOR_CAPTURE_OWN_HW_URL (research lever, default off): an OpenAI-compatible chat-completions URL served on our own hardware
+ * (an open-weight 7-14B instruct model). Unset, empty or not an http(s) URL returns null and capture behaves exactly as before.
+ */
+export function ownHwCaptureUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = (env.RENOR_CAPTURE_OWN_HW_URL ?? '').trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.toString() : null;
+  } catch { return null; }
+}
+
+/** The price a capture call is billed at: zero marginal dollars on our own hardware, else the provider table (undefined = unpriced). */
+export function capturePrice(config: Pick<CaptureConfig, 'model' | 'ownHwUrl'>): CapturePrice | undefined {
+  return config.ownHwUrl ? { input: 0, output: 0 } : ANTHROPIC_CAPTURE_PRICE_PER_MILLION[config.model];
+}
 
 function realDate(v: unknown): v is string {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
@@ -125,6 +144,15 @@ export function captureServerConfig(env: NodeJS.ProcessEnv = process.env, opts: 
     say('[capture] RENOR_CAPTURE_MAX_USD_DAY is invalid: capture stays off\n');
     return null;
   }
+  if ((env.RENOR_CAPTURE_OWN_HW_URL ?? '').trim()) {
+    const ownHwUrl = ownHwCaptureUrl(env);
+    const model = (env.RENOR_CAPTURE_MODEL ?? '').trim();
+    if (!ownHwUrl || !model) {
+      say('[capture] RENOR_CAPTURE_OWN_HW_URL needs an http(s) URL and RENOR_CAPTURE_MODEL: capture stays off\n');
+      return null;
+    }
+    return { model, key, maxUsdCall, maxUsdDay, ownHwUrl };
+  }
   return { model: (env.RENOR_CAPTURE_MODEL || CAPTURE_MODEL_DEFAULT).trim(), key, maxUsdCall, maxUsdDay };
 }
 
@@ -134,7 +162,7 @@ export function captureServerConfig(env: NodeJS.ProcessEnv = process.env, opts: 
  */
 export function captureServerOn(env: NodeJS.ProcessEnv = process.env): boolean {
   const cfg = captureServerConfig(env, { quiet: true });
-  return cfg !== null && ANTHROPIC_CAPTURE_PRICE_PER_MILLION[cfg.model] !== undefined;
+  return cfg !== null && capturePrice(cfg) !== undefined;
 }
 
 /** The user turn sent to the model. Reserved and sent from the same string, so the cap bounds what is actually billed. */
@@ -153,8 +181,9 @@ export function captureMaxUsd(content: string, price: CapturePrice): number {
 }
 
 /** A digest of the settings a paid call runs under (no key, no text): what the call ledger records before each call. */
-export function captureConfigDigest(config: Pick<CaptureConfig, 'model' | 'maxUsdCall' | 'maxUsdDay'>, price: CapturePrice | undefined): string {
+export function captureConfigDigest(config: Pick<CaptureConfig, 'model' | 'maxUsdCall' | 'maxUsdDay' | 'ownHwUrl'>, price: CapturePrice | undefined): string {
   const canonical = JSON.stringify({
+    ...(config.ownHwUrl ? { own_hw: true } : {}),
     model: config.model,
     price,
     maxUsdCall: config.maxUsdCall,
@@ -178,12 +207,16 @@ const finiteTokens = (value: unknown): number | null => (typeof value === 'numbe
  * The one place an Anthropic Messages request body is built. Claude 5.x models reject `temperature` (HTTP 400 "temperature is
  * deprecated for this model"), so it is sent only to older models that still take it; today the capture call needs none.
  */
+export function modelTakesTemperature(model: string): boolean {
+  return !/^claude-[a-z]+-5(?:[-.]|$)/.test(model);
+}
+
 export function anthropicRequestBody(
   model: string,
   body: Record<string, unknown>,
   temperature?: number,
 ): Record<string, unknown> {
-  const takesTemperature = temperature !== undefined && !/^claude-[a-z]+-5(?:[-.]|$)/.test(model);
+  const takesTemperature = temperature !== undefined && modelTakesTemperature(model);
   return { model, ...body, ...(takesTemperature ? { temperature } : {}) };
 }
 
@@ -207,7 +240,7 @@ export async function describeUpstreamError(response: Response): Promise<string>
 
 export async function extractCapture(
   messages: Array<{ role: string; text: string; at: string | null }>,
-  config: { model: string; key: string },
+  config: { model: string; key: string; ownHwUrl?: string },
   fetchImpl: typeof fetch = fetch,
   diagnostics: CaptureDiagnostics = {},
   defaultDate?: string,
@@ -216,6 +249,11 @@ export async function extractCapture(
   const fail = (reason: string): null => { diagnostics.failure = reason; return null; };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
+  if (config.ownHwUrl) {
+    try { return await extractOwnHw(messages, { ...config, ownHwUrl: config.ownHwUrl }, fetchImpl, diagnostics, defaultDate, controller.signal, fail); }
+    catch { return fail(controller.signal.aborted ? 'timeout' : 'request_failed'); }
+    finally { clearTimeout(timer); }
+  }
   try {
     const response = await fetchImpl('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -270,4 +308,50 @@ export async function extractCapture(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The own-hardware arm: same prompt and the same reply validation, an OpenAI-compatible request, no provider price. */
+async function extractOwnHw(
+  messages: Array<{ role: string; text: string; at: string | null }>,
+  config: { model: string; key: string; ownHwUrl: string },
+  fetchImpl: typeof fetch,
+  diagnostics: CaptureDiagnostics,
+  defaultDate: string | undefined,
+  signal: AbortSignal,
+  fail: (reason: string) => null,
+): Promise<CaptureResult | null> {
+  const response = await fetchImpl(config.ownHwUrl, {
+    method: 'POST',
+    redirect: 'error',
+    signal,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.key}` },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: CAPTURE_MAX_OUTPUT_TOKENS,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [{ role: 'system', content: captureSystemPrompt() }, { role: 'user', content: captureUserContent(messages) }],
+    }),
+  });
+  if (!response.ok) {
+    diagnostics.upstream = await describeUpstreamError(response);
+    return fail('upstream_error');
+  }
+  const body = await response.json() as { choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }>; usage?: Record<string, unknown> };
+  const choice = Array.isArray(body.choices) ? body.choices[0] : undefined;
+  const finish = choice?.finish_reason;
+  diagnostics.stop_reason = finish === 'stop' ? 'end_turn' : finish === 'length' ? 'max_tokens' : null;
+  const outTokens = finiteTokens(body.usage?.completion_tokens);
+  diagnostics.output_tokens = outTokens;
+  const raw = typeof choice?.message?.content === 'string' ? choice.message.content : '';
+  diagnostics.text_blocks = raw ? 1 : 0;
+  const parsed = parseCaptureReply(raw, diagnostics, defaultDate);
+  diagnostics.parsed = parsed !== null;
+  if (finish === 'length') return fail('truncated_output');
+  if (!raw.trim()) return fail('missing_text');
+  if (!parsed) return fail('invalid_json');
+  Object.assign(diagnostics, { observations: parsed.observations.length, rules: parsed.rules.length });
+  const inTokens = finiteTokens(body.usage?.prompt_tokens);
+  // Our own hardware has no per-token price: the charge is zero, and the usage counts are kept for the ledger.
+  return { ...parsed, inTokens, outTokens, cacheWriteTokens: 0, cacheReadTokens: 0, usd: 0 };
 }

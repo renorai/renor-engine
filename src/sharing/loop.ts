@@ -1,5 +1,5 @@
 import { showNotice } from './notice';
-import { defaultSharingDir, effectiveLevel, installLimit, readConsent } from './state';
+import { defaultSharingDir, effectiveLevel, installLimit, readConsent, readState, writeState } from './state';
 import { chooseLevel, debugOn, settlePendingDelete, shareNow, sharingEndpoint, type SenderOptions } from './send';
 import { settleOptOut } from './optout';
 import { flushUsageFor } from './usage';
@@ -46,6 +46,8 @@ export interface SharingLoop {
   stop(): void;
   /** One tick now, for tests and for a manual run. */
   tick(): Promise<void>;
+  /** One extra tick after `ms`, once (a later call replaces an earlier one that has not fired). Never keeps the process alive. */
+  soon(ms: number): void;
 }
 
 export function startSharingLoop(options: SenderOptions & { intervalMs?: number; firstTickMs?: number; log?: (line: string) => void }): SharingLoop {
@@ -70,6 +72,11 @@ export function startSharingLoop(options: SenderOptions & { intervalMs?: number;
       flushUsageFor(options.dir);
       if (effectiveLevel(options.dir, env) === 'off') return;
       const result = await shareNow(options);
+      // Kept on this machine for `renor-engine telemetry status`; a tick that did nothing (off, nothing final yet) leaves the last record alone.
+      if (result.status === 'sent' || result.status === 'failed' || result.status === 'paused' || result.status === 'stopped') {
+        const state = readState(options.dir);
+        if (state !== null) writeState(options.dir, { ...state, lastSend: { at: (options.now ?? Date.now)(), status: result.status, rows: result.rows } });
+      }
       if (result.status === 'sent') options.log?.(`[sharing] sent ${result.rows} row(s) at level ${result.level}`);
       else if (result.status === 'failed') options.log?.(`[sharing] not sent: ${result.reason ?? 'unknown'}; will retry`);
       else if (result.status === 'paused' || result.status === 'stopped') options.log?.(`[sharing] not sent: ${result.reason ?? 'unknown'}`);
@@ -82,7 +89,13 @@ export function startSharingLoop(options: SenderOptions & { intervalMs?: number;
   // A tenant that sleeps when idle is woken by use, so the first tick runs soon after start instead of waiting a whole interval.
   const first = setTimeout(() => void tick(), options.firstTickMs ?? 30_000);
   first.unref();
-  return { stop: () => { clearInterval(timer); clearTimeout(first); }, tick };
+  let later: NodeJS.Timeout | null = null;
+  const soon = (ms: number): void => {
+    if (later !== null) clearTimeout(later);
+    later = setTimeout(() => { later = null; void tick(); }, ms);
+    later.unref();
+  };
+  return { stop: () => { clearInterval(timer); clearTimeout(first); if (later !== null) clearTimeout(later); }, tick, soon };
 }
 
 /**

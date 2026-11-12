@@ -562,8 +562,6 @@ export async function engineSearchMemory(
   showSimilarity = false,
   /** search_memory's reader layout (readerLayout.ts) needs each chunk's place in its note: the ids ride on the hits until it has used them. */
   withChunkIds = false,
-  /** search_memory under RENOR_SEARCH_BEST_FIRST: the window best match first (retrieval/orchestrator.ts). */
-  bestFirst = false,
   /** Original read scope before the caller normalizes an omitted scope to `global`. */
   observationScope = scope,
 ): Promise<{ ok: boolean; error?: string; notice?: string; rankedBy?: HitOrder; hits: unknown[]; scope?: string; evidence?: ProductEvidenceAttachment }> {
@@ -599,7 +597,7 @@ export async function engineSearchMemory(
       chunkIds: () => readUntilWrite(db, `scopedChunkIds\0${scopeNorm}\0${memoryDir}`, () => inScope.chunkIds(stored => clientPath(memoryDir, stored))),
     }
     : undefined;
-  const search = () => retrieveContext(db, vectorIndex, provider, query, topK, [], {}, { includeHistory, isLedgerNote: isLedger, probe: asked, scope: scoped, noteCapWhenUnset, ...(bestFirst ? { bestFirst } : {}) });
+  const search = () => retrieveContext(db, vectorIndex, provider, query, topK, [], {}, { includeHistory, isLedgerNote: isLedger, probe: asked, scope: scoped, noteCapWhenUnset });
   let result: Awaited<ReturnType<typeof search>>;
   try {
     result = await search();

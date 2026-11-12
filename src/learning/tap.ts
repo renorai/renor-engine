@@ -1,4 +1,5 @@
-import { readBuildIdentity } from '../buildIdentity';
+import { ENGINE_VERSION, readBuildIdentity } from '../buildIdentity';
+import { releaseOf, type AppFamily, type ToolProfile } from '../sharing/context';
 import path from 'node:path';
 import { contextLeanItemsEnabled, replyTokens } from '../mvp/agentMemory';
 import { normalizeScope } from '../mvp/scope';
@@ -7,7 +8,7 @@ import { CANDIDATE_KINDS, RANKER_BASELINE, RETRIEVAL_TOOLS, SAVE_TOOLS, WRITE_TO
 import type { SharingHook } from '../sharing/examples';
 import type { LearningSettings } from './settings';
 import type { ErasedLink } from '../memorymap/memoryMap';
-import { learningLogAt, type CandidateRecord, type LearningLog, type MemoryOpRecord } from './store';
+import { learningLogAt, type CallContext, type CandidateRecord, type LearningLog, type MemoryOpRecord } from './store';
 
 /**
  * Records what a successful MCP call did, from the reply the tool already built and, for a retrieval, the ranker's trace of
@@ -47,6 +48,13 @@ export interface ObserverContext {
   /** The name the connection presented (the server's agentOf), from the request's extra argument. 'unnamed' when it has none. */
   agent: (extra: unknown) => string;
   /**
+   * The AI application's family (sharing/context.ts appFamily: a closed list, never the declared name), from the request's extra argument.
+   * Absent: null.
+   */
+  app?: (extra: unknown) => AppFamily | null;
+  /** The tool set this connection was given (sharing/context.ts toolProfileOf). Absent: null. */
+  profile?: ToolProfile;
+  /**
    * Sharing (src/sharing): the user's choice to share signals or data. With it, recording is on whenever the choice is above
    * off, whatever RENOR_LEARNING_LOG says, and it is asked at every call, so a change takes effect on the next one. At `data`
    * the tap also hands it the query and the text of what a reply served or a save wrote (never the log). Absent: no change.
@@ -64,7 +72,7 @@ const MAX_CITES = 20;
 type Kind = (typeof CANDIDATE_KINDS)[number] | 'event';
 type Identity = { kind: Kind | 'unkeyed'; memoryKey: string | null };
 /** What every row of one call carries: who called, in which session, and the operation's own timing. */
-type CallBase = { actor: string; sessionKey: string | null; agentKey: string | null; tool: string; ms: number };
+type CallBase = { actor: string; sessionKey: string | null; agentKey: string | null; tool: string; ms: number; context: CallContext };
 
 const norm = (value: string): string => value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -298,6 +306,7 @@ function recordRetrieval(log: LearningLog, ctx: ObserverContext, base: CallBase,
     relevant: relevance !== null && typeof relevance.relevant === 'boolean' ? relevance.relevant : null,
     truncated: typeof reply.body.truncated === 'boolean' ? reply.body.truncated : null,
     leanItems: contextLeanItemsEnabled(),
+    context: base.context,
   });
   if (ctx.sharing && ctx.sharing.level() === 'data') {
     if (query !== null) ctx.sharing.query(log.key('query', norm(query)), query);
@@ -310,7 +319,7 @@ function recordRetrieval(log: LearningLog, ctx: ObserverContext, base: CallBase,
 function recordOp(log: LearningLog, base: CallBase, op: MemoryOpRecord['op'], kind: string, memoryKey: string | null,
   subjectKey: string | null, replacedKey: string | null = null): void {
   log.recordMemoryOp({ actor: base.actor, sessionKey: base.sessionKey, agentKey: base.agentKey, tool: base.tool, ms: base.ms,
-    op, kind, memoryKey, subjectKey, replacedKey });
+    op, kind, memoryKey, subjectKey, replacedKey, context: base.context });
 }
 
 /**
@@ -415,6 +424,7 @@ function observeTool(log: LearningLog, ctx: ObserverContext, tool: string, rawAr
       agentKey: log.key('agent', ctx.agent(extra)),
       tool,
       ms,
+      context: { app: ctx.app?.(extra) ?? null, release: releaseOf(ENGINE_VERSION), profile: ctx.profile ?? null },
     };
     if (retrieval) recordRetrieval(log, ctx, base, args, reply, ms, trace);
     else recordWrite(log, ctx, base, args, reply.body);

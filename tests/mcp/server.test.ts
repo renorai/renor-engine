@@ -14,6 +14,9 @@ import type Database from '../../src/db/sqlite';
 import { tmpPath } from '../helpers/tmpPath';
 import { hitList } from '../helpers/hitList';
 
+// These tests pin the previous stdio tool list: RENOR_MCP_LEGACY_STDIO=1 restores it (the default lists the hosted names; see tests/mcp/stdio-hosted-names.test.ts).
+process.env.RENOR_MCP_LEGACY_STDIO = '1';
+
 const DB = tmpPath('test-mcp.db');
 const tmpDirs: string[] = [];
 afterEach(() => {

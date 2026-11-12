@@ -1,3 +1,4 @@
+import { modelTakesTemperature } from '../extraction/captureModel';
 import type { EvidenceChat, EvidenceChatRequest, EvidenceChatResponse } from './secondPass';
 
 /**
@@ -45,7 +46,8 @@ export function createOllamaChat(opts: OllamaChatOptions): EvidenceChat {
     const body = JSON.stringify({
       model: request.model,
       messages: request.messages,
-      temperature: request.temperature,
+      // Claude 5.x rejects `temperature` (HTTP 400), so no caller of this shared transport can send it to one.
+      ...(modelTakesTemperature(request.model) ? { temperature: request.temperature } : {}),
       // Only when the caller asked for JSON mode. Evidence calls omit it.
       ...(request.response_format ? { response_format: request.response_format } : {}),
       // Only when the caller set a bound, so an unbounded request is the same bytes: the session router always sets

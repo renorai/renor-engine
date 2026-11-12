@@ -53,7 +53,16 @@ node -v
 ```
 
 2. Require v22.16 or newer.
-3. Add this entry to Cline's `mcpServers` settings.
+3. The self-hosted path needs no account and no key. An agent should choose it by default.
+4. If you have a checkout of this repository's `engine/` folder, write the entry into Cline's settings file with this command. It creates `cline_mcp_settings.json` and keeps other servers.
+
+```bash
+node scripts/install/cline-mcp-config.mjs
+```
+
+The file is `cline_mcp_settings.json` under Cline's `globalStorage/saoudrizwan.claude-dev/settings` folder:
+`~/.config/Code/User` on Linux, `~/Library/Application Support/Code/User` on macOS, `%APPDATA%\Code\User` on Windows.
+Pass `--file <path>` for another client or editor. The script is not in the npm package, so with only `npx renor-engine` add this entry by hand.
 
 ```json
 {
@@ -66,18 +75,20 @@ node -v
 }
 ```
 
-4. Set `VAULT_PATH` in the server environment to an absolute folder when you do not want the default `~/.renor` folder.
-5. Save the MCP settings.
-6. Restart Cline.
-7. List the Renor MCP tools.
-8. Call the read-only `search` tool with a real term from the chosen memory folder.
-9. Check the local engine directly when needed.
+5. Set `VAULT_PATH` in the server environment to an absolute folder when you do not want the default `~/.renor` folder.
+6. Save the MCP settings.
+7. Restart Cline.
+8. List the Renor MCP tools.
+9. Call the read-only `search` tool with a real term from the chosen memory folder.
+10. Check the local engine directly when needed.
 
 ```bash
 npx renor-engine status
 ```
 
-10. Run the read-only health report when the check fails.
+11. Finally run `npx -y renor-engine mcp` once and confirm that the MCP `tools/list` answers with the Renor tools. Stop it afterwards.
+
+12. Run the read-only health report when the check fails.
 
 ```bash
 npx renor-engine doctor

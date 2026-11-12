@@ -17,6 +17,7 @@ import { isDailyNotePath } from '../../src/memory/dailyNote';
 import { replyTokens } from '../../src/mvp/agentMemory';
 import { makeLegacyDailyNote } from '../helpers/legacyDailyIndex';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
+import { defaultContextMaxTokens } from '../../src/retrieval/orchestrator';
 
 /**
  * A daily note holds one entry per `remember`. Recalling one memory must return that memory, not the day.
@@ -226,13 +227,16 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('recalling one daily-note memory return
         ? 'Job alpha has a retry budget of 5 attempts with exponential backoff (nchunkretry).'
         : `Fifty-day filler ${i}: planning sync agreed item number ${i} (nchunkfifty${i}).`);
     }
-    const ctx = await ws.call('get_context', { query: QUESTION });
-    // The whole reply fits the default budget (live dogfood D9), and the entry that answers leads it.
-    expect(replyTokens(JSON.stringify(ctx))).toBeLessThanOrEqual(800);
-    expect(ctx.memories.length).toBeGreaterThan(0);
-    const best = bestMatch(ctx.memories);
-    expect(best.text).toContain('retry budget of 5 attempts');
-    expect(best.text.split('\n')).toHaveLength(1);
+    // The whole reply fits its budget (live dogfood D9), and the entry that answers leads it: at the default (the deep
+    // page, 8,000 tokens since 2026-11-09) and at 800, the former default (lean mode).
+    for (const [args, budget] of [[{}, defaultContextMaxTokens()], [{ max_tokens: 800 }, 800]] as const) {
+      const ctx = await ws.call('get_context', { query: QUESTION, ...args });
+      expect(replyTokens(JSON.stringify(ctx))).toBeLessThanOrEqual(budget);
+      expect(ctx.memories.length).toBeGreaterThan(0);
+      const best = bestMatch(ctx.memories);
+      expect(best.text).toContain('retry budget of 5 attempts');
+      expect(best.text.split('\n')).toHaveLength(1);
+    }
   }, 120_000);
 
   it('an entry longer than a chunk is cut into paragraphs and never together with the entries beside it', async () => {

@@ -76,13 +76,6 @@ export const DIGEST_HITS =
 export const SPAN_HITS =
   ' When the question asks how many days, weeks or months lie between two events and the user wrote the date of each in their own words, the first hit is one short line that quotes those two dates and counts the days between them (reason "span"), outside the rankedBy order and top_k; the excerpts stay in full below it. It counts written dates only, never a session date.';
 
-/**
- * What search_memory says of the current-value timeline, only where RENOR_READER_TIMELINE is on. Default off, so the
- * tool list a deployment ships is unchanged: the timeline hit (reason "timeline") exists only on that flag.
- */
-export const TIMELINE_HITS =
-  ' When the question asks what a value is now, the first hit is a timeline of the user\'s own statements of that value, oldest first, the last line marked latest, and the excerpts stay in full below it (reason "timeline"). A question about a duration or an order has no timeline.';
-
 /** How many memories a memory_map query returns unless asked for more, and the most any memory_map limit ever returns. */
 export const DEFAULT_LOOKUP_LIMIT = 10;
 
@@ -102,13 +95,6 @@ export function withOutputSchemaIf<T extends { outputSchema?: unknown }>(on: boo
   const { outputSchema: _dropped, ...rest } = config;
   return rest as T;
 }
-
-/**
- * get_context carries structuredContent only when RENOR_PAGE_OUTPUT_SCHEMAS is on; then its bound covers the text block and
- * structuredContent repeats the same JSON, so a client that passes both to a model pays about twice the bound (measured on
- * #680: 703 tokens of text, 1,446 on the wire).
- */
-export const OUTPUT_SCHEMA_BOUND_NOTE = ' With page output schemas on (RENOR_PAGE_OUTPUT_SCHEMAS), max_tokens bounds the text block; structuredContent carries the same JSON again.';
 
 /**
  * Every tool answers in the same shape: its JSON on one line. Indentation is whitespace an agent pays for in tokens on

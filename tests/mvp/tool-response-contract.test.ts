@@ -89,6 +89,25 @@ function freePort(): Promise<number> {
   });
 }
 
+/**
+ * freePort() closes its probe before the service binds, so a parallel test file can take the port in between
+ * (EADDRINUSE, #1515). Pick a new port and start again; any other error is a real failure.
+ */
+async function startOnFreePort(
+  memoryDir: string,
+  provider?: EmbeddingProvider,
+): Promise<{ config: MvpConfig; started: MvpApp & { httpServer: import('http').Server } }> {
+  for (let attempt = 1; ; attempt++) {
+    const config = await makeConfig(memoryDir, await freePort());
+    try {
+      const started = await startMvpService(config, provider);
+      return { config, started };
+    } catch (err) {
+      if (attempt >= 5 || (err as NodeJS.ErrnoException)?.code !== 'EADDRINUSE') throw err;
+    }
+  }
+}
+
 async function makeConfig(memoryDir: string, port: number): Promise<MvpConfig> {
   const authRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-authroot-'));
   tmpDirs.push(authRoot);
@@ -168,8 +187,7 @@ async function vaultWithNote(body: string, noteRel: string): Promise<string> {
 }
 
 async function searchService(memoryDir: string) {
-  const config = await makeConfig(memoryDir, await freePort());
-  const started = await startMvpService(config, stubProvider(8));
+  const { config, started } = await startOnFreePort(memoryDir, stubProvider(8));
   services.push(started);
   const client = await connect(config, await registerAndToken(started.app));
   await call(client, 'index_memory');
@@ -219,7 +237,7 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('finding 15: search_memory says which s
     process.env.RENOR_EVIDENCE_MODE = 'always'; // the engine's unset default is off (src/evidence/gate.ts)
     const client = await searchService(memoryDir);
 
-    const res = await call(client, 'search_memory', { query: 'favorite drink' });
+    const res = await call(client, 'search_memory', { query: 'favorite beverage' });
     expect(requests).toBeGreaterThan(0);
     expect(res.body.ok).toBe(true);
     expect(res.body.hits.length).toBeGreaterThan(0);
@@ -236,7 +254,7 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('finding 15: search_memory says which s
     process.env.RENOR_SEARCH_EVIDENCE = '0';
     const client = await searchService(memoryDir);
 
-    const res = await call(client, 'search_memory', { query: 'favorite drink' });
+    const res = await call(client, 'search_memory', { query: 'favorite beverage' });
     expect(res.body.ok).toBe(true);
     expect(res.body.hits.length).toBeGreaterThan(0);
     expect(res.body.evidence.reason).toBe('flag-off');
@@ -285,8 +303,7 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('finding 17: every tool renders its JSO
   it('every tool the server lists answers compact JSON, keys and values unchanged', async () => {
     const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-shape-'));
     tmpDirs.push(memoryDir);
-    const config = await makeConfig(memoryDir, await freePort());
-    const started = await startMvpService(config);
+    const { config, started } = await startOnFreePort(memoryDir);
     services.push(started);
     const client = await connect(config, await registerAndToken(started.app));
 
@@ -359,8 +376,7 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('finding 18: a lookup_entity miss names
     tmpDirs.push(memoryDir);
     fs.mkdirSync(path.join(memoryDir, 'People'), { recursive: true });
     fs.writeFileSync(path.join(memoryDir, 'People', 'Acme.md'), '# Acme\n\nAcme ships the mango press.\n');
-    const config = await makeConfig(memoryDir, await freePort());
-    const started = await startMvpService(config);
+    const { config, started } = await startOnFreePort(memoryDir);
     services.push(started);
     const client = await connect(config, await registerAndToken(started.app));
 
@@ -415,8 +431,7 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace without semantic search: s
   it('answers semantic-unavailable with a note naming search_text, and the advice works', async () => {
     // What a new self-serve workspace runs: no MVP_EMBEDDING_PROVIDER (cleared above), so no provider.
     const memoryDir = await vaultWithNote('# Drinks\n\nRowan likes mango juice.\n', 'People/Rowan.md');
-    const config = await makeConfig(memoryDir, await freePort());
-    const started = await startMvpService(config);
+    const { config, started } = await startOnFreePort(memoryDir);
     services.push(started);
     const client = await connect(config, await registerAndToken(started.app));
     await call(client, 'index_memory');
@@ -425,7 +440,7 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace without semantic search: s
     expect(status.body.semantic).toBe(false);
 
     // The machine contract is unchanged: a tool error with the same code and no hits.
-    const res = await call(client, 'search_memory', { query: 'favorite drink' });
+    const res = await call(client, 'search_memory', { query: 'favorite beverage' });
     expect(res.isError).toBe(true);
     expect(res.body.ok).toBe(false);
     expect(res.body.error).toBe('semantic-unavailable');
@@ -465,7 +480,7 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a workspace without semantic search: s
     const memoryDir = await vaultWithNote('# Drinks\n\nRowan likes mango juice.\n', 'People/Rowan.md');
     const client = await searchService(memoryDir);
 
-    const res = await call(client, 'search_memory', { query: 'favorite drink' });
+    const res = await call(client, 'search_memory', { query: 'favorite beverage' });
     expect(res.isError).toBe(false);
     expect(res.body.ok).toBe(true);
     expect(res.body).not.toHaveProperty('note');

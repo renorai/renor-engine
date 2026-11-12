@@ -1,8 +1,9 @@
-import type { LearningExport, LearningLog } from '../learning/store';
+import type { LearningExport, LearningLog, SessionSpan } from '../learning/store';
+import { embeddingFamily, latencyBucket, releaseOf, senderContext, type SenderContext } from './context';
 import type { ExampleReader } from './examples';
 import {
-  COUNT_BUCKETS, DELAY_BUCKETS, LENGTH_BUCKETS, RETRIEVAL_TOOL_NAMES, SAVE_TOOL_NAMES, coarsenRow, installAgeBucket, type InstallAge,
-  type SharingLevel,
+  APP_FAMILIES, COUNT_BUCKETS, DELAY_BUCKETS, LENGTH_BUCKETS, RETRIEVAL_TOOL_NAMES, SAVE_TOOL_NAMES, TOOL_PROFILES, coarsenRow,
+  installAgeBucket, type InstallAge, type SharingLevel,
 } from './fields';
 
 /**
@@ -32,6 +33,8 @@ export interface ProjectOptions {
   /** Rows with `at` at or below these are already sent. */
   watermarks: { retrieval: number; save: number; session: number };
   examples?: ExampleReader | null;
+  /** Where this install runs (context.ts senderContext), stamped on every row. Default: a self-hosted install, read from this process. */
+  context?: SenderContext;
   /**
    * When this install was first seen (ms, the start of its UTC day, kept in the sharing state): each row carries how old the install was at the
    * row's hour, as one of four ranges. Unset (a test, or a caller with no state), rows say null.
@@ -84,6 +87,32 @@ function tokenBucket(tokens: number | null): number | null {
   return bucket;
 }
 
+
+/** A recorded value kept only when it is one of `list`; anything else (an older log's null, a value no list holds) is null. */
+const closed = <T extends string>(value: unknown, list: readonly T[]): T | null =>
+  typeof value === 'string' && (list as readonly string[]).includes(value) ? (value as T) : null;
+
+/**
+ * The fields every row carries about where it was made (fields.ts CONTEXT_FIELDS): the sender's own (deployment, internal, os, node) and
+ * the call's, as the log recorded them (app, release, profile). Each is read back through its closed list, so a row can only carry a
+ * listed value or null, whatever the log holds.
+ */
+function contextOf(sender: SenderContext, recorded: { app?: unknown; release?: unknown; profile?: unknown }): Record<string, unknown> {
+  return {
+    deployment: sender.deployment,
+    internal: sender.internal,
+    release: releaseOf(asString(recorded.release)),
+    app: closed(recorded.app, APP_FAMILIES),
+    profile: closed(recorded.profile, TOOL_PROFILES),
+    os: sender.os,
+    node: sender.node,
+  };
+}
+
+/** How the call arrived (fields.ts VIA_NAMES): the log's actor `dashboard` is the dashboard, anything else came over MCP. */
+const viaOf = (actor: unknown): 'mcp' | 'dashboard' => (actor === 'dashboard' ? 'dashboard' : 'mcp');
+
+const senderOf = (options: ProjectOptions): SenderContext => options.context ?? senderContext(false);
 
 interface Event {
   at: number;
@@ -156,9 +185,13 @@ function retrievalRows(log: LearningExport, options: ProjectOptions, windowMs: n
   const { tables } = log;
   const events = indexEvents(tables);
   const cutoff = options.now - windowMs;
+  const sender = senderOf(options);
   const candidatesBy = new Map<number, Table[]>();
+  // The pool each read was cut from, when the export holds the unserved candidates too (exportLog); exportServedWindow counts it itself.
+  const scoredBy = new Map<number, number>();
   for (const candidate of tables.candidates) {
     const id = asNumber(candidate.retrieval_id);
+    if (id !== null) scoredBy.set(id, (scoredBy.get(id) ?? 0) + 1);
     if (id === null || !servedRow(candidate)) continue;
     const list = candidatesBy.get(id);
     if (list) list.push(candidate);
@@ -210,6 +243,14 @@ function retrievalRows(log: LearningExport, options: ProjectOptions, windowMs: n
       reply_tokens_bucket: tokenBucket(asNumber(retrieval.reply_tokens)),
       relevant: asBool(retrieval.relevant),
       truncated: asBool(retrieval.truncated),
+      ...contextOf(sender, retrieval),
+      // Semantic search was on for this read when it recorded an embedding model; the family only, never the model's name.
+      semantic: asString(retrieval.model) !== null,
+      embedding: embeddingFamily(asString(retrieval.model)),
+      via: viaOf(retrieval.actor),
+      latency_bucket: latencyBucket(asNumber(retrieval.ms)),
+      scored: asNumber(retrieval.scored) ?? scoredBy.get(id) ?? 0,
+      lean: asBool(retrieval.lean_items),
       candidates,
     };
     if (options.level === 'data') row.query = queryKey === null ? null : options.examples?.query(queryKey) ?? null;
@@ -230,6 +271,7 @@ function saveRows(log: LearningExport, options: ProjectOptions, windowMs: number
     const at = asNumber(retrieval.at);
     if (id !== null && at !== null) retrievalAt.set(id, at);
   }
+  const sender = senderOf(options);
   const servedBy = new Map<string, number[]>();
   for (const candidate of tables.candidates) {
     const key = asString(candidate.memory_key);
@@ -272,6 +314,9 @@ function saveRows(log: LearningExport, options: ProjectOptions, windowMs: number
       cited: label.cited,
       superseded: label.updated,
       retired: label.retired,
+      ...contextOf(sender, op),
+      via: viaOf(op.actor),
+      latency_bucket: latencyBucket(asNumber(op.ms)),
     };
     if (options.level === 'data') row.text = memoryKey === null ? null : options.examples?.memory(memoryKey) ?? null;
     rows.push({ kind: 'save', at, row });
@@ -282,45 +327,52 @@ function saveRows(log: LearningExport, options: ProjectOptions, windowMs: number
 function sessionRows(log: LearningExport, options: ProjectOptions, windowMs: number): ProjectedRow[] {
   const { tables } = log;
   const cutoff = options.now - windowMs;
-  interface Seen { first: number; last: number; tool: string; reads: number; saves: number; empty: number }
+  const sender = senderOf(options);
   const sessions = new Map<string, Seen>();
-  const touch = (key: string | null, at: number | null, tool: string | null, apply: (seen: Seen) => void): void => {
+  const touch = (key: string | null, at: number | null, tool: string | null, event: Table, apply: (seen: Seen) => void): void => {
     if (key === null || at === null || tool === null) return;
+    const recorded = { app: asString(event.app), release: asString(event.release), profile: asString(event.profile) };
     let seen = sessions.get(key);
     if (!seen) {
-      seen = { first: at, last: at, tool, reads: 0, saves: 0, empty: 0 };
+      seen = { first: at, last: at, tool, reads: 0, saves: 0, empty: 0, opens: 0, ...recorded };
       sessions.set(key, seen);
     }
     if (at < seen.first) {
       seen.first = at;
       seen.tool = tool;
+      Object.assign(seen, recorded);
     }
     seen.last = Math.max(seen.last, at);
     apply(seen);
   };
   for (const retrieval of tables.retrievals) {
-    touch(asString(retrieval.session_key), asNumber(retrieval.at), asString(retrieval.tool), seen => {
+    touch(asString(retrieval.session_key), asNumber(retrieval.at), asString(retrieval.tool), retrieval, seen => {
       seen.reads += 1;
       if ((asNumber(retrieval.served) ?? 0) === 0) seen.empty += 1;
     });
   }
   for (const op of tables.memory_ops) {
     const tool = asString(op.tool);
-    touch(asString(op.session_key), asNumber(op.at), tool, seen => {
+    touch(asString(op.session_key), asNumber(op.at), tool, op, seen => {
       if (tool !== null && (SAVE_TOOL_NAMES as readonly string[]).includes(tool) && (op.op === 'create' || op.op === 'supersede')) seen.saves += 1;
+      if (tool === 'read_memory') seen.opens += 1;
     });
   }
   const rows: ProjectedRow[] = [];
   for (const seen of [...sessions.values()].sort((a, b) => a.last - b.last)) {
     if (seen.last <= options.watermarks.session || seen.last > cutoff) continue;
-    rows.push(sessionRow(seen, options));
+    rows.push(sessionRow(seen, sender, options));
   }
   return rows;
 }
 
-function sessionRow(
-  seen: { first: number; last: number; tool: string; reads: number; saves: number; empty: number }, options: Pick<ProjectOptions, 'firstSeen'>,
-): ProjectedRow {
+/** One session as the projection sums it: its span, its counts, and the context of its earliest event. */
+interface Seen {
+  first: number; last: number; tool: string; reads: number; saves: number; empty: number; opens: number;
+  app: string | null; release: string | null; profile: string | null;
+}
+
+function sessionRow(seen: Seen, sender: SenderContext, options: Pick<ProjectOptions, 'firstSeen'>): ProjectedRow {
   const firstCall = (RETRIEVAL_TOOL_NAMES as readonly string[]).includes(seen.tool) || (SAVE_TOOL_NAMES as readonly string[]).includes(seen.tool)
     ? seen.tool
     : 'other';
@@ -336,6 +388,8 @@ function sessionRow(
       saves_bucket: countBucket(seen.saves),
       empty_reads_bucket: countBucket(seen.empty),
       first_call: firstCall,
+      opens_bucket: countBucket(seen.opens),
+      ...contextOf(sender, seen),
     },
   };
 }
@@ -404,7 +458,8 @@ export function* projectFromLog(
   while (after < cutoff) {
     const spans = read(log => log.sessionSpans(after, cutoff, SAVE_TOOL_NAMES, limit));
     if (spans.length === 0) break;
-    yield spans.map(span => sessionRow({ ...span, tool: span.first_tool }, options));
+    const sender = senderOf(options);
+    yield spans.map((span: SessionSpan) => sessionRow({ ...span, tool: span.first_tool, opens: span.opens ?? 0 }, sender, options));
     after = spans[spans.length - 1]!.last;
   }
 }

@@ -104,7 +104,7 @@ by default.
 
 ### What counts as anonymous
 
-The default sends the `signals` rows and nothing else. Three rules keep them anonymous as they grow (owner decision, 2026-11-08): **coarse
+The default sends the `signals` rows and nothing else. Each signal also says, from a fixed list, what kind of setup it came from: hosted or self-hosted, the Renor version, the family of AI app (for example Claude Code or Cursor), the tool set and embedding provider, and for self-hosted installs the operating system family and Node.js major version. Three rules keep them anonymous as they grow (owner decision, 2026-11-08): **coarse
 values only**, **a new id every month**, and **the 3-people rule**. Each is code, and each has a test.
 
 **Coarse values only.** No field, alone or together with the others, may be fine enough to single out a person. Every field in a `signals`
@@ -237,8 +237,9 @@ How the stdio server sends:
   until a notice has been recorded. The stdio server prints no `terminal` notice: its stderr is read by the client application, not by you.
 - **Never in the way of a tool call.** A call writes its row to the local log after its reply is built, and nothing else. Sending runs on
   its own timer (first about 30 seconds after start, then every `RENOR_SHARING_INTERVAL_MIN`, default an hour) and never keeps the process
-  alive. When the client closes the server's input (a clean exit), the server tries one last send with a 3-second deadline and then drops
-  any request still open.
+  alive. The sender also ticks once, 60 seconds after the first-run notice was given, so a first session shorter than an hour still sends its
+  install row. When the client closes the server's input (a clean exit), the server tries one last send with a 3-second deadline and then drops
+  any request still open. `renor-engine telemetry status` prints the last send time and how it ended (kept on your machine, never sent).
 - **Offline, nothing happens.** A failed request is dropped without a word; the rows stay in the log (kept for `RENOR_LEARNING_RETENTION_DAYS`,
   30 days by default) and the next run sends what is final. A row is final 24 hours after its event, so a session's rows go out with a
   later session.
@@ -261,6 +262,28 @@ install id: a later install row carries a new one.
 At `data`, the query and the text of what a reply served or a save wrote are also kept, in `sharing-examples.sqlite` in the sharing folder,
 under the learning log's own keyed hashes, until they are sent. A text the secret scanner flags is never kept, so that example is sent
 without text. A text is cut at 2,000 characters. Leaving `data` (to `signals` or `off`), or `delete`, removes that file at once.
+
+### Where a row was made (every row kind)
+
+Since 2026-11-08 (the owner asked for as much as stays anonymous) every row also says where it was made, so that Renor can compare cloud with
+self-hosted, one release with the next, and leave its own machines out. Each of these is a closed list or a yes/no, worked out on your machine
+before it is written to the learning log (`src/sharing/context.ts`); the log keeps the reduced value only (for the application, the family, never
+the name your client declared). A value no list holds is sent as `other` or null, never as itself.
+
+- **deployment**: `cloud` (Renor's hosted service) or `self-hosted`.
+- **internal**: true only when the engine runs as Renor's own: `RENOR_SHARING_INTERNAL=1`, or a CI or test runner's marker (`CI=true`,
+  `GITHUB_ACTIONS`, `VITEST`, `JEST_WORKER_ID`, `NODE_ENV=test`). `RENOR_SHARING_INTERNAL=0` says it is not, whatever else is set. Renor's
+  gates, CI, eval harnesses and its own hosted workspaces set it (or keep sharing off), and Renor's own reports leave these rows out. If you
+  run Renor inside your own CI, your rows are marked internal too and left out of Renor's reports (they are still stored, and deleted like any
+  other on request); set `RENOR_SHARING_INTERNAL=0` there to count them.
+- **release**, **app**, **profile**: recorded with each call (a call made before an upgrade keeps the release it ran on): the engine's
+  released version as major.minor (`1.4`), the AI application's family (`claude-code`, `cursor`, `codex`, `chatgpt`, `claude-ai`, `hermes`, `dsh`, `other`), read from
+  the name the MCP client declares, its User-Agent or the connection's name, and the tool set the connection had (`full`, `coding`, `lean`,
+  `custom`). A call recorded before 2026-11-08 has null for all three.
+- **os**, **node**: for a self-hosted install, the operating system family (`linux`, `darwin`, `win32`, `freebsd`, `openbsd`, `other`: the install row's list) and the Node.js major
+  (`18`, `20`, `22`, `24`, `other`). Null on cloud.
+
+These are optional at the endpoint, so an engine released before them is still accepted; this engine always sends them.
 
 ## Every field sent
 
@@ -287,6 +310,19 @@ One row per retrieval (`retrieval-labelled/1`), with one entry per returned memo
 | `retrieval-labelled/1.reply_tokens_bucket` | the reply's size class: the next power of two above its token count, capped at 65,536 |
 | `retrieval-labelled/1.relevant` | the engine's own verdict that something matched, or null |
 | `retrieval-labelled/1.truncated` | whether the reply was cut to its budget, or null |
+| `retrieval-labelled/1.deployment` | `cloud` or `self-hosted` |
+| `retrieval-labelled/1.internal` | true when Renor's own engine made it (a gate, CI, an eval, Renor's own workspace) |
+| `retrieval-labelled/1.release` | the engine's released version as major.minor (`1.4`), or null |
+| `retrieval-labelled/1.app` | the AI application's family (`claude-code`, `cursor`, `codex`, `chatgpt`, `claude-ai`, `hermes`, `dsh`, `other`), or null |
+| `retrieval-labelled/1.profile` | the connection's tool set: `full`, `coding`, `lean`, `custom`, or null |
+| `retrieval-labelled/1.os` | self-hosted: `linux`, `darwin`, `win32`, `freebsd`, `openbsd`, `other`; null on cloud |
+| `retrieval-labelled/1.node` | self-hosted: the Node.js major, `18`, `20`, `22`, `24` or `other`; null on cloud |
+| `retrieval-labelled/1.semantic` | whether semantic (embedding) search was on for the read |
+| `retrieval-labelled/1.embedding` | the embedding provider's family: `none`, `local`, `openai`, `vertex`, `other` |
+| `retrieval-labelled/1.via` | `mcp` (an AI application) or `dashboard` (the owner's dashboard reading) |
+| `retrieval-labelled/1.latency_bucket` | how long the engine took: `<50ms`, `<200ms`, `<1s`, `<5s`, `>=5s`, or null |
+| `retrieval-labelled/1.scored` | how many memories the ranker scored before the reply was cut (the pool), capped at 200, or null |
+| `retrieval-labelled/1.lean` | whether the reply was the lean shape (no note paths), or null |
 | `retrieval-labelled/1.candidates.rank` | position in the reply, capped at 200 |
 | `retrieval-labelled/1.candidates.kind` | `fact`, `note` or `unkeyed` |
 | `retrieval-labelled/1.candidates.lane` | which lane matched, from a closed list (`fact`, `fts`, `semantic`, `keyword`, `graph`, ...; anything else `other`), or null, also when several lanes matched together (`semantic+content+recency`) |
@@ -315,6 +351,15 @@ One row per save (`save-outcome/1`):
 | `save-outcome/1.cited` | it was cited within 24 hours |
 | `save-outcome/1.superseded` | it was replaced within 24 hours |
 | `save-outcome/1.retired` | it was retired within 24 hours |
+| `save-outcome/1.deployment` | `cloud` or `self-hosted` |
+| `save-outcome/1.internal` | true when Renor's own engine made it |
+| `save-outcome/1.release` | the engine's released version as major.minor, or null |
+| `save-outcome/1.app` | the AI application's family, or null |
+| `save-outcome/1.profile` | the connection's tool set, or null |
+| `save-outcome/1.os` | self-hosted: the operating system family; null on cloud |
+| `save-outcome/1.node` | self-hosted: the Node.js major; null on cloud |
+| `save-outcome/1.via` | `mcp` or `dashboard` |
+| `save-outcome/1.latency_bucket` | how long the save took, as a class, or null |
 
 One row per finished session (`session-aggregate/1`):
 
@@ -328,6 +373,14 @@ One row per finished session (`session-aggregate/1`):
 | `session-aggregate/1.saves_bucket` | saves in the session |
 | `session-aggregate/1.empty_reads_bucket` | reads that returned nothing |
 | `session-aggregate/1.first_call` | the first tool the session called (a read or save tool, else `other`) |
+| `session-aggregate/1.opens_bucket` | memories the agent opened (`read_memory`) in the session, as a count bucket |
+| `session-aggregate/1.deployment` | `cloud` or `self-hosted` |
+| `session-aggregate/1.internal` | true when Renor's own engine made it |
+| `session-aggregate/1.release` | the engine's released version (major.minor) at the session's first call, or null |
+| `session-aggregate/1.app` | the AI application's family at the session's first call, or null |
+| `session-aggregate/1.profile` | the connection's tool set at the session's first call, or null |
+| `session-aggregate/1.os` | self-hosted: the operating system family; null on cloud |
+| `session-aggregate/1.node` | self-hosted: the Node.js major; null on cloud |
 
 Count buckets, used by every `_bucket` field of the usage rows below: `0`, `1-9`, `10-99`, `100-999`, `1000-9999`, `10000+`. A count is
 never sent exactly.
@@ -345,6 +398,7 @@ Once per install (`install/1`), at the first send after the first-run notice:
 | `install/1.os` | `linux`, `darwin`, `win32`, `freebsd`, `openbsd` or `other` |
 | `install/1.arch` | `x64`, `arm64`, `arm`, `ia32` or `other` |
 | `install/1.ci` | whether a standard CI variable is set (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `CIRCLECI`, `TRAVIS`, `JENKINS_URL`, `TF_BUILD`, ...); only true or false |
+| `install/1.internal` | true when Renor's own engine made it (a gate, CI, a test or load run, Renor's own workspace); same rule as `retrieval-labelled/1.internal`. Older engines leave it out |
 | `install/1.transport` | `stdio` (`renor-engine mcp`) or `http` (the service) |
 
 Once per active day (`heartbeat/1`), after the day is over:
@@ -360,6 +414,7 @@ Once per active day (`heartbeat/1`), after the day is over:
 | `heartbeat/1.os` | as in `install/1` |
 | `heartbeat/1.arch` | as in `install/1` |
 | `heartbeat/1.ci` | as in `install/1` |
+| `heartbeat/1.internal` | as in `install/1` |
 | `heartbeat/1.transport` | as in `install/1` |
 | `heartbeat/1.client_name` | the MCP client, from its own `initialize` (`clientInfo.name`), as one of a closed list: `claude-code`, `claude-ai`, `claude-desktop`, `chatgpt`, `openai-mcp`, `codex`, `cursor`, `windsurf`, `vscode`, `visual-studio-code`, `zed`, `cline`, `roo-code`, `continue`, `goose`, `gemini-cli`, `opencode`, `warp`, `jetbrains`, `lm-studio`, `librechat`, `mcp-inspector`, `hermes`, `renor`; any other name is sent as `other`, never as itself; the last client seen that day, when several connected; null when no client declared one |
 | `heartbeat/1.client_version` | the client's `clientInfo.version` when it is shaped like a version, cut to major.minor (`1.0.42` is sent as `1.0`, `v2.3` as `2.3`), else null |
@@ -388,6 +443,7 @@ One row per funnel step a process reached (`funnel/1`), each step at most once p
 | `funnel/1.hour` | the hour the step was reached, UTC |
 | `funnel/1.install_age` | how long this install had existed then (the same four ranges) |
 | `funnel/1.session` | a random id made when the process started (16 random bytes, hex) and never stored anywhere else; it is not the install id |
+| `funnel/1.internal` | as in `install/1` |
 | `funnel/1.step` | `installed` (the install's usage file was made), `notice_shown` (the first-run notice was shown), `first_save`, `first_recall`, `first_recall_used` (after a recall, a memory was opened with `read_memory` or a save cited what it built on) |
 
 **The opt-out count (`opt-out/1`).** When sharing is turned off (`renor-engine telemetry off`, an agent's sharing tool, the dashboard,

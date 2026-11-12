@@ -7,9 +7,9 @@ import * as z from 'zod';
  * listing and the replies always agree. Shared by the hosted server (mvp/server.ts) and the self-hosted stdio server
  * (mcp/server.ts).
  *
- * The tools that return a memory page (PAGE_TOOLS) are the exception: structuredContent repeats the page, and a client
- * may pass both blocks to its model, so a page would be read twice. They stay text-only unless
- * RENOR_PAGE_OUTPUT_SCHEMAS is set to an on value (`1`, `true`, `yes`, `on`).
+ * The tools that return a memory page (PAGE_TOOLS) are the exception: structuredContent would repeat the page, and a
+ * client may pass both blocks to its model, so a page would be read twice (measured on #680: a get_context answer at the
+ * default 800-token budget went from 741 to 1,446 tokens). They stay text-only.
  */
 export function toolOutputSchemasEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const v = (env.RENOR_TOOL_OUTPUT_SCHEMAS ?? '').trim().toLowerCase();
@@ -23,16 +23,9 @@ export const PAGE_TOOLS: ReadonlySet<string> = new Set([
   'search', 'evidence', 'keyword', 'entity', 'facts',
 ]);
 
-/** RENOR_PAGE_OUTPUT_SCHEMAS: off unless set to an on value. Only read together with toolOutputSchemasEnabled. */
-export function pageOutputSchemasEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env.RENOR_PAGE_OUTPUT_SCHEMAS ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-}
-
 /** Whether this tool lists its outputSchema and carries structuredContent under this environment. */
 export function toolCarriesStructured(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  if (!toolOutputSchemasEnabled(env)) return false;
-  return !PAGE_TOOLS.has(name) || pageOutputSchemasEnabled(env);
+  return toolOutputSchemasEnabled(env) && !PAGE_TOOLS.has(name);
 }
 
 /*

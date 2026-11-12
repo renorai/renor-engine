@@ -200,10 +200,15 @@ async function atlasWeek(call: (name: string, args?: Record<string, unknown>) =>
 }
 
 describe.skipIf(HTTP_SERVER_UNSUPPORTED)('facts do not crowd out the note that answers the question (F1)', () => {
-  it('returns the Fly.io decision record within the default 800 tokens, with a dozen Atlas facts on file', async () => {
+  it('returns the Fly.io decision record within the lean 800 tokens, with a dozen Atlas facts on file', async () => {
     const call = await keywordWorkspace();
     await atlasWeek(call);
-    const body = await call('get_context', { query: 'Why did we consider moving Atlas to Fly.io?' }) as Context;
+    // The default reply is the deep page (8,000 tokens, orchestrator.ts); it finds the record too.
+    const deep = await call('get_context', { query: 'Why did we consider moving Atlas to Fly.io?' }) as Context;
+    expect(deep.maxTokens).toBe(8000);
+    expect(deep.memories.some(m => m.text.includes('$410/month'))).toBe(true);
+    // 800 was the default before 2026-11-09: a caller that asks for it gets the lean page, which must still hold the record.
+    const body = await call('get_context', { query: 'Why did we consider moving Atlas to Fly.io?', max_tokens: 800 }) as Context;
     expect(body.maxTokens).toBe(800);
     expect(body.memories.some(m => m.text.includes('$410/month'))).toBe(true);
     // The fact the question is about, not every fact that says "Atlas". The reversal fact also lists: its saved statement
@@ -383,7 +388,8 @@ describe('a relevant verdict describes something in the response (F7)', () => {
         ...['2026-09-25', '2026-09-26', '2026-09-27', '2026-09-28', '2026-09-29'].map(date => ({ slug: date, date, text: worklog(date) })),
       ],
     }, { dated: true });
-    const body = await w.ask('Why did we consider moving Atlas to Fly.io?', { ...ARMED, RENOR_CONTEXT_RELEVANCE_MIN: '0.45' });
+    // The 800-token reply this case is about is lean mode's default; the deep default (8,000) does not truncate it at all.
+    const body = await w.ask('Why did we consider moving Atlas to Fly.io?', { ...ARMED, RENOR_CONTEXT_RELEVANCE_MIN: '0.45', RENOR_DEEP_SEARCH: '0' });
     expect(body.relevance?.relevant).toBe(true);
     expect(body.memories.map(m => m.text)).toContainEqual(expect.stringContaining('$410/month'));
     expect(body.truncated).toBe(true);

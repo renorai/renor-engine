@@ -154,7 +154,7 @@ describe('docs/ENVIRONMENT-VARIABLES*.md', () => {
     const stale = [...documented].filter(name => !read.has(name)).sort();
     expect(stale, 'the page has rows for variables that src/ no longer reads: remove them').toEqual([]);
     // The scan itself finds the settings people know and the ones a plain grep misses.
-    for (const known of ['VAULT_PATH', 'EMBEDDING_PROVIDER', 'RENOR_TEMPORAL_ASOF', 'MVP_MEMORY_DIR', 'OLLAMA_CLOUD_KEY_4', 'RENOR_EMBED_READ_BUDGET_MS']) {
+    for (const known of ['VAULT_PATH', 'EMBEDDING_PROVIDER', 'RENOR_STATUS_LEDGER', 'MVP_MEMORY_DIR', 'OLLAMA_CLOUD_KEY_4', 'RENOR_EMBED_READ_BUDGET_MS']) {
       expect(read.has(known), known).toBe(true);
     }
   }, 120_000); // it parses every file under src/, which takes seconds on a loaded machine

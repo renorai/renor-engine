@@ -1,19 +1,11 @@
-import type Database from '../db/sqlite';
-import { prepareOnce } from '../db/statements';
-import { keywordSearch } from './keyword';
-import { keywordLedgerHits, type IsLedgerNote } from './ledgerPresentation';
-import { quoteFtsQuery, shownPage } from './queryHelpers';
 
 /**
- * Plain-wording retrieval and crowding: three switches, each default OFF, each a kill switch of its own.
+ * Plain-wording retrieval and crowding: two switches, each default OFF, each a kill switch of its own.
  *
  * Why (the owner's real use, 2026-10-21): where Renor held the memory, the owner's own words as the query returned it
  * 5 of 24 times against 19 of 24 for a hand-aimed topic query, and of 183 agent queries that once returned a memory the
  * agent acted on, 40% no longer return it as the workspace grows. None of the three calls a model.
  *
- *  - RENOR_ENTITY_LANE: the rare words a query names (a subject such as "jev", a service, a project) are looked up in
- *    the keyword index; the chunks that carry them join the semantic candidates at their own cosine, and every candidate
- *    that carries them is lifted by up to ENTITY_LANE_BOOST (the lift `+entity` already gives an entity's note).
  *  - RENOR_QUERY_REWRITE: the conversational wrapper of a query ("hey, do you remember what we said about ...") is taken
  *    off before it is embedded, so the words that are embedded are the ones stored memories use.
  *  - RENOR_NEAR_DUP_CAP=<n>: at most `n` near-copies (word-set Jaccard >= NEAR_DUP_JACCARD) in one window, the best
@@ -24,10 +16,6 @@ import { quoteFtsQuery, shownPage } from './queryHelpers';
 function on(value: string | undefined): boolean {
   const v = (value ?? '').trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-}
-
-export function entityLaneEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return on(env.RENOR_ENTITY_LANE);
 }
 
 export function queryRewriteEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -152,67 +140,6 @@ export function rewriteConversationalQuery(query: string): string {
   const kept = contentTerms(q).length;
   if (q === original.replace(/[\s?.!]+$/, '') || kept === 0 || kept < Math.min(2, contentTerms(original).length)) return original;
   return q;
-}
-
-/** The lift a candidate that carries every lane word gets: the lift `+entity` gives an entity's note (orchestrator.ts). */
-export const ENTITY_LANE_BOOST = 0.2;
-/** At most this many lane words per query: the rarest. */
-export const ENTITY_LANE_MAX_TERMS = 3;
-/** The lane reads queries of at most this many content words. */
-export const ENTITY_LANE_MAX_QUERY_TERMS = 12;
-/** A word is rare enough to name a subject when at most this many chunks carry it, or ENTITY_LANE_DF_SHARE of all chunks. */
-export const ENTITY_LANE_MIN_DF_LIMIT = 5;
-export const ENTITY_LANE_DF_SHARE = 0.02;
-
-/**
- * The lane words of `query`: its content words that name a registered entity, or that few enough chunks carry to name a
- * subject, rarest first (a named entity before any other word). Two bounded lookups per word; none for a query of more than
- * ENTITY_LANE_MAX_QUERY_TERMS content words.
- */
-export function entityLaneTerms(db: Database.Database, query: string): string[] {
-  const terms = contentTerms(query);
-  // A query of many words is a passage, not a named subject: its rarest word is as likely a heading's (measured: a pasted
-  // section lost its own chunk to a "Parking lot" section of another note). The semantic lane already matches a passage.
-  if (terms.length === 0 || terms.length > ENTITY_LANE_MAX_QUERY_TERMS) return [];
-  const chunks = (prepareOnce(db, 'SELECT COUNT(*) AS n FROM chunks').get() as { n: number }).n;
-  const limit = Math.max(ENTITY_LANE_MIN_DF_LIMIT, Math.floor(chunks * ENTITY_LANE_DF_SHARE));
-  const counted: Array<{ term: string; df: number; named: boolean }> = [];
-  for (const term of terms) {
-    const match = quoteFtsQuery(term);
-    if (!match) continue;
-    let df: number;
-    try {
-      df = (prepareOnce(db, 'SELECT COUNT(*) AS n FROM (SELECT 1 FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT ?)').get(match, limit + 1) as { n: number }).n;
-    } catch {
-      continue; // a word FTS5 cannot read is no lane word
-    }
-    if (df === 0) continue;
-    const named = prepareOnce(
-      db,
-      `SELECT 1 FROM entities WHERE canonical_name = ? COLLATE NOCASE
-       UNION ALL SELECT 1 FROM entities, json_each(entities.aliases_json) AS alias WHERE lower(alias.value) = ? LIMIT 1`,
-    ).get(term, term) !== undefined;
-    if (named || df <= limit) counted.push({ term, df, named });
-  }
-  return counted
-    .sort((a, b) => Number(b.named) - Number(a.named) || a.df - b.df)
-    .slice(0, ENTITY_LANE_MAX_TERMS)
-    .map(c => c.term);
-}
-
-/**
- * The chunks that carry any lane word, best keyword match first, at most `perTerm` for each word. Read as every keyword
- * reader reads (shownPage): the ledger's header and the events the word is not in are judged away before the page is cut.
- */
-export function entityLaneChunkIds(db: Database.Database, terms: string[], perTerm: number, isLedgerNote?: IsLedgerNote): number[] {
-  const ids: number[] = [];
-  for (const term of terms) {
-    const match = quoteFtsQuery(term);
-    if (!match) continue;
-    const page = shownPage(rows => keywordSearch(db, match, rows), rows => keywordLedgerHits(rows, isLedgerNote, term), perTerm);
-    for (const hit of page) if (!ids.includes(hit.chunkId)) ids.push(hit.chunkId);
-  }
-  return ids;
 }
 
 function escapeRegExp(s: string): string {

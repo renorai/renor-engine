@@ -21,7 +21,20 @@ Renor is connected to this app and remembers across sessions.
 - Save the specific value (a port, a name, a path), not a summary of it.
 - Do not save secrets, or things that are already in the code.`;
 
-const BLOCK = `${RULE_START}\n${RULE_TEXT}\n${RULE_END}\n`;
+/** The rule for the default stdio server, which lists the hosted names (src/mcp/hostedSurface.ts). */
+export const RULE_TEXT_HOSTED = `## Renor memory
+
+Renor is connected to this app and remembers across sessions.
+- Before deciding anything non-trivial, recall first: one get_context call is usually enough.
+- Save with remember when the user makes a decision, corrects you, or states a fact that should outlive this chat. Include the reason.
+- Save the specific value (a port, a name, a path), not a summary of it.
+- Do not save secrets, or things that are already in the code.`;
+
+/** Under RENOR_MCP_TOOLS=coding the save tool is `note` (remember_fact is not listed), so the rule names that one. */
+function blockFor(coding: boolean, legacy: boolean): string {
+  const text = !legacy ? RULE_TEXT_HOSTED : coding ? RULE_TEXT.replace('remember_fact', 'note') : RULE_TEXT;
+  return `${RULE_START}\n${text}\n${RULE_END}\n`;
+}
 
 export const APPS = ['claude-code', 'codex', 'grok', 'gemini', 'pi', 'vscode'] as const;
 export type AppId = (typeof APPS)[number];
@@ -54,14 +67,17 @@ function find(text: string): [number, number] | null {
 }
 
 /** The MCP entry to add to the app's own config: the engine's stdio server. */
-export function mcpEntry(): { command: string; args: string[] } {
-  return { command: 'renor-engine', args: ['mcp'] };
+export function mcpEntry(opts: { tools?: 'coding' | 'full' } = {}): { command: string; args: string[]; env?: { RENOR_MCP_TOOLS: string } } {
+  // Every app in APPS is a coding client: it gets the short stdio list by default. `full` is today's entry, byte for byte.
+  const entry = { command: 'renor-engine', args: ['mcp'] };
+  return (opts.tools ?? 'coding') === 'full' ? entry : { ...entry, env: { RENOR_MCP_TOOLS: 'coding' } };
 }
 
-export function installRule(app: AppId, env: NodeJS.ProcessEnv, cwd: string): { path: string; state: 'added' | 'updated' | 'unchanged' } {
+export function installRule(app: AppId, env: NodeJS.ProcessEnv, cwd: string, opts: { tools?: 'coding' | 'full' } = {}): { path: string; state: 'added' | 'updated' | 'unchanged' } {
   const file = rulePath(app, env, cwd);
   const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   const span = find(before);
+  const BLOCK = blockFor((opts.tools ?? 'coding') !== 'full', env.RENOR_MCP_LEGACY_STDIO?.trim() === '1');
   let after: string;
   if (span) after = before.slice(0, span[0]) + BLOCK.trimEnd() + before.slice(span[1]);
   else after = before + (before && !before.endsWith('\n') ? '\n' : '') + (before ? '\n' : '') + BLOCK;

@@ -81,13 +81,10 @@ The main ones are in [docs/ENVIRONMENT-VARIABLES.md](../docs/ENVIRONMENT-VARIABL
 did not show a clear gain and showed noise on unrelated turns. That check is private and not reproducible from this
 repository. Leave `RENOR_AUTO_RECALL_SCOPE` unset unless your saved scopes are named after your folders.
 
-**The relevance floor.** With no `RENOR_AUTO_RECALL_MIN_SIMILARITY` set:
-- the hosted endpoint (`https://mcp.renor.cloud/mcp`) gets a floor of 0.68;
-- any other endpoint gets none.
-
-0.68 is a cosine for the hosted model's embeddings only (`vertex:gemini-embedding-001:768`, the one model with a
-calibrated bar in `src/mvp/contextRelevance.ts`). It was chosen on the same private sessions, so it is in-sample and not
-reproducible here. A bar never carries over to another model.
+**The relevance floor.** With no `RENOR_AUTO_RECALL_MIN_SIMILARITY` set, no floor applies on any endpoint, the hosted
+one included, until a calibrated bar exists for the hosted model (`vertex:gemini-embedding-001:768`; its placeholder in
+`src/mvp/contextRelevance.ts` is still uncalibrated). An earlier 0.68 floor is no longer applied by default. A bar never
+carries over to another model, and any floor you set yourself applies as written below.
 
 A floor needs a number to compare, so a reply without `relevance.similarity` is dropped while a floor applies. The
 server gives none when relevance judging is off, when there is no query vector, when its model has no calibrated bar

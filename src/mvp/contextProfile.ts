@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { defaultContextMaxTokens } from '../retrieval/orchestrator';
 
 /**
  * A context-engineering profile for the HTTP server's agent surface: four levers, each off unless its variable is set,
@@ -63,7 +64,7 @@ export const CODING_ARG_DESCRIPTIONS: Record<string, Record<string, string>> = {
   get_context: {
     query: 'The current request or task. Omit only for a compact profile.',
     scope: 'Optional memory scope',
-    max_tokens: 'Reply budget in o200k tokens, default 800',
+    max_tokens: `Reply budget in o200k tokens, default ${defaultContextMaxTokens()}`,
     include_history: 'Also return superseded memory, labelled historical (default false)',
   },
 };

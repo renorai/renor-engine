@@ -37,7 +37,9 @@ import { originFromDirectory } from '../recall/origin';
 import * as z from 'zod';
 import { AGENT_LEVELS, SHARING_TOOL_DESCRIPTION } from '../sharing/agentTool';
 import { askThrough, stdioLearning, type StdioLearning } from './learning';
-import { OUT_ASK_AGENT, OUT_HANDOFF, OUT_HIT, OUT_LIST_REQUESTS, OUT_REQUEST, OUT_WHATS_NEW, toolCarriesStructured } from '../mvp/outputSchemas';
+import { readWhatsNew, whatsNewPageFromEnv } from '../memory/whatsNew';
+import { HOSTED_STDIO_CODING_TOOLS, HOSTED_STDIO_TOOLS, HOSTED_STDIO_NAMES, legacyStdio, stdioInstructions } from './hostedSurface';
+import { OUT_ASK_AGENT, OUT_HANDOFF, OUT_LIST_REQUESTS, OUT_REQUEST, OUT_WHATS_NEW, toolCarriesStructured } from '../mvp/outputSchemas';
 
 export function createMcpTools(
   db: Database.Database,
@@ -97,9 +99,66 @@ export function createMcpTools(
     } }
     : {};
 
-  return {
+  const self = {} as Record<string, (args: never) => Promise<unknown>>;
+  const call = (name: string, args: unknown): Promise<unknown> => (self[name] as unknown as (args: unknown) => Promise<unknown>)(args);
+  // The hosted names, on this store (src/mcp/hostedSurface.ts). A named connection keeps its own whats_new (lease, known-agent note).
+  const hiveWhatsNew = (hive as { whats_new?: (args: unknown) => Promise<unknown> }).whats_new;
+  const hosted = {
+    async whats_new(args: { since?: string; scope?: string; include_own?: boolean; cursor?: string; limit?: number }) {
+      if (hiveWhatsNew) return hiveWhatsNew({ since: args?.since, scope: args?.scope, include_own: args?.include_own, cursor: args?.cursor });
+      return readWhatsNew(db, {
+        agent: 'stdio', scope: args?.scope, since: args?.since || undefined, includeOwn: args?.include_own === true,
+        cursor: args?.cursor || undefined, limit: args?.limit ?? whatsNewPageFromEnv(),
+      });
+    },
+    /** The hosted reply shape on this store: facts first, then memories best match first. No replaced/conflict lanes here. */
+    async get_context(args: { query?: string; scope?: string; max_tokens?: number; include_history?: boolean }) {
+      const query = args?.query?.trim() ?? '';
+      const budget = Math.max(128, Math.min(args?.max_tokens ?? 800, 20000)) * 4;
+      const found = query ? await call('search', { query, topK: 20 }) : [];
+      const hits = (Array.isArray(found) ? found : (found as { hits: unknown[] }).hits) as Array<{ text: string; notePath: string; score: number; reason: string; headingPath?: string; session_date?: string }>;
+      const facts: unknown[] = [];
+      const memories: unknown[] = [];
+      let used = 0;
+      for (const hit of hits) {
+        used += hit.text.length;
+        if (used > budget && (facts.length + memories.length) > 0) break;
+        if (hit.reason === 'fact') facts.push({ text: hit.text, headingPath: hit.headingPath, current: true });
+        else memories.push({ text: hit.text, notePath: hit.notePath, session_date: hit.session_date, score: hit.score, reason: hit.reason, matched: true });
+      }
+      if (args?.include_history && query) {
+        const subject = pickEntityName({ name: query });
+        if (subject) for (const f of factsFor(db, subject, { includeHistory: true }).filter(f => f.valid_to != null)) facts.push({ subject, predicate: f.predicate, object: f.object_text, current: false, historical: true, valid_to: f.valid_to });
+      }
+      return { facts, memories, rankedBy: 'score', ...(query ? {} : { notice: 'No query: pass the current request for matching memories.' }) };
+    },
+    async search_text(args: { query: string; top_k?: number }) {
+      const results = await call('keyword', { query: args.query, topK: args.top_k });
+      return Array.isArray(results) ? { ok: true, results } : results;
+    },
+    async retrieve_memory(args: { subject?: string; predicate?: string; include_history?: boolean; as_of?: string }) {
+      const subject = args?.subject?.trim();
+      if (!subject) throw new Error('retrieve_memory needs the "subject" argument (what the facts are about, e.g. "user").');
+      let facts = factsFor(db, subject, { includeHistory: args.include_history, asOf: args.as_of });
+      if (args.predicate) facts = facts.filter(f => f.predicate === args.predicate);
+      return { subject, known: facts.length > 0 || lookupEntity(db, subject) !== null, facts: facts.map(f => ({ subject, predicate: f.predicate, object: f.object_text, current: f.valid_to == null, scope: f.scope, valid_from: f.valid_from, valid_to: f.valid_to, ...(f.author ? { author: f.author } : {}) })) };
+    },
+    /** statement alone is a note in the day's log; with subject, predicate and object together it is the structured fact. */
+    async remember(args: { statement?: string; subject?: string; predicate?: string; object?: string; source?: string; text?: string }) {
+      const { subject, predicate, object } = args ?? {};
+      const statement = (args?.statement ?? args?.text)?.trim();
+      const some = [subject, predicate, object].filter(v => v !== undefined && v !== '').length;
+      if (some === 3) return call('remember_fact', { subject, predicate, object });
+      if (some > 0) throw new Error('remember: pass subject, predicate and object together, or only statement');
+      if (!statement) throw new Error('remember needs statement: the thing to remember, in plain words');
+      return call('note', { text: statement });
+    },
+  };
+
+  const tools = {
     ...hive,
     ...handoff,
+    ...hosted,
     // Canonical tool names. Clients that prefix with the server name render
     // these as renor_search, renor_keyword, renor_facts, etc.
     async search(args: { query: string; topK?: number; top_k?: number }) {
@@ -243,6 +302,8 @@ export function createMcpTools(
       return { ok: true, path: filePath, ...failed };
     },
   };
+  Object.assign(self, tools);
+  return tools;
 }
 
 // Exported so tests/mcp/tool-surfaces.test.ts can compare the published list
@@ -348,22 +409,12 @@ export const TOOLS = [
 /**
  * The declared output schema of each tool this server lists (MCP `outputSchema`), used when RENOR_TOOL_OUTPUT_SCHEMAS is on.
  * The five hive tools and the handoff note declare the hosted server's schemas, since both return the same objects from the
- * same functions. The eight tools above have no hosted counterpart, so their schemas describe what each one returns here.
- * Structured content must be an object: a reply that is an array or null is wrapped as { result } (see structuredOf).
+ * same functions. The tools above that return a memory page (search, evidence, keyword, entity, facts: PAGE_TOOLS) declare
+ * none and answer with their text block alone; the others have no hosted counterpart, so their schemas describe what each
+ * one returns here. Structured content must be an object: a reply that is an array or null is wrapped as { result } (see
+ * structuredOf).
  */
 const OUTPUT_SCHEMAS: Record<string, z.ZodType> = {
-  search: z.looseObject({ result: z.array(OUT_HIT).optional(), hits: z.array(OUT_HIT).optional(), composedContext: z.unknown().optional() }),
-  evidence: z.looseObject({ query: z.string(), hits: z.array(OUT_HIT), evidence: z.unknown() }),
-  keyword: z.looseObject({
-    result: z.array(OUT_HIT).optional(), ok: z.boolean().optional(), error: z.string().optional(),
-    detail: z.string().optional(), results: z.array(OUT_HIT).optional(),
-  }),
-  entity: z.looseObject({
-    result: z.looseObject({
-      id: z.number(), type: z.string(), canonicalName: z.string(), aliases: z.array(z.string()), sourceNote: z.string(), confidence: z.number(),
-    }).nullable().optional(),
-  }),
-  facts: z.looseObject({ result: z.array(OUT_HIT) }),
   remember_fact: z.looseObject({ action: z.enum(['supersede', 'store', 'nochange']) }),
   status: z.looseObject({ notes: z.number(), chunks: z.number(), entities: z.number(), facts: z.number(), relations: z.number() }),
   note: z.looseObject({ ok: z.literal(true), path: z.string(), warning: z.string().optional(), detail: z.string().optional() }),
@@ -473,22 +524,45 @@ export function utf8Lines(source: Readable, onInvalid: () => void): Readable {
  * directly. A write-path regression asserted only on the internal function would pass even if
  * the published schema or the error envelope the client actually sees were wrong.
  */
+/**
+ * RENOR_MCP_TOOLS=coding on the stdio server: the stdio counterpart of the hosted coding set (get_context, search_text,
+ * retrieve_memory, remember, memory_status). Hive, handoff and sharing_level are not listed. Unset or `all` lists every tool.
+ */
+export const STDIO_CODING_TOOLS = ['search', 'keyword', 'facts', 'note', 'status'] as const;
+
 export function registerMcpHandlers(
   server: Server, tools: ReturnType<typeof createMcpTools>, usage: UsageRecorder | null = null, learning: StdioLearning | null = null,
 ): void {
   // Looked up by the name the client sent: an argument shape is the tool's own to check.
   const byName = tools as unknown as Record<string, ((args: unknown) => Promise<unknown>) | undefined>;
-  const hive = HIVE_TOOLS.filter(tool => typeof byName[tool.name] === 'function');
-  const handoff = typeof byName[HANDOFF_TOOL_NAME] === 'function' ? [HANDOFF_TOOL] : [];
   // Read once for this server, so the listing and the replies always agree (as the hosted server does).
   const env = { ...process.env };
+  const legacy = legacyStdio(env);
   const carries = (name: string) => toolCarriesStructured(name, env);
+  const coding = env.RENOR_MCP_TOOLS?.trim() === 'coding';
+  const named = typeof byName.ask_agent === 'function'; // the hive tools exist only for a named connection
+  const hive = named ? HIVE_TOOLS.filter(tool => !(tool.name === 'whats_new' && !legacy)) : [];
+  const handoff = typeof byName[HANDOFF_TOOL_NAME] === 'function' ? [HANDOFF_TOOL] : [];
+  const hostedNames = HOSTED_STDIO_NAMES as readonly string[];
+  const legacyNames = TOOLS.map(tool => tool.name);
+  // RENOR_MCP_LEGACY_STDIO=1: today's list, byte for byte. Default: the hosted names (the legacy ones stay callable, unlisted).
+  const listed = legacy
+    ? (name: string) => !coding || (STDIO_CODING_TOOLS as readonly string[]).includes(name)
+    : (name: string) => !coding || (HOSTED_STDIO_CODING_TOOLS as readonly string[]).includes(name);
+  const baseTools = legacy ? TOOLS : HOSTED_STDIO_TOOLS;
+  const listing = () => [...baseTools, ...hive, ...handoff, ...(learning ? [SHARING_LEVEL_TOOL] : [])].filter(tool => listed(tool.name));
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...TOOLS, ...hive, ...handoff, ...(learning ? [SHARING_LEVEL_TOOL] : [])].map(tool => listedWithSchema(tool, carries(tool.name))),
+    tools: listing().map(tool => listedWithSchema(tool, carries(tool.name))),
   }));
+  // A call is allowed for what is listed, and in the default mode also for the older names (callable, no longer listed).
+  const callable = (name: string): boolean => {
+    if (legacy) return listed(name);
+    return listed(name) || legacyNames.includes(name) || HIVE_TOOLS.some(tool => tool.name === name) || name === SHARING_LEVEL_TOOL.name || name === HANDOFF_TOOL_NAME;
+  };
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    if (!callable(name)) return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     if (learning && name === SHARING_LEVEL_TOOL.name) {
       try {
         const parsed = sharingToolArgs.safeParse(args ?? {});
@@ -499,7 +573,8 @@ export function registerMcpHandlers(
         return { content: [{ type: 'text', text: escapeInvisibleControls(`Error: ${err instanceof Error ? err.message : String(err)}`) }], isError: true };
       }
     }
-    const handler = byName[name];
+    // Legacy mode answers as before: the hosted names have no handler there (whats_new only for a named connection).
+    const handler = legacy && hostedNames.includes(name) && !(name === 'whats_new' && named) ? undefined : byName[name];
     if (!handler) {
       if (HIVE_TOOLS.some(tool => tool.name === name)) {
         return { content: [{ type: 'text', text: `${name} is refused: this connection has no name. Set RENOR_CONNECTION_NAME to this agent's name before starting renor-engine mcp, then reconnect.` }], isError: true };
@@ -534,15 +609,20 @@ export async function startMcpServer(
   provider: EmbeddingProvider | undefined,
   config: Config
 ) {
-  const server = new Server({ name: 'renor', version: ENGINE_VERSION }, { capabilities: { tools: {} } });
+  // Default: instructions that name only the tools listed (hostedSurface.ts). RENOR_MCP_LEGACY_STDIO=1: none, as before.
+  const codingList = process.env.RENOR_MCP_TOOLS?.trim() === 'coding';
+  const instructions = legacyStdio() ? undefined : stdioInstructions(codingList ? HOSTED_STDIO_CODING_TOOLS : HOSTED_STDIO_NAMES);
+  const server = new Server({ name: 'renor', version: ENGINE_VERSION }, { capabilities: { tools: {} }, ...(instructions ? { instructions } : {}) });
   const evidence = resolveEvidenceToolOptions(config);
   const tools = createMcpTools(db, vectorIndex, provider, config, evidence);
   // Learning and sharing, as the HTTP service has them (src/mcp/learning.ts). Null under DO_NOT_TRACK=1 or RENOR_SHARING=off.
   const learning = stdioLearning(config, { agent: () => server.getClientVersion()?.name?.trim() || 'unnamed' });
 
-  // The install's sharing folder (RENOR_SHARING_DIR, else ~/.config/renor): the counters are written there in the background, and only at a
-  // level above off; the sender sends them under its own rules (nothing before the first-run notice, nothing under DO_NOT_TRACK=1).
-  const usage = usageRecorder(sharingDirFor(null), {
+  // The sender's own sharing folder (learning.sharingDir: RENOR_SHARING_DIR, else the vault's): the counters are written there in the background,
+  // and only at a level above off, so the sender finds them. (They were once written to the install's folder while the sender read the vault's, and
+  // so no install/1 or heartbeat/1 row ever left a stdio install.) The sender sends them under its own rules (nothing before the first-run notice,
+  // nothing under DO_NOT_TRACK=1).
+  const usage = usageRecorder(learning?.sharingDir ?? sharingDirFor(null), {
     transport: 'stdio',
     labels: () => labelsOf({
       embedding: config.embeddingProvider === 'eval-hash' ? 'other' : config.embeddingProvider, model: null, rerankTopN: resolveRerankTopN(),

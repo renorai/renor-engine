@@ -226,7 +226,12 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a keyword-only workspace started with 
     const status = await after.call('memory_status');
     expect(status.semantic).toBe(false);
     expect(status.embeddingRebuild).toEqual({ chunks: n, chunksLeft: n });
-    const held = await after.call('search_memory', { query: 'zebrafish aquarium filter' });
+    // A sentence-style query finds its words with the keyword fallback (any-word), marked as keyword matches.
+    const sentence = await after.call('search_memory', { query: 'zebrafish aquarium filter' });
+    expect(sentence).toMatchObject({ ok: true, fallback: 'keyword' });
+    expect(sentence.notice).toContain(`(${n} of ${n} chunks left)`);
+    // A query no note shares a word with still says semantic search is rebuilding, and how much is left.
+    const held = await after.call('search_memory', { query: 'xylophone walrus tundra' });
     expect(held).toMatchObject({ ok: false, error: 'semantic-rebuilding', hits: [] });
     expect(held.notice).toContain(`(${n} of ${n} chunks left)`);
     expect(held.notice).toMatch(/Keyword search works meanwhile/);

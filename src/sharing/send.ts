@@ -8,6 +8,7 @@ import {
   validateRow, type SharingLevel,
 } from './fields';
 import { LABEL_WINDOW_MS, projectFromLog, type ProjectedKind, type ProjectedRow } from './project';
+import { senderContext, sharingInternal } from './context';
 import {
   EXAMPLES_FILE, MAX_RETIRED_BEARERS, contributorId, dayStart, monthlyRotation, rotateSecret, trainingBearer, consentFor, effectiveLevel, ensureState,
   freshState, readConsent, readCutoff, readState, removeLocalSharingData, writeConsent, writeState, type ConsentRecord, type SharingState,
@@ -450,7 +451,7 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
   probe?.close();
   // Debug changes nothing, so it reads the file as it is; a real run first writes what this process counted.
   if (!training && !debug) flushUsageFor(options.dir);
-  let usage: UsageRow[] = training ? [] : usageRows(options.dir, now);
+  let usage: UsageRow[] = training ? [] : usageRows(options.dir, now, sharingInternal(env));
   if (!hasLog && usage.length === 0) return empty('no-log', { reason: file === null ? 'no learning log to read' : `no learning log at ${file}` });
 
   // Debug reads the state if there is one and never makes it; a real send makes it on first use.
@@ -462,7 +463,7 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     const before = state.secret;
     state = monthlyRotation(options.dir, state, now);
     // A new month also gave the usage file a new install id: read its rows again, so none goes out under last month's.
-    if (state.secret !== before) usage = usageRows(options.dir, now);
+    if (state.secret !== before) usage = usageRows(options.dir, now, sharingInternal(env));
   }
   // The text stream starts at the switch-on time, never at 0: nothing created before it is ever sent tied, so nothing sent untied is repeated.
   if (training) {
@@ -484,7 +485,8 @@ async function shareStream(options: SenderOptions, stream: 'numbers' | 'training
     const log = openLog();
     if (log === null) throw new Error(`the learning log at ${file} went away during the run`);
     return log;
-  }, { level, now, windowMs: options.windowMs, watermarks: { ...marks }, examples, firstSeen: state.firstSeen ?? dayStart(now) }) : (function* (): Generator<ProjectedRow[]> {})();
+  }, { level, now, windowMs: options.windowMs, watermarks: { ...marks }, examples, firstSeen: state.firstSeen ?? dayStart(now),
+    context: senderContext(options.hosted === true, env) }) : (function* (): Generator<ProjectedRow[]> {})();
   let skipped = 0;
   // The batches of one slice after another. The next slice is read only when the caller asks for the batch after the last one of this
   // slice, which it does only once that batch was sent: so the rows of a slice that fail their own contract move the watermark (they are

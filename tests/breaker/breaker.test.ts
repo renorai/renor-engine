@@ -15,6 +15,7 @@ import { breakerSummary, printBreakerReport, runAttack, type AttackResult } from
 import { encodeTokens } from '../../src/indexer/tokenizer';
 import { KEY_SHAPES, Rng } from '../../scripts/eval/secret-guard/plantedSet';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
+import { defaultContextMaxTokens } from '../../src/retrieval/orchestrator';
 
 /**
  * The Renor breaker suite, v1: a standing adversarial pass that tries to break the real MCP tool
@@ -945,7 +946,9 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('breaker: latency and cost at volume', 
       const p50 = sorted[Math.floor(sorted.length / 2)];
       // A smoke bound, not a performance measurement: the host is shared and loaded, so the ceiling
       // is deliberately loose. The cost bound is deterministic (the reply the agent receives).
-      const ok = p50 < 5000 && worstTokens <= 1500;
+      // The bound is the default reply budget plus the same 700-token envelope it allowed the former 800-token default
+      // (1,500): the default is the deep page since 2026-11-09 (orchestrator.ts), 8,000 tokens.
+      const ok = p50 < 5000 && worstTokens <= defaultContextMaxTokens() + 700;
       return { ok, detail: `p50=${p50}ms samples=${JSON.stringify(samples)} worstReplyTokens=${worstTokens}`, evidence: { samples, worstTokens } };
     });
   }));

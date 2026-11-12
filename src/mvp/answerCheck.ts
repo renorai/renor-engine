@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { resolveEvidenceChat } from '../evidence/options';
+import { createOllamaChat } from '../evidence/ollamaChat';
 import type { EvidenceChat, EvidenceChatRequest } from '../evidence/secondPass';
 import type { ContextRelevance } from './contextRelevance';
 import { replyTokens } from './agentMemory';
@@ -33,6 +34,12 @@ import { replyTokens } from './agentMemory';
 
 /** RENOR_ANSWER_CHECK: 1/true/yes/on enables. Unset, blank or anything else: off. */
 export const ANSWER_CHECK_FLAG = 'RENOR_ANSWER_CHECK';
+
+/** Own-hardware checker (default unset = the evidence pass's endpoint): base URL, model and optional bearer key. */
+export const ANSWER_CHECK_OWN_HW_URL = 'RENOR_ANSWER_CHECK_OWN_HW_URL';
+export const ANSWER_CHECK_OWN_HW_MODEL = 'RENOR_ANSWER_CHECK_OWN_HW_MODEL';
+export const ANSWER_CHECK_OWN_HW_KEY = 'RENOR_ANSWER_CHECK_OWN_HW_KEY';
+export const ANSWER_CHECK_OWN_HW_MODEL_DEFAULT = 'qwen2.5:14b-instruct';
 
 export const NOT_ANSWERED =
   'the memories on file are about this topic but none states what this request asks; the listed items are only the nearest ones';
@@ -179,6 +186,13 @@ function boundedTimeout(raw: string | undefined): number {
  */
 export function resolveAnswerChecker(config: { dbPath: string }, env: NodeJS.ProcessEnv = process.env): AnswerChecker | null {
   if (!answerCheckEnabled(env)) return null;
+  const ownUrl = (env[ANSWER_CHECK_OWN_HW_URL] ?? '').trim();
+  if (ownUrl) {
+    const key = (env[ANSWER_CHECK_OWN_HW_KEY] ?? '').trim() || 'none';
+    const model = (env[ANSWER_CHECK_OWN_HW_MODEL] ?? '').trim() || ANSWER_CHECK_OWN_HW_MODEL_DEFAULT;
+    const chat = createOllamaChat({ baseUrl: ownUrl, keys: [key], timeoutMs: boundedTimeout(env.RENOR_ANSWER_CHECK_TIMEOUT_MS), maxRetries: 0 });
+    return createAnswerChecker({ model, chat });
+  }
   const { model, chat } = resolveEvidenceChat(config, env, { timeoutMs: boundedTimeout(env.RENOR_ANSWER_CHECK_TIMEOUT_MS), maxRetries: 0 });
   return chat ? createAnswerChecker({ model, chat }) : null;
 }

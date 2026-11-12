@@ -26,6 +26,24 @@ export const ORIGIN_META_KEY = 'renor/origin';
 
 const MAX_ORIGIN = 200;
 
+/** The embedding space currently served by the hosted automatic-recall endpoint. */
+export const HOSTED_RECALL_MODEL_KEY = 'vertex:gemini-embedding-001:768';
+
+/**
+ * Hook-only relevance bars, keyed by the embedding space that produced the cosine.
+ *
+ * PLACEHOLDER (2026-11-09): the auto-recall proof run reached 40/40 answerable probes but injected on 10/10
+ * unanswerable probes on each of three seeds. The laptop calibration run must replace null with the bar selected by
+ * scripts/eval/agent-workflow/calibrate-bar.ts (target: >=38/40 answerable and <=2/10 unanswerable on every seed).
+ * Keep null until that scores file exists: an unmeasured cosine must not become a shipped default by guesswork.
+ */
+export const GEMINI_001_768_HOOK_RELEVANCE_BAR: number | null = null;
+
+export function hookRelevanceBar(modelKey: string): number | undefined {
+  if (modelKey !== HOSTED_RECALL_MODEL_KEY) return undefined;
+  return GEMINI_001_768_HOOK_RELEVANCE_BAR ?? undefined;
+}
+
 /** A client-sent origin in its one normal form, or null when it is empty or not a plausible origin. */
 export function normalizeOrigin(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;

@@ -42,6 +42,9 @@ import {
 } from '../helpers/hiveHarness';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
 
+// Pins the previous stdio surface (an unnamed connection has no whats_new): RENOR_MCP_LEGACY_STDIO=1 restores it.
+process.env.RENOR_MCP_LEGACY_STDIO = '1';
+
 const open: Array<{ close(): Promise<void> }> = [];
 
 afterEach(async () => {

@@ -265,7 +265,8 @@ describe.skipIf(HTTP_SERVER_UNSUPPORTED)('a scoped read finds the scope\'s memor
 
     // The precondition: the other scopes' memories are the nearer ones, so a read of every scope does not reach the
     // scope's two, and only the scope's own read of the index (the window judged before it is cut) can find them.
-    const everywhere = await ws.call('get_context', { query: QUESTION });
+    // At the lean 800-token page (the default before 2026-11-09): the deep default reads 50 matches and reaches them anyway.
+    const everywhere = await ws.call('get_context', { query: QUESTION, max_tokens: 800 });
     expect(everywhere.memories.filter((m: { text: string }) => MINE.some(text => m.text.includes(text)))).toEqual([]);
 
     for (const spelling of SPELLINGS) {

@@ -18,23 +18,6 @@ export function registerExportMemoryTool(ctx: ToolContext): void {
       section: nullAsOmitted((observeEnabled() ? z.enum([...EXPORT_SECTIONS, 'observations']) : z.enum(EXPORT_SECTIONS)).optional()).describe('Continue with this section only (from the manifest\'s nextSection)'),
       offset: nullAsOmitted(z.number().int().min(0).optional()).describe('The item of that section to continue from (from the manifest\'s nextItem); default 0'),
     },
-    outputSchema: z.looseObject({
-      file: z.string(),
-      format: z.string(),
-      formatVersion: z.string(),
-      bytes: z.number().nullable(),
-      counts: z.record(z.string(), z.unknown()),
-      sections: z.array(z.object({ name: z.string(), items: z.number().nullable(), events: z.number().nullable().optional() })),
-      notExported: z.array(z.object({ kind: z.string(), what: z.string(), reason: z.string() })),
-      learningLog: z.union([z.null(), z.object({ file: z.string(), data: z.record(z.string(), z.unknown()) })]),
-      included: z.array(z.string()),
-      truncated: z.boolean(),
-      nextSection: z.string().nullable(),
-      nextItem: z.number().optional(),
-      documentChars: z.number(),
-      section: z.string().optional(),
-      offset: z.number().optional(),
-    }),
   }, async (args) => {
     try {
       const { manifest, document } = await exportEverything(mapContext(), { section: args.section, offset: args.offset });

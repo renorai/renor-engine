@@ -1,4 +1,5 @@
 import { readUntilWrite } from '../db/readCache';
+import { deepSearchEnabled } from '../retrieval/orchestrator';
 import type Database from '../db/sqlite';
 import { prepareOnce } from '../db/statements';
 import { encodeTokens } from '../indexer/tokenizer';
@@ -55,9 +56,12 @@ export function datedOutlineEnabled(env: NodeJS.ProcessEnv = process.env): boole
   return /^(1|on|true|yes)$/i.test(env.RENOR_DATED_OUTLINE?.trim() ?? '');
 }
 
-/** The largest max_tokens get_context accepts: the usual 4,000, or 9,000 with the outline on (so a caller can ask for the bigger outline). */
+/**
+ * The largest max_tokens get_context accepts: 9,000 with deep search (the default, orchestrator.ts) or the outline on, so a
+ * caller can ask for the deep page or the bigger outline; 4,000 in lean mode with the outline off.
+ */
 export function replyCeiling(env: NodeJS.ProcessEnv = process.env): number {
-  return datedOutlineEnabled(env) ? OUTLINE_REPLY_CEILING : USUAL_REPLY_CEILING;
+  return datedOutlineEnabled(env) || deepSearchEnabled(env) ? OUTLINE_REPLY_CEILING : USUAL_REPLY_CEILING;
 }
 
 /**

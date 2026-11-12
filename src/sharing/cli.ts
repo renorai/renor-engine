@@ -96,6 +96,7 @@ export async function runTelemetry(action: string, argument: string | undefined,
           }
         }
         if (state) {
+          if (state.lastSend) io.out(`last send: ${new Date(state.lastSend.at).toISOString()}, ${state.lastSend.status}${state.lastSend.status === 'sent' ? `, ${state.lastSend.rows} row(s)` : ''}`);
           io.out(`sent before: ${state.everSent ? 'yes' : 'no'}${state.deletePending ? '; a deletion is owed to the endpoint and will be retried' : ''}`);
         }
         return 0;

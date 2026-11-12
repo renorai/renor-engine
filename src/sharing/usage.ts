@@ -8,6 +8,7 @@ import {
 } from './fields';
 import { USAGE_FILE, defaultInForce, effectiveLevel, hostedEngine, readState } from './state';
 import { noticeRecorded } from './notice';
+import { sharingInternal } from './context';
 
 /**
  * Anonymous usage counters: the source of the install/1, heartbeat/1 and funnel/1 rows (fields.ts).
@@ -410,7 +411,7 @@ export interface UsageRow { at: number; row: Record<string, unknown>; mark: stri
  * The rows the folder's usage file has for the sender: the install row until it was sent, one heartbeat for each finished active day (a day
  * is sent once it is over, so it is complete), and each funnel step. Reads only.
  */
-export function usageRows(dir: string, now: number): UsageRow[] {
+export function usageRows(dir: string, now: number, internal: boolean = sharingInternal()): UsageRow[] {
   const file = readUsage(dir);
   if (file === null) return [];
   // Every row says how old the install is (fields.ts INSTALL_AGE_BUCKETS), from the first-seen day the sharing state keeps; and every row is
@@ -418,7 +419,7 @@ export function usageRows(dir: string, now: number): UsageRow[] {
   const firstSeen = readState(dir)?.firstSeen ?? file.install.at;
   const rows: UsageRow[] = [];
   const push = (row: UsageRow): void => {
-    rows.push({ ...row, row: coarsenRow({ ...row.row, install_age: installAgeBucket(firstSeen, row.at) }) as UsageRow['row'] });
+    rows.push({ ...row, row: coarsenRow({ ...row.row, install_age: installAgeBucket(firstSeen, row.at), internal }) as UsageRow['row'] });
   };
   if (file.install.sent !== true) {
     push({ at: file.install.at, mark: 'install', row: { kind: 'install/1', hour: hourOf(file.install.at), install_id: file.installId, ...file.install.env } });

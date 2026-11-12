@@ -98,22 +98,13 @@ describe('fixed opt-in TOON for HTTP search_memory', () => {
     }
   });
 
-  it.skipIf(HTTP_SERVER_UNSUPPORTED)('with page schemas off (the default) the TOON search reply is text-only; with them on, structuredContent carries the same hits as the TOON text', async () => {
-    const { decode } = await import('@toon-format/toon');
+  it.skipIf(HTTP_SERVER_UNSUPPORTED)('the TOON search reply and get_context are text-only (page tools carry no structuredContent)', async () => {
     const open = await workspace('Orion uses SQLite.\n\nOrion has café notes.');
-    vi.stubEnv('RENOR_PAGE_OUTPUT_SCHEMAS', undefined);
     const off = await (await open('toon')).call('search_memory', { query: 'Orion' });
     expect(off.text).toMatch(/^Format: TOON\n/);
     expect(off.result.structuredContent).toBeUndefined();
     const offContext = await (await open('toon')).call('get_context', { query: 'Orion', max_tokens: 800 });
     expect(offContext.result.structuredContent).toBeUndefined();
-
-    vi.stubEnv('RENOR_PAGE_OUTPUT_SCHEMAS', '1');
-    const on = await (await open('toon')).call('search_memory', { query: 'Orion' });
-    expect(on.text).toBe(off.text);
-    const decoded = decode(on.text.slice(TOON_HEADER.length)) as { hits: unknown[] };
-    expect(on.result.structuredContent).toEqual(decoded);
-    expect((on.result.structuredContent as { hits: unknown[] }).hits.length).toBeGreaterThan(0);
   });
 
   it.skipIf(HTTP_SERVER_UNSUPPORTED)('keeps hostile memory text inside its scalar instead of forging TOON structure', async () => {

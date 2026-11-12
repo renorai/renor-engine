@@ -1,5 +1,4 @@
 import * as z from 'zod';
-import { OUT_HIT } from '../outputSchemas.js';
 import { engineLookupEntity } from '../engine.js';
 import { markImportedOrigin, toolError } from './shared.js';
 import type { ToolContext } from './setup.js';
@@ -15,15 +14,6 @@ export function registerLookupEntityTool(ctx: ToolContext): void {
       name: z.string().min(1).max(200).describe('Entity name or alias'),
       scope: z.string().optional().describe('Memory scope: "global" (default) or scope:<slug> / project:<slug>; restricts to entities whose source note belongs to the scope'),
     },
-    outputSchema: z.looseObject({
-      ok: z.boolean(),
-      entity: z.union([OUT_HIT, z.null()]).optional(),
-      reason: z.string().optional(),
-      searched: z.string().optional(),
-      entitiesIndexed: z.number().optional(),
-      note: z.string().optional(),
-      scope: z.string().optional(),
-    }),
   }, async (args) => {
     try {
       const body = engineLookupEntity(db, config, args.name, args.scope);

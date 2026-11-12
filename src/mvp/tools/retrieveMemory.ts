@@ -1,6 +1,5 @@
 import * as z from 'zod';
 import { FIELD_LIMITS, listLifecycleSubjects, factsFor, LIFECYCLE_NOTE_PATH } from '../../memory/lifecycle.js';
-import { OUT_HIT } from '../outputSchemas.js';
 import { normalizeScope } from '../scope.js';
 import { markToolRefusal } from '../../toolRefusal.js';
 import { escapeInvisibleControls } from '../sanitize.js';
@@ -28,13 +27,6 @@ export function registerRetrieveMemoryTool(ctx: ToolContext): void {
       as_of: nullAsOmitted(z.string().optional()).describe('ISO instant: values valid at that time (with include_history: full history)'),
       scope: nullAsOmitted(z.string().optional()).describe('Memory scope: "global" (default) or scope:<slug> / project:<slug>'),
     },
-    outputSchema: z.looseObject({
-      subject: z.string(),
-      facts: z.array(OUT_HIT),
-      conflicts: z.array(OUT_HIT).optional(),
-      known: z.boolean().optional(),
-      closestSubjects: z.array(z.string()).optional(),
-    }),
   }, async (args, extra) => {
     try {
       // The one scope everything below is judged in (none = every scope). Facts, existence, suggestions and

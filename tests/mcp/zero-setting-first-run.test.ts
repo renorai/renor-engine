@@ -113,7 +113,7 @@ describe('the first run with nothing set', () => {
     expect(run.status, run.stderr).toBe(0);
     expect(run.stdout).toContain(PASS);
     for (const query of ["What is Ada's favorite color?", 'Ada favorite color cerulean', 'cerulean']) {
-      expect(run.stdout).toContain(`search: ${JSON.stringify(query)} -> cerulean`);
+      expect(run.stdout).toContain(`get_context: ${JSON.stringify(query)} -> cerulean`);
     }
     // It used a notes folder of its own and removed it.
     const folder = /^notes folder: (\S+) \(temporary/m.exec(run.stdout);
@@ -161,9 +161,9 @@ describe('the first run with nothing set', () => {
     const client = new Client({ name: 'zero-setting-first-run-test', version: '1.0.0' });
     try {
       await client.connect(transport, PATIENTLY);
-      const saved = await client.callTool({ name: 'remember_fact', arguments: { subject: 'Ada', predicate: 'favorite_color', object: 'cerulean' } }, undefined, PATIENTLY);
+      const saved = await client.callTool({ name: 'remember', arguments: { statement: 'Ada favorite_color cerulean', subject: 'Ada', predicate: 'favorite_color', object: 'cerulean' } }, undefined, PATIENTLY);
       expect(saved.isError, JSON.stringify(saved)).not.toBe(true);
-      const found = await client.callTool({ name: 'search', arguments: { query: 'What is Ada favorite color' } }, undefined, PATIENTLY);
+      const found = await client.callTool({ name: 'get_context', arguments: { query: 'What is Ada favorite color' } }, undefined, PATIENTLY);
       expect(JSON.stringify(found)).toContain('cerulean');
     } finally {
       await client.close();

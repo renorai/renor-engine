@@ -168,6 +168,8 @@ Then connect an agent to `<url>/mcp` as in [Connect Claude Code over HTTP](#conn
 
 The command-line server publishes eight tools: `search`, `evidence`, `keyword`, `entity`, `remember_fact`, `facts`, `status` and `note`. Naming its connection adds the five hive tools (below). The HTTP server publishes a different set of twenty-four tools, including `remember`, `get_context` and the five hive tools `whats_new`, `ask_agent`, `list_requests`, `answer_request` and `close_request`. [skill/SKILL.md](../skill/SKILL.md) describes the HTTP tools for an agent.
 
+`renor-engine connect <app>` prints the entry with `"env": {"RENOR_MCP_TOOLS": "coding"}`, and the command-line server then lists five tools: `search`, `keyword`, `facts`, `note` and `status` (the hive and handoff tools are not listed). Run `renor-engine connect <app> --tools full` for the entry without it (every tool); an unset or `all` value lists every tool.
+
 ## Owner names
 
 Renor treats no name as the owner by default. To have your name and first-person words ("I", "me", "my") resolve to your own facts, export `RENOR_OWNER_NAMES`: a comma-separated list whose first name is canonical and the others aliases of it (for example `RENOR_OWNER_NAMES="Ada Lovelace,Ada,Ada Byron"`). Unset, Renor only folds case and Unicode form.

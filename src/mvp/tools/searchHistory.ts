@@ -1,5 +1,4 @@
 import * as z from 'zod';
-import { OUT_HIT } from '../outputSchemas.js';
 import { searchHistory, HistoryUnavailableError, HISTORY_DISCLAIMER } from '../history.js';
 import { markToolRefusal } from '../../toolRefusal.js';
 import { refusalResult, toolError } from './shared.js';
@@ -16,21 +15,6 @@ export function registerSearchHistoryTool(ctx: ToolContext): void {
       query: z.string().min(1).max(200).describe('Lexical search terms, 1..200 characters'),
       limit: z.number().int().min(1).max(20).optional().describe('Max results (default 5, max 20)'),
     },
-    outputSchema: z.looseObject({
-      ok: z.boolean(),
-      configured: z.boolean(),
-      results: z.array(OUT_HIT),
-      query: z.string().optional(),
-      total_matches: z.number().optional(),
-      returned: z.number().optional(),
-      skipped_ineligible: z.number().optional(),
-      skipped_too_large: z.number().optional(),
-      skipped_over_limit: z.number().optional(),
-      note: z.string().optional(),
-      error: z.string().optional(),
-      detail: z.string().optional(),
-      disclaimer: z.string(),
-    }),
   }, async (args) => {
     try {
       const response = searchHistory(config.historyDir, args.query, args.limit);

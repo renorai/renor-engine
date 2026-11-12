@@ -108,7 +108,8 @@ describe('Stop', () => {
     expect(run('stop', { session_id: 'p4', cwd: repo, transcript_path: wrote })).toBeNull();
   });
 
-  it('refuses an attacker-precreated state directory and never writes through a symlinked state file', () => {
+  it('refuses an attacker-precreated state directory and never writes through a symlinked state file', ({ skip }) => {
+    if (typeof process.getuid !== 'function') skip('POSIX uid and mode bits do not exist on native Windows');
     const victim = path.join(root, 'victim.txt');
     fs.writeFileSync(victim, 'keep me');
     const open = path.join(root, 'open-dir');

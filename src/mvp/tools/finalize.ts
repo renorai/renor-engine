@@ -4,14 +4,14 @@ import { checkProfileTools, LINE_TOOLS, renderLines } from '../contextProfile.js
 import { mapInvalidParams } from '../../mcp/requestErrors.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { renderToon } from '../toonResponse.js';
-import { OUTPUT_SCHEMA_BOUND_NOTE, refusalResult, CallExtra, isDashboardCall, isDirectoryCall, OWNER_ONLY_TOOLS, HIVE_TOOLS, registeredToolEntry } from './shared.js';
+import { refusalResult, CallExtra, isDashboardCall, isDirectoryCall, OWNER_ONLY_TOOLS, HIVE_TOOLS, registeredToolEntry } from './shared.js';
 
 /**
  * Once every tool is registered: hides what a directory client or a tool profile does not get, and installs the tools/list and
  * tools/call wrappers (the owner-only tools, directory descriptions, the profile's descriptions and reply shape).
  */
 export function finishToolSurface(ctx: ToolContext): void {
-  const { config, directory, pageSchemas, profile, server } = ctx;
+  const { config, directory, profile, server } = ctx;
   // Nor the tools directorySurface.ts keeps from a directory client: disabled the same way, once every one of them is registered.
   if (directory) for (const name of DIRECTORY_HIDDEN_TOOLS) registeredToolEntry(server, name).enabled = false;
 
@@ -48,8 +48,7 @@ export function finishToolSurface(ctx: ToolContext): void {
       ...answer,
       tools: forDirectory
         ? tools.map((tool) => {
-          const own = typeof tool.name === 'string' ? DIRECTORY_DESCRIPTIONS[tool.name] : undefined;
-          const description = own && pageSchemas && tool.name === 'get_context' ? own + OUTPUT_SCHEMA_BOUND_NOTE : own;
+          const description = typeof tool.name === 'string' ? DIRECTORY_DESCRIPTIONS[tool.name] : undefined;
           return description ? { ...tool, description } : tool;
         })
         : profile.descriptions

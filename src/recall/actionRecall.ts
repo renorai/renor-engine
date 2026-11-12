@@ -108,7 +108,7 @@ const ON = /^(1|on|true|yes)$/i;
 
 export function loadActionConfig(env: NodeJS.ProcessEnv = process.env, cwd?: string): ActionRecallConfig {
   const base = loadRecallConfig(env, cwd);
-  // The 0.68 default floor was measured for per-prompt recall only: here a floor applies only when the variable names one
+  // There is no default floor (the hosted bar is uncalibrated): here a floor applies only when the variable names one
   // (parsed as per-prompt recall parses it).
   const floor = parseFloor(env[FLOOR_ENV]).floor;
   if (floor === undefined) delete base.minSimilarity;

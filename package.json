@@ -1,6 +1,6 @@
 {
   "name": "renor-engine",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "description": "Local-first semantic memory — indexing, multi-signal retrieval, MCP",
   "main": "dist/cli.js",
   "files": [
@@ -22,6 +22,7 @@
     "pack:npm": "npm run build && node scripts/npm/pack.mjs",
     "test:mvp-artifact": "node scripts/ci/verify-mvp-artifact.mjs",
     "eval:typecheck": "tsc -p tsconfig.public-eval.json",
+    "directory-review": "tsx scripts/eval/directory-review.ts",
     "eval:retrieval": "tsx -r ./scripts/lib/no-sharing-preload.cjs scripts/eval/score-retrieval.ts",
     "eval:renor": "tsx -r ./scripts/lib/no-sharing-preload.cjs scripts/eval/run-renorbench.ts",
     "eval:renor:hash": "tsx -r ./scripts/lib/no-sharing-preload.cjs scripts/eval/run-renorbench.ts --provider hash",

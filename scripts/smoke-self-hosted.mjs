@@ -52,23 +52,23 @@ function body(result) {
 try {
   await client.connect(transport, patiently);
   const names = (await client.listTools(undefined, patiently)).tools.map(tool => tool.name);
-  for (const required of ['remember_fact', 'search']) {
+  for (const required of ['remember', 'get_context']) {
     if (!names.includes(required)) throw new Error(`tools/list did not include ${required}`);
   }
   console.log(`tools/list: ${names.join(', ')}`);
 
   body(await client.callTool({
-    name: 'remember_fact',
-    arguments: { subject: 'Ada', predicate: 'favorite_color', object: 'cerulean' },
+    name: 'remember',
+    arguments: { statement: 'Ada favorite_color cerulean', subject: 'Ada', predicate: 'favorite_color', object: 'cerulean' },
   }, undefined, patiently));
-  console.log('remember_fact: saved Ada favorite_color cerulean');
+  console.log('remember: saved Ada favorite_color cerulean');
 
   for (const query of ["What is Ada's favorite color?", 'Ada favorite color cerulean', 'cerulean']) {
-    const result = body(await client.callTool({ name: 'search', arguments: { query } }, undefined, patiently));
+    const result = body(await client.callTool({ name: 'get_context', arguments: { query } }, undefined, patiently));
     if (!JSON.stringify(result).toLowerCase().includes('cerulean')) {
-      throw new Error(`search did not return cerulean for ${JSON.stringify(query)}: ${JSON.stringify(result)}`);
+      throw new Error(`get_context did not return cerulean for ${JSON.stringify(query)}: ${JSON.stringify(result)}`);
     }
-    console.log(`search: ${JSON.stringify(query)} -> cerulean`);
+    console.log(`get_context: ${JSON.stringify(query)} -> cerulean`);
   }
   console.log('PASS: self-hosted stdio MCP can remember and retrieve a current fact.');
 } catch (error) {

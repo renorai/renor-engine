@@ -185,14 +185,6 @@ describe('retrieveContext says which key its hits are in order of', () => {
     const { retrieve } = await fixture();
     expect((await retrieve('what was the standup time before')).rankedBy).toBe('session_date');
   });
-
-  it('an explicit past date, on the as-of lane, is ordered by score', async () => {
-    process.env.RENOR_TEMPORAL_ASOF = '1';
-    const { retrieve } = await fixture();
-    const { hits, rankedBy } = await retrieve('what was the standup in March 2025', { nowMs: Date.parse('2026-10-01T00:00:00Z') });
-    expect(rankedBy).toBe('score');
-    expect(isSortedDesc(hits.map(h => h.score))).toBe(true);
-  });
 });
 
 describe('orderHits', () => {

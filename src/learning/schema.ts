@@ -53,6 +53,16 @@ export const LEARNING_TABLES = ['retrievals', 'candidates', 'memory_ops', 'feedb
 
 const list = (values: readonly string[]): string => values.map(value => `'${value}'`).join(', ');
 
+/**
+ * Where a call came from, already reduced to closed lists (src/sharing/context.ts) before it is written: the AI application's family
+ * (never its declared name), the engine's released version, and the tool set the connection had. Added to version 2 in place
+ * (2026-11-08): the columns are nullable, a log made before them gets them on open (store.ts addCallContext) and its older rows read null.
+ */
+export const CALL_CONTEXT_COLUMNS = ['app', 'release', 'profile'] as const;
+const CALL_CONTEXT_DDL = `app TEXT,                                  -- the AI application's family (sharing/context.ts appFamily), never its name
+  release TEXT,                              -- the engine's released version as major.minor, NULL otherwise
+  profile TEXT                               -- the connection's tool set: full, coding, lean, custom`;
+
 export const LEARNING_DDL = `
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
@@ -79,7 +89,8 @@ CREATE TABLE IF NOT EXISTS retrievals (
   reply_tokens INTEGER,                      -- o200k tokens of the whole reply, as the max_tokens budget counts them
   relevant INTEGER CHECK (relevant IS NULL OR relevant IN (0, 1)),   -- the engine's own verdict, when it judged
   truncated INTEGER CHECK (truncated IS NULL OR truncated IN (0, 1)),
-  lean_items INTEGER NOT NULL DEFAULT 0 CHECK (lean_items IN (0, 1))   -- RENOR_CONTEXT_LEAN_ITEMS was on: no note paths in the reply
+  lean_items INTEGER NOT NULL DEFAULT 0 CHECK (lean_items IN (0, 1)),  -- RENOR_CONTEXT_LEAN_ITEMS was on: no note paths in the reply
+  ${CALL_CONTEXT_DDL}
 );
 
 CREATE TABLE IF NOT EXISTS candidates (
@@ -113,7 +124,8 @@ CREATE TABLE IF NOT EXISTS memory_ops (
   memory_key TEXT,
   subject_key TEXT,
   replaced_key TEXT,                         -- supersede only: the memory identity whose value the new save replaces
-  ms REAL NOT NULL
+  ms REAL NOT NULL,
+  ${CALL_CONTEXT_DDL}
 );
 
 CREATE TABLE IF NOT EXISTS feedback (

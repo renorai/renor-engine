@@ -2,7 +2,7 @@
  * Everything the tools share while one MCP server is being built: the server itself, its tracing and decoration wrappers, and the
  * values every tool reads (config, database, engine, flags read once). The code is the first part of the former buildMcpServer.
  */
-import { toolOutputSchemasEnabled, pageOutputSchemasEnabled, toolCarriesStructured } from '../outputSchemas.js';
+import { toolOutputSchemasEnabled, toolCarriesStructured } from '../outputSchemas.js';
 import { ConnectionAnnouncer, type ConnectionStatus } from '../connectionStatus.js';
 import { resolveEngineEvidence, type Engine, type EngineDigests } from '../engine.js';
 import { answerCheckerFor } from '../answerCheck.js';
@@ -40,7 +40,8 @@ import type { MvpConfig } from '../config.js';
 import { IdleMonitor } from '../idle.js';
 import { ReadUsefulness } from '../readUsefulness.js';
 import type { Dreamer } from '../../memory/dreamer/dreamer.js';
-import { log, withOutputSchemaIf, jsonResultOf, CallExtra, sourceOf, agentOf, DIRECTORY_INSTRUCTIONS, withAnnotationTitle } from './shared.js';
+import { log, withOutputSchemaIf, jsonResultOf, CallExtra, sourceOf, agentOf, headerText, DIRECTORY_INSTRUCTIONS, withAnnotationTitle } from './shared.js';
+import { appFamily, toolProfileOf } from '../../sharing/context.js';
 
 /**
  * The anonymous usage counters of this workspace (src/sharing/usage.ts), or null when sharing is not configured. One recorder per sharing
@@ -63,7 +64,6 @@ export function workspaceUsage(db: Database.Database, config: MvpConfig, engine:
 
 export function createToolContext(db: Database.Database, config: MvpConfig, engine: Engine, idle: Pick<IdleMonitor, 'track'> | null, digests: EngineDigests | null, usefulness: ReadUsefulness, connection: ConnectionStatus | null, announceFirst: boolean, telemetrySession: string | null = null, dashboard = false, directory = false, dreamer: Dreamer | null = null, toolProfile: 'coding' | null = null) {
   const withSchemas = toolOutputSchemasEnabled();
-  const pageSchemas = withSchemas && pageOutputSchemasEnabled();
   const jsonResult = (body: unknown) => jsonResultOf(body, withSchemas);
   // Which Renor this is, on the first reply of a session and on every error (connectionStatus.ts); nothing in a workspace
   // that is not hosted. A server that serves no session of its own (the stateless one, or one built for a session this
@@ -134,6 +134,13 @@ export function createToolContext(db: Database.Database, config: MvpConfig, engi
     session: telemetrySession,
     model: () => engine.modelKey ?? null,
     agent: extra => agentOf(extra as CallExtra | undefined, config),
+    // The application's family only (a closed list, sharing/context.ts): from the client's declared name, its User-Agent and the connection's name.
+    app: extra => appFamily([
+      server.server.getClientVersion()?.name,
+      headerText((extra as CallExtra | undefined)?.requestInfo?.headers, 'user-agent'),
+      agentOf(extra as CallExtra | undefined, config),
+    ]),
+    profile: directory ? 'full' : toolProfileOf(toolProfile, process.env),
     // The owner's choice to share, read at each call: recording turns on when they choose a level and off when they choose off.
     sharing: config.sharingDir === undefined ? undefined : sharingHook(config.sharingDir),
   });
@@ -229,7 +236,7 @@ export function createToolContext(db: Database.Database, config: MvpConfig, engi
   const registerTool = server.registerTool.bind(server) as typeof server.registerTool;
   // The title also goes into annotations.title: the Claude directory reads a tool's display name from there and flags every tool
   // without one.
-  // A page-returning tool (PAGE_TOOLS) lists no schema and carries no structuredContent unless RENOR_PAGE_OUTPUT_SCHEMAS is on.
+  // A page-returning tool (PAGE_TOOLS) lists no schema and carries no structuredContent.
   const tracedRegisterTool: typeof server.registerTool = (name, config, cb) => {
     const carries = toolCarriesStructured(name);
     const traced = tracedTool(name, cb) as unknown as (...a: unknown[]) => Promise<Record<string, unknown>>;
@@ -303,7 +310,6 @@ export function createToolContext(db: Database.Database, config: MvpConfig, engi
     dreamer,
     toolProfile,
     withSchemas,
-    pageSchemas,
     jsonResult,
     evidence,
     answerChecker,

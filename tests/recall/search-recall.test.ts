@@ -179,7 +179,7 @@ describe('search recall: the lookup', () => {
     expect([e.context, e.reason]).toEqual([null, 'error']);
   });
 
-  it('applies a floor only when the environment names one (the 0.68 default was measured for prompts)', async () => {
+  it('applies a floor only when the environment names one (no default floor is shipped)', async () => {
     const dir = tmp();
     expect(loadSearchConfig(ENV(dir)).minSimilarity).toBeUndefined();
     expect(loadSearchConfig(ENV(dir, { RENOR_AUTO_RECALL_MIN_SIMILARITY: '0.7' })).minSimilarity).toBe(0.7);

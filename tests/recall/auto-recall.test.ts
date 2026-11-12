@@ -122,10 +122,10 @@ describe('auto-recall: the floor default and its parsing (review of #898)', () =
   const SELF_HOSTED = { ...ON, RENOR_AUTO_RECALL_URL: 'http://127.0.0.1:3471/mcp' };
   const KEYWORD_ONLY = JSON.stringify({ ok: true, retrieval: 'keyword', memories: [{ text: DECISION, reason: 'fts', score: 3.1 }] });
 
-  it('applies the 0.68 default only to the hosted endpoint, whose model it was measured on', () => {
+  it('keeps the hosted placeholder off until the hook-specific laptop calibration exists', () => {
     expect(loadRecallConfig(ON).url).toBe(DEFAULT_URL);
-    expect(loadRecallConfig(ON).minSimilarity).toBe(0.68);
-    expect(loadRecallConfig({ ...ON, RENOR_AUTO_RECALL_URL: DEFAULT_URL }).minSimilarity).toBe(0.68);
+    expect(loadRecallConfig(ON).minSimilarity).toBeUndefined();
+    expect(loadRecallConfig({ ...ON, RENOR_AUTO_RECALL_URL: DEFAULT_URL }).minSimilarity).toBeUndefined();
     expect(loadRecallConfig(SELF_HOSTED).minSimilarity).toBeUndefined();
     expect(loadRecallConfig({ ...SELF_HOSTED, RENOR_AUTO_RECALL_MIN_SIMILARITY: '0.5' }).minSimilarity).toBe(0.5);
   });
@@ -145,17 +145,15 @@ describe('auto-recall: the floor default and its parsing (review of #898)', () =
     expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain(DECISION);
   });
 
-  it('end to end under the default env: a keyword-only reply is dropped, and stderr says why once', async () => {
+  it('end to end under the default env: the disabled placeholder does not claim a keyword-only reply is irrelevant', async () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'renor-ar-'));
     const warn = vi.fn();
-    expect(await runHook(hookInput(PROMPT), ON, async () => KEYWORD_ONLY, { stateDir, warn })).toBe('');
-    expect(await runHook(hookInput(PROMPT), ON, async () => KEYWORD_ONLY, { stateDir, warn })).toBe('');
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toMatch(/no relevance similarity.*RENOR_AUTO_RECALL_MIN_SIMILARITY=none/);
+    expect(await runHook(hookInput(PROMPT), ON, async () => KEYWORD_ONLY, { stateDir, warn })).toContain(DECISION);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it.each([
-    ['', 0.68], ['  ', 0.68], ['0', 0], ['0.5', 0.5], ['-1', -1], ['1', 1],
+    ['', undefined], ['  ', undefined], ['0', 0], ['0.5', 0.5], ['-1', -1], ['1', 1],
     ['none', undefined], ['off', undefined], ['OFF', undefined], ['false', undefined], ['no', undefined],
     ['1.5', undefined], ['68', undefined], ['-2', undefined], ['junk', undefined],
   ])('RENOR_AUTO_RECALL_MIN_SIMILARITY=%j gives floor %s (hosted endpoint)', (raw, floor) => {
@@ -210,9 +208,9 @@ describe('auto-recall: budget and relevance', () => {
     expect(presentRecall(reply({ memories: [{ text: 'x', matched: false }], relevance: { relevant: true, similarity: 0.9 } }), config()).reason).toBe('empty');
   });
 
-  it('defaults the floor to 0.68 when on, and the variable overrides it or turns it off', () => {
-    expect(DEFAULT_MIN_SIMILARITY).toBe(0.68);
-    expect(loadRecallConfig(ON).minSimilarity).toBe(0.68);
+  it('leaves the placeholder floor off, while the variable can override it or explicitly keep it off', () => {
+    expect(DEFAULT_MIN_SIMILARITY).toBeUndefined();
+    expect(loadRecallConfig(ON).minSimilarity).toBeUndefined();
     expect(loadRecallConfig({ ...ON, RENOR_AUTO_RECALL_MIN_SIMILARITY: '0.5' }).minSimilarity).toBe(0.5);
     expect(loadRecallConfig({ ...ON, RENOR_AUTO_RECALL_MIN_SIMILARITY: 'none' }).minSimilarity).toBeUndefined();
     // An unreadable value means no floor (with a line on stderr), as in pre-action recall.
@@ -220,8 +218,7 @@ describe('auto-recall: budget and relevance', () => {
     // Still off by default.
     expect(loadRecallConfig({}).enabled).toBe(false);
     const memories = [{ text: DECISION }];
-    expect(presentRecall(reply({ memories, relevance: { relevant: true, similarity: 0.67 } }), loadRecallConfig(ON)).reason).toBe('below-min-similarity');
-    expect(presentRecall(reply({ memories, relevance: { relevant: true, similarity: 0.68 } }), loadRecallConfig(ON)).reason).toBe('injected');
+    expect(presentRecall(reply({ memories, relevance: { relevant: true, similarity: 0.67 } }), loadRecallConfig(ON)).reason).toBe('injected');
   });
 
   it('with a floor set, a reply that carries no similarity is not injected', () => {

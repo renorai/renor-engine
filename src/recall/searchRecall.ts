@@ -40,8 +40,7 @@ export interface SearchRecallConfig extends RecallConfig {
 
 /**
  * The endpoint, token, scope and limits are automatic recall's (RENOR_AUTO_RECALL_URL, _TOKEN, _SCOPE, _TIMEOUT_MS), so one
- * set of credentials serves both; the switch and the budget are this hook's own. The 0.68 floor was measured for prompts
- * only: a floor applies here only when RENOR_AUTO_RECALL_MIN_SIMILARITY names one.
+ * set of credentials serves both; the switch and the budget are this hook's own. No default floor exists (the hosted bar is uncalibrated); a floor applies here only when RENOR_AUTO_RECALL_MIN_SIMILARITY names one.
  */
 export function loadSearchConfig(env: NodeJS.ProcessEnv = process.env, cwd?: string): SearchRecallConfig {
   const base = loadRecallConfig(env, cwd);

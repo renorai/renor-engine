@@ -411,14 +411,32 @@ function expectStartupFails(authStatePath: string, memoryDir: string) {
 
 describe('CLIENT-PERSISTENCE: store integrity fails closed (never silently reset)', () => {
 
-  it('refuses startup when the platform has no POSIX user id', () => {
-    // Native Windows has no process.getuid at all, so there the real platform is the case under test; elsewhere it is mocked.
-    if (typeof process.getuid === 'function') vi.spyOn(process, 'getuid').mockImplementation(() => undefined as never);
+  it('refuses startup when a non-Windows platform has no POSIX user id', ({ skip }) => {
+    if (process.platform === 'win32') skip('native Windows is covered by the next test');
+    vi.spyOn(process, 'getuid').mockImplementation(() => undefined as never);
     const authRoot = tmpdir0700('mvp-cp-auth-');
     const authStatePath = path.join(authRoot, 'clients.json');
 
     const error = expectStartupFails(authStatePath, tmpdir0700('mvp-cp-memory-'));
     expect(error.message).toContain('process uid is unavailable on this platform');
+  });
+
+  it('native Windows (no getuid) skips the owner checks and starts', () => {
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const realGetuid = process.getuid;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    // simulate Windows, where the function does not exist
+    (process as { getuid?: unknown }).getuid = undefined;
+    try {
+      const authRoot = tmpdir0700('mvp-cp-auth-');
+      const registry = new ClientRegistry(path.join(authRoot, 'clients.json'));
+      expect(registry).toBeInstanceOf(ClientRegistry);
+      // a missing store directory is still refused
+      expect(() => new ClientRegistry(path.join(authRoot, 'nope', 'clients.json'))).toThrow(ClientRegistryError);
+    } finally {
+      Object.defineProperty(process, 'platform', realPlatform);
+      (process as { getuid?: unknown }).getuid = realGetuid;
+    }
   });
 
   it.skipIf(HTTP_SERVER_UNSUPPORTED)('corrupt JSON store fails closed at startup', () => {

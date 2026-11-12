@@ -101,11 +101,11 @@ Self-hosted, the local tools are `search`, `remember_fact` and `note`; agents ma
 
 | Benchmark | Renor | Setup |
 | --- | --- | --- |
-| LongMemEval-S | **98.4%** (492/500) | Deep search, off by default |
-| LongMemEval-S | **94.4%** (472/500) | Default settings |
-| LoCoMo (categories 1 to 4) | **96.7%** (1,489/1,540) | Deep search |
-| BEAM 128K / 1M / 10M | **76.2 / 74.7 / 60.2** | Deep search, score out of 100 |
-Claude Opus 5.5 answers LongMemEval, LoCoMo and BEAM. One run each, Oct 2026. Deep search is top-K 50 with a 4,000-token budget (`RENOR_TOPK_SCALES_BUDGET=1`). Judges and methods for every run: [renor.cloud/research](https://renor.cloud/research).
+| LongMemEval-S | **98.4%** (492/500) | Default (deep search) |
+| LongMemEval-S | **94.4%** (472/500) | Lean mode (`RENOR_DEEP_SEARCH=0`) |
+| LoCoMo (categories 1 to 4) | **96.7%** (1,489/1,540) | Default (deep search) |
+| BEAM 128K / 1M / 10M | **76.2 / 74.7 / 60.2** | Default (deep search), score out of 100 |
+Claude Opus 5.5 answers LongMemEval, LoCoMo and BEAM. One run each, Oct 2026. Deep search, the default, reads 50 matches with a 4,000-token budget; `get_context` replies in up to 8,000 tokens. Lean mode (`RENOR_DEEP_SEARCH=0`) reads 20 matches with 1,300 tokens and an 800-token `get_context`. These runs used Vertex embeddings, as hosted Renor does; without an embedding model, self-hosted search is by keyword only, which they do not measure. Judges and methods for every run: [renor.cloud/research](https://renor.cloud/research).
 
 ## Build from source
 

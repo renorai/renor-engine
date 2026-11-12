@@ -1,6 +1,5 @@
 import { DEFAULT_MAP_LIMIT, buildMemoryMap, recallFileTreeOn, memoryPathTree, findMemories } from '../../memorymap/memoryMap.js';
 import * as z from 'zod';
-import { OUT_HIT } from '../outputSchemas.js';
 import { refusal } from '../../toolRefusal.js';
 import { factQueryTerms } from '../agentMemory.js';
 import { normalizeScope } from '../scope.js';
@@ -21,22 +20,6 @@ export function registerMemoryMapTool(ctx: ToolContext): void {
       scope: z.string().optional().describe('With query only: look in this memory scope ("global", or scope:<slug> / project:<slug>, which name the same folder for notes).'),
       limit: z.number().int().min(1).max(MAX_LOOKUP_LIMIT).optional().describe(`At most this many of each list the map shows (memories, things, facts, links, events, retired). Without a query, default ${DEFAULT_MAP_LIMIT}. With a query it bounds the memories and retired memories found, default ${DEFAULT_LOOKUP_LIMIT}.`),
     },
-    outputSchema: z.looseObject({
-      ok: z.boolean(),
-      generatedAt: z.string().optional(),
-      limit: z.number().optional(),
-      query: z.string().optional(),
-      scope: z.string().optional(),
-      memories: z.array(OUT_HIT).optional(),
-      things: z.array(OUT_HIT).optional(),
-      topics: z.array(OUT_HIT).optional(),
-      facts: z.array(OUT_HIT).optional(),
-      links: z.array(OUT_HIT).optional(),
-      events: z.array(OUT_HIT).optional(),
-      retired: z.array(OUT_HIT).optional(),
-      total: z.record(z.string(), z.number()).optional(),
-      truncated: z.record(z.string(), z.boolean()).optional(),
-    }),
   }, async (args) => {
     try {
       if (args.query === undefined) {

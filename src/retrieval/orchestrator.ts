@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import { closedLedgerEvents, ledgerEventIds, resolveLedgerHits } from './ledgerLiveness';
 import { dropLedgerPreamble, type IsLedgerNote } from './ledgerPresentation';
 import { createLedgerEventClock } from './ledgerEventTime';
@@ -17,8 +16,7 @@ import { keywordOrAll, keywordOrMatch, keywordSearch } from './keyword';
 import { quoteFtsQuery, shownPage } from './queryHelpers';
 import { keywordLedgerHits } from './ledgerPresentation';
 import {
-  ENTITY_LANE_BOOST, NEAR_DUP_POOL, contentTerms, factBoostMatches, applyNearDupCap, entityLaneChunkIds, entityLaneEnabled, entityLaneTerms, laneTermShare,
-  queryRewriteEnabled, rerankTopN, resolveNearDupCap, resolveRerankTopN, rewriteConversationalQuery,
+  NEAR_DUP_POOL, contentTerms, factBoostMatches, applyNearDupCap, queryRewriteEnabled, rerankTopN, resolveNearDupCap, resolveRerankTopN, rewriteConversationalQuery,
 } from './plainWording';
 import { addRankingTerm, attachRankingTerms, currentRankingTrace, newRankingTerms, rankingTermIndex } from './rankingTrace';
 
@@ -61,17 +59,6 @@ function newestFirstEnabled(): boolean {
 }
 
 /**
- * RENOR_SEARCH_BEST_FIRST (default off; `1` / `true` / `yes` / `on` turns it on): search_memory lays its window out best
- * match first (`rankedBy: "score"`) instead of newest session first. It reaches only the reads that ask for it
- * (`RetrieveOptions.bestFirst`, which only the search_memory tool sets): get_context, the CLI and RENOR_NEWEST_FIRST are
- * untouched, and so is which chunks are selected. Every hit keeps its session_date. Measured on the agent-workflow eval.
- */
-export function searchBestFirstEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env.RENOR_SEARCH_BEST_FIRST ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-}
-
-/**
  * Temporal ranking is product default (RenorBench prefer_current/prefer_historical
  * fix, 2026-09-17). Opt out with RENOR_TEMPORAL_RANKING=0/false/off — a kill
  * switch that reverts to pre-temporal ordering without a redeploy.
@@ -81,92 +68,6 @@ function temporalRankingEnabled(): boolean {
   if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
   if (v === '') return true;
   return envFlagOn('RENOR_TEMPORAL_RANKING');
-}
-
-/**
- * Explicit-date as-of lane (RENOR_TEMPORAL_ASOF, default OFF).
- * Opt in with RENOR_TEMPORAL_ASOF=1/true/yes/on — a kill switch that restores
- * pre-lane behavior without a redeploy.
- */
-function asofEnabled(): boolean {
-  return envFlagOn('RENOR_TEMPORAL_ASOF');
-}
-
-const ASOF_MONTHS: Record<string, number> = {
-  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
-  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
-};
-
-export interface QueryDateRef {
-  year: number;
-  /** 1-12 when the query names a month or season; undefined for bare years. */
-  month?: number;
-  /** True for origin markers ("original", "v1") that carry no calendar date. */
-  originMarker: boolean;
-}
-
-/**
- * Extract an explicit past-date reference from a natural-language query.
- * General (gold-blind): matches any month+year, season+year, or bare year —
- * never fixture-specific dates. Returns undefined when the query carries no
- * calendar reference or origin marker.
- */
-export function parseQueryDateRef(query: string): QueryDateRef | undefined {
-  const q = query.toLowerCase();
-  const monthNames = Object.keys(ASOF_MONTHS).join('|');
-  const my = q.match(new RegExp(`\\b(${monthNames})\\s+(\\d{4})\\b`));
-  if (my) return { year: Number(my[2]), month: ASOF_MONTHS[my[1]], originMarker: false };
-  const season = q.match(/\b(early|mid|late)\s+(\d{4})\b/);
-  if (season) {
-    const month = season[1] === 'early' ? 3 : season[1] === 'mid' ? 6 : 9;
-    return { year: Number(season[2]), month, originMarker: false };
-  }
-  const part = q.match(/\b(end|start|beginning|middle)\s+of\s+(\d{4})\b/);
-  if (part) {
-    const month = part[1] === 'end' ? 12 : part[1] === 'middle' ? 6 : 1;
-    return { year: Number(part[2]), month, originMarker: false };
-  }
-  const iso = q.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
-  if (iso) return { year: Number(iso[1]), month: Number(iso[2]), originMarker: false };
-  const bareYear = q.match(/\b((?:19|20)\d{2})\b/);
-  if (bareYear) return { year: Number(bareYear[1]), originMarker: false };
-  if (/\boriginal(ly)?\b|\bv1\b|first version/.test(q)) return { year: 0, originMarker: true };
-  return undefined;
-}
-
-/** Resolve a date ref to an end-of-period timestamp for past/future tests. */
-export function queryDateRefMs(ref: QueryDateRef): number {
-  if (ref.originMarker) return Number.NEGATIVE_INFINITY; // always "the past"
-  const month = ref.month ?? 12;
-  // End of the referenced month (Date.UTC month is 0-based; day 0 = last of prev).
-  return Date.UTC(ref.year, month, 0, 23, 59, 59);
-}
-
-export function hasNowOverride(query: string): boolean {
-  return /\b(now|currently|current)\b/i.test(query);
-}
-
-/**
- * Past-like via the as-of lane: an explicit past calendar reference (or an
- * origin marker) with no present-tense override. Independent of the temporal
- * flag — the lane has its own kill switch.
- */
-export function asofPastLike(query: string, nowMs: number): boolean {
-  if (!asofEnabled()) return false;
-  const ref = parseQueryDateRef(query);
-  if (!ref) return false;
-  if (hasNowOverride(query)) return false;
-  return queryDateRefMs(ref) < nowMs - 86_400_000;
-}
-
-/** Explicit past-date refs (no origin markers) for the date-overlap boost. */
-export function asofDatedRef(query: string, nowMs: number): QueryDateRef | undefined {
-  if (!asofEnabled()) return undefined;
-  const ref = parseQueryDateRef(query);
-  if (!ref || ref.originMarker) return undefined;
-  if (hasNowOverride(query)) return undefined;
-  if (!(queryDateRefMs(ref) < nowMs - 86_400_000)) return undefined;
-  return ref;
 }
 
 /** Explicit past-intent query: "what was it before / previously / used to be". */
@@ -623,6 +524,48 @@ export interface RankedExpansion {
   documentStatementTokens: number;
 }
 
+/**
+ * Deep search, Renor's one default read: the configuration behind the published LongMemEval-S 98.4% (LEDGER section BM,
+ * docs/evals/results/top-score-20261026/): a search of 50 matches with the ranked expansion grown to 4,000 tokens
+ * (orchestrator.ts rankedBudgetFor). search_memory and `renor search` have read 50 matches since 2026-10-27; get_context
+ * reads them too since 2026-11-09, with a reply budget large enough to hold that page (its p95 was 6,379 tokens).
+ *
+ * RENOR_DEEP_SEARCH (default on): `0`, `false`, `no` or `off` is lean mode, the reads that were the default before:
+ * get_context searches 8 matches into an 800-token reply (ceiling 4,000), search_memory and `renor search` 20 matches with
+ * the 1,300-token expansion. RENOR_SEARCH_TOP_K and RENOR_TOPK_SCALES_BUDGET, when set, still decide for search.
+ * A caller's own max_tokens, top_k or --top-k is never overridden. The automatic recall hook names its own budget
+ * (at most 4,000 tokens), so it reads the lean page either way.
+ */
+export function deepSearchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.RENOR_DEEP_SEARCH ?? '').trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
+}
+
+/** Semantic matches get_context asks for on a deep page, and on a lean one (the default before 2026-11-09). */
+export const DEEP_CONTEXT_TOP_K = 50;
+export const LEAN_CONTEXT_TOP_K = 8;
+
+/** get_context's reply budget when the caller names none: deep holds the benchmarked page (max 7,490 tokens), lean is the former 800. */
+export const DEEP_CONTEXT_MAX_TOKENS = 8000;
+export const LEAN_CONTEXT_MAX_TOKENS = 800;
+
+/** A reply budget above this is a deep page; at or below it get_context searches LEAN_CONTEXT_TOP_K, as it always did. */
+export const LEAN_REPLY_CEILING = 4000;
+
+/** The reply budget get_context uses when the caller names none. */
+export function defaultContextMaxTokens(env: NodeJS.ProcessEnv = process.env): number {
+  return deepSearchEnabled(env) ? DEEP_CONTEXT_MAX_TOKENS : LEAN_CONTEXT_MAX_TOKENS;
+}
+
+/**
+ * The semantic matches get_context searches for a reply of `maxTokens`: 50 when deep search is on and the reply has room
+ * for the deep page (more than 4,000 tokens), else 8. So a caller that asks for a small reply, the recall hook included,
+ * gets exactly the page it got before.
+ */
+export function contextTopK(maxTokens: number, env: NodeJS.ProcessEnv = process.env): number {
+  return deepSearchEnabled(env) && maxTokens > LEAN_REPLY_CEILING ? DEEP_CONTEXT_TOP_K : LEAN_CONTEXT_TOP_K;
+}
+
 /** The top-K the ranked expansion's base budget (SESSION_EXPAND_RANKED_TOKENS) was sized for. */
 export const PAGE_BASE_TOP_K = 20;
 
@@ -630,7 +573,7 @@ export const PAGE_BASE_TOP_K = 20;
 export const RANKED_TOKENS_PER_EXTRA_MATCH = 90;
 
 /**
- * RENOR_TOPK_SCALES_BUDGET (default ON since the flip of 2026-10-27; `0`, `false`, `no` or `off` restore the former budget): a read that asks for more
+ * RENOR_TOPK_SCALES_BUDGET (default ON since the flip of 2026-10-27, unset follows RENOR_DEEP_SEARCH; `0`, `false`, `no` or `off` restore the former budget): a read that asks for more
  * than PAGE_BASE_TOP_K matches gets a ranked expansion budget that grows with the ask, SESSION_EXPAND_RANKED_TOKENS plus RANKED_TOKENS_PER_EXTRA_MATCH
  * for each match above 20 (4,000 tokens at 50), so the statements that go with a window of 50 matches are not squeezed into the 1,300 tokens that were
  * sized for 20. RENOR_SESSION_EXPAND_TOKENS still decides when it is set. At a top-K of 20 or less nothing changes, on or off; off, nothing changes at any top-K.
@@ -640,6 +583,7 @@ export const RANKED_TOKENS_PER_EXTRA_MATCH = 90;
  */
 export function topKScalesBudget(env: NodeJS.ProcessEnv = process.env): boolean {
   const v = (env.RENOR_TOPK_SCALES_BUDGET ?? '').trim().toLowerCase();
+  if (v === '') return deepSearchEnabled(env); // unset: deep search decides (on unless RENOR_DEEP_SEARCH=0, orchestrator.ts)
   return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
 }
 
@@ -648,13 +592,15 @@ export const DEFAULT_SEARCH_TOP_K = 50;
 
 /**
  * The matches `renor search` and the hosted `search_memory` return when the caller names none. RENOR_SEARCH_TOP_K (a whole number from 1 to 50) sets it
- * for a deployment: `20` with RENOR_TOPK_SCALES_BUDGET=0 is the page that was the default before the flip, byte for byte. Anything else is 50.
+ * for a deployment: `20` with RENOR_TOPK_SCALES_BUDGET=0 is the page that was the default before the flip, byte for byte. Unset or anything else is 50,
+ * or 20 in lean mode (RENOR_DEEP_SEARCH=0, orchestrator.ts).
  * A caller that passes its own top-k (`--top-k`, `top_k`) is never touched.
  */
 export function defaultSearchTopK(env: NodeJS.ProcessEnv = process.env): number {
   const raw = (env.RENOR_SEARCH_TOP_K ?? '').trim();
   const n = Number(raw);
-  return raw !== '' && Number.isInteger(n) && n >= 1 && n <= DEFAULT_SEARCH_TOP_K ? n : DEFAULT_SEARCH_TOP_K;
+  if (raw !== '' && Number.isInteger(n) && n >= 1 && n <= DEFAULT_SEARCH_TOP_K) return n;
+  return deepSearchEnabled(env) ? DEFAULT_SEARCH_TOP_K : PAGE_BASE_TOP_K; // RENOR_DEEP_SEARCH=0 (lean mode): the former 20
 }
 
 /** The ranked expansion's token budget for a read of `topK` matches: SESSION_EXPAND_RANKED_TOKENS, grown with the ask when RENOR_TOPK_SCALES_BUDGET is armed. */
@@ -707,13 +653,16 @@ export function rankedStatementTokens(env: NodeJS.ProcessEnv = process.env): num
   return Number.isFinite(value) && value >= 1 ? Math.floor(value) : null;
 }
 
+const OFF_VALUES = new Set(['off', 'none', '0', 'false']);
+
 /**
  * The calibrated key (CALIBRATED_BARS) of the embedding model behind a provider, or null when there is none.
  *
  * A key names the provider that made the vectors. An OpenAI-compatible endpoint that returns Vertex's gemini-embedding-001
  * vectors (the benchmark's embedding cache proxy replays them) declares itself `openai:gemini-embedding-001:768`, which is
- * not calibrated, so it keeps the former expansion where a hosted workspace, which calls Vertex itself, runs the ranked one.
- * RENOR_EMBEDDING_SERVED_BY (default unset) is the operator's declaration of whose vectors the endpoint returns: `vertex`
+ * not calibrated on its own key. Since 12 Nov 2026 (issue 1811) that case is inferred by default: an `openai` endpoint whose model
+ * name and size match a calibrated key counts as it, so the result no longer hangs on a variable one script set (issue 1559).
+ * RENOR_EMBEDDING_SERVED_BY=off (or none, 0, false) restores the former null. Otherwise it is the operator's declaration of whose vectors the endpoint returns: `vertex`
  * there counts the provider as the calibrated model, but only when the key that makes (the declared kind with the provider's
  * own model and dimensions) is in CALIBRATED_BARS. Any other value, model or size changes nothing, and the declaration is the
  * operator's word: nothing here checks the vectors. Read here and nowhere else; a hosted workspace is unaffected.
@@ -725,7 +674,16 @@ export function calibratedModelKey(
   const own = embeddingModelKey(identity.kind, identity.model, dimensions);
   if (own in CALIBRATED_BARS) return own;
   const servedBy = (env.RENOR_EMBEDDING_SERVED_BY ?? '').trim().toLowerCase();
-  if (servedBy === '') return null;
+  if (OFF_VALUES.has(servedBy)) return null;
+  if (servedBy === '') {
+    // Default (on): an OpenAI-compatible endpoint that serves a calibrated model's own name and size (gemini-embedding-001
+    // at 768) returns that model's vectors, so it is counted as the calibrated model, as a hosted workspace is. Only the
+    // `openai` kind is inferred; the lexical stub, an unmeasured model or another size still match nothing.
+    // The off switch is RENOR_EMBEDDING_SERVED_BY=off (or none, 0, false), which restores the former null for this case.
+    if (identity.kind !== 'openai') return null;
+    const inferred = Object.keys(CALIBRATED_BARS).find(key => key.split(':').slice(1).join(':') === `${identity.model}:${dimensions ?? ''}`);
+    return inferred ?? null;
+  }
   const declared = embeddingModelKey(servedBy, identity.model, dimensions);
   return declared in CALIBRATED_BARS ? declared : null;
 }
@@ -874,137 +832,6 @@ function getBestChunksForNotes(db: Database.Database, notePaths: string[], limit
   return keep ? chunks.filter(keep).slice(0, limit) : chunks;
 }
 
-/**
- * RENOR_NOTE_FUSION (default off): H19 arm B, the semantic pool ranked by note. For the notes the pool holds:
- * base = 0.5 * min-max(max chunk cosine) + 0.5 * min-max(BM25 over the note's file), with BM25 (k1 1.5, b 0.75)
- * over the same notes and the rig's tokeniser (lower case, ASCII letters and digits, stop words out). The window
- * ranks each chunk by its note's base in place of the chunk's cosine, and adds its usual boosts to that base as it
- * does to a cosine. Chunks of one note share that base, so inside a note the boosts order them first and the cosine only
- * where they tie (FUSION_WITHIN_NOTE); the shipped order weighs the cosine itself, so the two differ within a note.
- * The formulas are the H19 rig's
- * (data/renor-goal-better-oracle/h19/h19.ts), unchanged; the candidate notes are the pool's (see retrieveContext).
- * The helpers live in this file, not in a module of their own: the index path reaches every module this file imports,
- * and a module it reaches must be classified in src/eval/indexSnapshots.ts (an evaluator source). Off (unset), nothing
- * here runs and the window is the one it was before this block existed.
- */
-const FUSION_K1 = 1.5;
-const FUSION_B = 0.75;
-/** The weight of the cosine; BM25 gets the rest (H19 fixed it at one half, not fitted). */
-const FUSION_COSINE_WEIGHT = 0.5;
-/** The tie-break inside one note: its chunks share the note's base, so the cosine orders them only where their boosts tie. Far below any gap between two notes' bases. */
-const FUSION_WITHIN_NOTE = 1e-6;
-const FUSION_STOP = new Set('a an the and or of to in on at for with is are was were be been it this that i you he she we they my your me do did does what when where who how which about from by as'.split(' '));
-
-/** RENOR_NOTE_FUSION: 1, true, yes or on (any case, spaces trimmed) enables it. Unset, blank or anything else: off. */
-export function noteFusionEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env.RENOR_NOTE_FUSION ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-}
-
-/** The rig's tokeniser: lower case, runs of ASCII letters and digits, stop words removed. */
-export function noteTokens(text: string): string[] {
-  return (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(w => !FUSION_STOP.has(w));
-}
-
-/** BM25 of the query's distinct tokens against each document; IDF and average length over these documents. */
-export function bm25Scores(query: string, docs: string[]): number[] {
-  const tokens = docs.map(noteTokens);
-  const n = docs.length;
-  const avg = tokens.reduce((sum, d) => sum + d.length, 0) / Math.max(1, n);
-  const df = new Map<string, number>();
-  for (const d of tokens) for (const w of new Set(d)) df.set(w, (df.get(w) ?? 0) + 1);
-  const terms = [...new Set(noteTokens(query))];
-  return tokens.map(d => {
-    const tf = new Map<string, number>();
-    for (const w of d) tf.set(w, (tf.get(w) ?? 0) + 1);
-    let score = 0;
-    for (const w of terms) {
-      const f = tf.get(w) ?? 0;
-      if (!f) continue;
-      const dfw = df.get(w) ?? 0;
-      const idf = Math.log(1 + (n - dfw + 0.5) / (dfw + 0.5));
-      score += idf * (f * (FUSION_K1 + 1)) / (f + FUSION_K1 * (1 - FUSION_B + FUSION_B * d.length / Math.max(1e-9, avg)));
-    }
-    return score;
-  });
-}
-
-/** Min-max over the values, each in [0, 1]; all zero when they do not differ. */
-export function minMax(values: number[]): number[] {
-  const lo = Math.min(...values);
-  const hi = Math.max(...values);
-  return values.map(x => (hi === lo ? 0 : (x - lo) / (hi - lo)));
-}
-
-/** The fused note score: the cosine's min-max and BM25's min-max, weighted one half each. */
-export function fuseNoteScores(maxCosines: number[], bm25: number[]): number[] {
-  const cos = minMax(maxCosines);
-  const lex = minMax(bm25);
-  return cos.map((x, i) => FUSION_COSINE_WEIGHT * x + (1 - FUSION_COSINE_WEIGHT) * lex[i]);
-}
-
-/**
- * The window's base score per chunk of a semantic pool, keyed by chunk id. A note's text is its file as it stands;
- * the pool's own chunks stand in when the file cannot be read, and for the ledger, whose file holds every scope's
- * events, so a scoped read is never scored on another scope's words.
- */
-export function noteFusionBase(
-  hits: ReadonlyArray<{ chunkId: number; notePath: string; text: string; score: number }>,
-  query: string,
-  isLedgerNote?: (notePath: string) => boolean,
-): Map<number, number> {
-  const notes = new Map<string, { cosine: number; chunks: string[] }>();
-  for (const h of hits) {
-    const note = notes.get(h.notePath);
-    if (note) {
-      note.cosine = Math.max(note.cosine, h.score);
-      note.chunks.push(h.text);
-    } else {
-      notes.set(h.notePath, { cosine: h.score, chunks: [h.text] });
-    }
-  }
-  const paths = [...notes.keys()];
-  const docs = paths.map(p => fusionNoteText(p, notes.get(p)!.chunks, isLedgerNote?.(p) === true));
-  const fused = fuseNoteScores(paths.map(p => notes.get(p)!.cosine), bm25Scores(query, docs));
-  const at = new Map(paths.map((p, i) => [p, i] as const));
-  return new Map(hits.map(h => [h.chunkId, fused[at.get(h.notePath)!] + FUSION_WITHIN_NOTE * h.score] as const));
-}
-
-/** The most bytes of a note's file the fused score reads. A larger note is scored on the pool's chunks, as a missing file is. */
-const FUSION_MAX_NOTE_BYTES = 32 * 1024;
-
-/**
- * A note's whole text, read only from a regular file of at most FUSION_MAX_NOTE_BYTES. A symlink, FIFO, device or directory
- * is refused before it is opened (lstat). The open is non-blocking, so a path swapped for a FIFO between the two calls cannot
- * block the event loop, and the opened descriptor is checked again (fstat) before any byte is read. Null when the text cannot
- * be read this way.
- */
-function readNoteFileCapped(notePath: string): string | null {
-  let fd: number | null = null;
-  try {
-    if (!fs.lstatSync(notePath).isFile()) return null;
-    fd = fs.openSync(notePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-    const st = fs.fstatSync(fd);
-    if (!st.isFile() || st.size > FUSION_MAX_NOTE_BYTES) return null;
-    const bytes = Buffer.alloc(st.size);
-    const n = fs.readSync(fd, bytes, 0, st.size, 0);
-    return bytes.subarray(0, n).toString('utf8');
-  } catch {
-    return null;
-  } finally {
-    if (fd !== null) fs.closeSync(fd);
-  }
-}
-
-function fusionNoteText(notePath: string, poolChunks: string[], ledger: boolean): string {
-  if (!ledger) {
-    const text = readNoteFileCapped(notePath);
-    if (text !== null) return text;
-  }
-  // Not a regular file on disk, larger than the cap, or the ledger: the pool's chunks stand in.
-  return poolChunks.join('\n');
-}
-
 interface RetrieveOptions {
   includeHistory?: boolean; probe?: RetrievalProbe; isLedgerNote?: IsLedgerNote;
   /**
@@ -1014,8 +841,6 @@ interface RetrieveOptions {
   scope?: ChunkScope;
   /** Default cap for this read when the environment is unset/empty. get_context passes 0; searches use 2. */
   noteCapWhenUnset?: number;
-  /** Lay the window out best match first whatever RENOR_NEWEST_FIRST says (search_memory under RENOR_SEARCH_BEST_FIRST). */
-  bestFirst?: boolean;
 }
 
 /**
@@ -1063,92 +888,27 @@ export async function retrieveContext(
           candidateLimit,
         );
       })();
-  // RENOR_NOTE_FUSION (default off): the pool's chunks ranked by their note's fused score (noteFusionBase). Absent when off.
-  const noteBase = vectorIndex && provider && noteFusionEnabled() ? noteFusionBase(semanticHits, query, opts.isLedgerNote) : undefined;
-  // RENOR_ENTITY_LANE (default off): the chunks that carry the rare words the query names join the pool at their own cosine.
-  const laneTerms = entityLaneEnabled() && vectorIndex && queryProbe.queryVector
-    ? inReadSnapshot(db, () => entityLanePool(db, vectorIndex, queryProbe.queryVector!, query, topK, semanticHits, opts))
-    : [];
   // The window is ranked without waiting for anything, so it is read in one transaction (inReadSnapshot).
-  const window = inReadSnapshot(db, () => rankWindow({ db, query, topK, priorityPaths, clock, opts, factHits, semanticHits, laneTerms, nearDupCap, noteBase }));
-  return finishContext({ db, vectorIndex, provider, query, queryProbe, window, topK, bestFirst: opts.bestFirst === true });
+  const window = inReadSnapshot(db, () => rankWindow({ db, query, topK, priorityPaths, clock, opts, factHits, semanticHits, nearDupCap }));
+  return finishContext({ db, vectorIndex, provider, query, queryProbe, window, topK });
 }
 
 type PoolHit = Omit<Awaited<ReturnType<typeof semanticSearch>>[number], 'startLine' | 'endLine'>;
-
-/**
- * The entity lane (RENOR_ENTITY_LANE): the lane words of the query (plainWording.ts entityLaneTerms) and, appended to
- * `pool`, the chunks that carry them and are not in it yet, each at its own cosine to the query vector (one
- * `VectorIndex.search` among their ids: no embedding, no model call). A scoped read judges them as it judges the pool.
- * Returns the lane words, which the window lifts every hit that carries them by.
- */
-function entityLanePool(
-  db: Database.Database, vectorIndex: VectorIndex, queryVector: number[], query: string, topK: number, pool: PoolHit[], opts: RetrieveOptions,
-): string[] {
-  const terms = entityLaneTerms(db, query);
-  if (terms.length === 0) return [];
-  const inPool = new Set(pool.map(h => h.chunkId));
-  const ids = entityLaneChunkIds(db, terms, topK, opts.isLedgerNote).filter(id => !inPool.has(id));
-  if (ids.length === 0) return terms;
-  const cosine = new Map(vectorIndex.search(queryVector, ids.length, ids).map(h => [h.chunkId, h.score]));
-  const rows = prepareOnce(
-    db, 'SELECT id AS chunkId, note_path AS notePath, heading_path AS headingPath, text FROM chunks WHERE id IN (SELECT value FROM json_each(?))',
-  ).all(JSON.stringify(ids)) as Array<{ chunkId: number; notePath: string; headingPath: string; text: string }>;
-  for (const row of rows) {
-    if (!cosine.has(row.chunkId)) continue; // no vector yet: the semantic lane could not have found it either
-    if (opts.scope && !opts.scope.shows(row)) continue;
-    pool.push({ ...row, score: cosine.get(row.chunkId)! });
-  }
-  return terms;
-}
-
-/** How many places of a window the entity lane keeps for the best hits that carry every lane word. */
-export const ENTITY_LANE_RESERVED = 3;
-
-/**
- * The first `topK` of `ranked`, but with its best ENTITY_LANE_RESERVED hits that carry every lane word in it: each one
- * the cut would leave out takes the place of the last hit that carries none. A lift alone depends on the embedding's
- * scale (a cosine of 0.8 against 0.1 on the lexical stub, a few hundredths on a real model); a place does not. Without
- * lane words, the first `topK`.
- */
-function reserveLanePlaces<T extends { text: string }>(ranked: T[], topK: number, laneTerms: string[]): T[] {
-  const window = ranked.slice(0, topK);
-  if (laneTerms.length === 0) return window;
-  const carries = (h: T) => laneTermShare(h.text, laneTerms) === 1;
-  const missing = ranked.filter(carries).slice(0, ENTITY_LANE_RESERVED).filter(h => !window.includes(h));
-  for (const hit of missing) {
-    let at = window.length - 1;
-    while (at >= 0 && laneTermShare(window[at].text, laneTerms) > 0) at--;
-    if (at < 0) break;
-    window.splice(at, 1);
-    window.push(hit);
-  }
-  return window;
-}
 
 /** The window of hits of a read: scored, with the graph of its notes, their facts and dates, live and capped per note. Waits for nothing. */
 function rankWindow(read: {
   db: Database.Database; query: string; topK: number; priorityPaths: string[]; clock: { nowMs?: number }; opts: RetrieveOptions;
   factHits: ReturnType<typeof factsFirstHits>; semanticHits: PoolHit[];
-  /** RENOR_ENTITY_LANE's words: a hit that carries them is lifted by up to ENTITY_LANE_BOOST. Empty when the lane is off. */
-  laneTerms: string[];
   /** RENOR_NEAR_DUP_CAP: at most this many near-copies in the window; 0 is off. */
   nearDupCap: number;
-  /** RENOR_NOTE_FUSION: each pool chunk's base score in place of its cosine, which stays the probe's (noteFusionBase). */
-  noteBase?: Map<number, number>;
 }) {
-  const { db, query, topK, priorityPaths, clock, opts, factHits, semanticHits, laneTerms, nearDupCap, noteBase } = read;
+  const { db, query, topK, priorityPaths, clock, opts, factHits, semanticHits, nearDupCap } = read;
   // Set only while the learning log collects the ranker's terms (rankingTrace.ts); otherwise every use below is skipped.
   const trace = currentRankingTrace();
   // Raw cosines, kept only for a caller that asked to see them (get_context's relevance signal).
   const cosineByChunk = opts.probe ? new Map(semanticHits.map(h => [h.chunkId, h.score])) : null;
   const entityHit = lookupEntity(db, query.trim());
 
-  // As-of lane pre-compute: explicit past-date queries must not receive the
-  // "now" recency boost below — the newest note describes the current world,
-  // not the asked-about past. Gated by its own kill switch.
-  const asofPreNowMs = clock.nowMs ?? Date.now();
-  const asofPrePast = asofPastLike(query, asofPreNowMs);
   // Prepared once per call, not once per hit: each of these runs for every semantic hit (dozens per call).
   const noteRowStmt = onceStatement(db, 'SELECT modified_at, frontmatter_json FROM notes WHERE path = ?');
   const ownFactsStmt = onceStatement(db, 'SELECT predicate, object_text, valid_to FROM facts WHERE subject_entity_id = ?');
@@ -1163,7 +923,7 @@ function rankWindow(read: {
   const ownFactRows = new Map<number, FactRow[]>();
 
   const scored = semanticHits.map(h => {
-    let score = noteBase?.get(h.chunkId) ?? h.score; let reason = 'semantic';
+    let score = h.score; let reason = 'semantic';
     const terms = trace ? newRankingTerms() : null;
     if (isSpeakerStub(h.text)) {
       score -= 0.5;
@@ -1177,20 +937,10 @@ function rankWindow(read: {
       score += 0.1; reason += '+priority'; if (terms) terms[rankingTermIndex('priority')] += 0.1;
     }
     if (entityHit?.sourceNote === h.notePath) { score += 0.2; reason += '+entity'; if (terms) terms[rankingTermIndex('entity')] += 0.2; }
-    if (laneTerms.length > 0) {
-      const share = laneTermShare(h.text, laneTerms);
-      if (share > 0) {
-        const boost = ENTITY_LANE_BOOST * share;
-        score += boost; reason += '+entity-lane';
-        if (terms) terms[rankingTermIndex('entity_lane')] += boost;
-      }
-    }
     // Time-decay recency: +0.1 for today, linearly decaying to 0 over 30 days.
-    // Skipped for explicit past-date (as-of) queries: recency answers "now",
-    // the as-of query asks about "then".
     const row = noteRow(h.notePath);
     const session_date = resolveSessionDate(row?.frontmatter_json, row?.modified_at);
-    if (row && !asofPrePast) {
+    if (row) {
       const daysSince = ((clock.nowMs ?? Date.now()) - new Date(row.modified_at).getTime()) / 86400000;
       const recencyBoost = Math.max(0, 0.1 * (1 - daysSince / 30));
       if (recencyBoost > 0.001) { score += recencyBoost; reason += '+recency'; if (terms) terms[rankingTermIndex('recency')] += recencyBoost; }
@@ -1235,11 +985,6 @@ function rankWindow(read: {
   // No hardcoded subject or cue table. Kill switch: RENOR_TEMPORAL_RANKING=0.
   const temporal = temporalRankingEnabled();
   const pastIntent = temporal && hasStrictPastIntent(query);
-  // As-of lane: explicit past-date queries behave past-like for presentation
-  // ranking even without past-intent cue words ("in April 2025" has none).
-  const asofNowMs = clock.nowMs ?? Date.now();
-  const asofPast = asofPastLike(query, asofNowMs);
-  const asofRef = asofDatedRef(query, asofNowMs);
   const historicalNotes = new Set<string>();
   const factsByNote = new Map<string, FactRow[]>();
   if (temporal) {
@@ -1307,27 +1052,6 @@ function rankWindow(read: {
       hit.score += 0.15;
       if (trace) addRankingTerm(hit, 'fact', 0.15);
       hit.reason += '+fact';
-    }
-
-    // As-of lane: the query names a past date, so hits carrying the same
-    // calendar reference are likelier to hold the as-of answer than the
-    // newest note (which describes the current world, not the asked one).
-    if (asofRef) {
-      const yearToken = String(asofRef.year);
-      const lowerText = hit.text.toLowerCase();
-      if (lowerText.includes(yearToken)) {
-        hit.score += 0.08;
-        if (trace) addRankingTerm(hit, 'asof_year', 0.08);
-        hit.reason += '+asof-year';
-        if (asofRef.month !== undefined) {
-          const monthName = Object.keys(ASOF_MONTHS).find(m => ASOF_MONTHS[m] === asofRef.month);
-          if (monthName && lowerText.includes(monthName)) {
-            hit.score += 0.04;
-            if (trace) addRankingTerm(hit, 'asof_month', 0.04);
-            hit.reason += '+asof-month';
-          }
-        }
-      }
     }
 
     if (temporal) {
@@ -1418,7 +1142,7 @@ function rankWindow(read: {
   // RENOR_RERANK_TOP_N (default off): the first n of that ranking are reranked by the query words they carry, then cut to topK.
   const rerankN = resolveRerankTopN();
   const diversified = applySessionDiversity(applyNearDupCap(mixed, nearDupCap, contentfulText), diversityCap, topK);
-  const windowed = reserveLanePlaces(rerankN > topK ? rerankTopN(diversified, query, rerankN) : diversified, topK, laneTerms);
+  const windowed = (rerankN > topK ? rerankTopN(diversified, query, rerankN) : diversified).slice(0, topK);
   // The window's candidates are recorded before they are copied into the plain hits below, which carry no terms.
   if (trace) for (const hit of windowed) trace.touch(hit);
   let hits = windowed.map(h => ({
@@ -1433,7 +1157,7 @@ function rankWindow(read: {
     // A fact an identity question read names its author, so the reader's view can mark it (mvp/factMarkers.ts).
     ...('author' in h && h.author !== undefined ? { author: h.author } : {}),
   }));
-  return { hits, noteRow, temporal, pastIntent, asofPast };
+  return { hits, noteRow, temporal, pastIntent };
 }
 
 /** The hits dated, joined by the statements of their sessions and laid out. The first wait is for the date of an entry of a daily note. */
@@ -1442,10 +1166,9 @@ async function finishContext(read: {
   window: ReturnType<typeof rankWindow>;
   /** The matches the read asked for: the ranked expansion's budget may grow with it (RENOR_TOPK_SCALES_PAGE). */
   topK: number;
-  bestFirst: boolean;
 }): Promise<RetrievalResult> {
-  const { db, vectorIndex, provider, query, queryProbe, window, topK, bestFirst } = read;
-  const { noteRow, temporal, pastIntent, asofPast } = window;
+  const { db, vectorIndex, provider, query, queryProbe, window, topK } = read;
+  const { noteRow, temporal, pastIntent } = window;
   let { hits } = window;
   // A hit that is a ledger event is dated by the event, and one that is an entry of a daily note by the entry: each
   // is one note, so the note's date is one date for every event, or every entry of the day, in it. Decided on the
@@ -1473,12 +1196,9 @@ async function finishContext(read: {
   // Does not replace scoring or change which chunks enter top-K. Opt out: RENOR_NEWEST_FIRST=0.
   // An explicit past-intent query overrides this presentation rerank — "what was
   // it before" is precisely the case where newest-first is the wrong order.
-  // The as-of lane extends the override to explicit past-date queries, which
-  // carry no past-intent cue words but ask about the old world all the same.
   // Either way the result says which key it is in order of (`rankedBy`): the order is a presentation
   // choice the agent cannot see from the hits alone, and hits[0] is not "the answer" unless that key is score.
-  // A read that asks for best match first (search_memory under RENOR_SEARCH_BEST_FIRST) is laid out by score.
-  const newestFirst = !bestFirst && newestFirstEnabled() && !(temporal && pastIntent) && !asofPast;
+  const newestFirst = newestFirstEnabled() && !(temporal && pastIntent);
   const rankedBy: HitOrder = newestFirst ? 'session_date' : 'score';
   contentfulHeld.clear(); // nothing outlives the read it was worked out for
   // The order the reply presents its hits in, so a candidate's place in it is recorded for the learning log (rankingTrace.ts).

@@ -36,6 +36,7 @@ export const RECORDED_AS: Readonly<Record<string, string>> = { search: 'search_m
 
 /** How long a clean exit waits for the last send before it drops what is still open. */
 export const EXIT_FLUSH_MS = 3_000;
+export const AFTER_NOTICE_MS = 60_000;
 
 export interface StdioLearning {
   /** The sharing folder: the vault's own (<vault>/.memory-index/sharing), or RENOR_SHARING_DIR. The install's record still limits it. */
@@ -60,6 +61,8 @@ export interface StdioLearningOptions {
   fetch?: Post;
   /** The sender's first tick and interval, for tests. */
   firstTickMs?: number;
+  /** How long after the first-run notice was given the sender ticks once (default 60 s), so a first session shorter than an hour still sends. */
+  afterNoticeMs?: number;
   intervalMs?: number;
   /** Label window and clock, for tests. */
   windowMs?: number;
@@ -148,6 +151,8 @@ export function stdioLearning(config: Pick<Config, 'vaultPath' | 'embeddingProvi
         return reply;
       }
       if (notice === null) return reply;
+      // The notice is now recorded: one tick soon after, so a person who tries Renor once and leaves is counted. The tick runs off the reply.
+      loop?.soon(options.afterNoticeMs ?? AFTER_NOTICE_MS);
       return { ...reply, content: [...reply.content, { type: 'text', text: JSON.stringify({ renor_sharing_notice: notice, instruction: AGENT_NOTICE_INSTRUCTION }) }] };
     },
     sharingTool: (args, ask) => runSharingTool(args, { dir: sharingDir, env, hosted: false, ...(ask !== undefined ? { ask } : {}) }),

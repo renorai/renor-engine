@@ -342,6 +342,11 @@ describe('run ledger: which environment is configuration', () => {
       USERPROFILE: 'the Windows home folder, the fallback for HOME in `renor-engine connect` (src/connect.ts); no effect on results',
       APPDATA: 'the Windows roaming-config folder, where `renor-engine doctor` looks for VS Code\'s mcp.json (src/doctor.ts); read only, no effect on results',
       XDG_RUNTIME_DIR: 'where the SessionStart hook keeps its owner-only session files (src/recall/autoRecall.ts); no effect on results',
+      CI: 'a CI marker: shared rows say internal: true (src/sharing/context.ts); no effect on results',
+      GITHUB_ACTIONS: 'a CI marker: shared rows say internal: true (src/sharing/context.ts); no effect on results',
+      VITEST: 'a test-runner marker: shared rows say internal: true (src/sharing/context.ts); no effect on results',
+      JEST_WORKER_ID: 'a test-runner marker: shared rows say internal: true (src/sharing/context.ts); no effect on results',
+      NODE_ENV: 'NODE_ENV=test marks shared rows internal (src/sharing/context.ts); no effect on results',
     };
     const read = new Set<string>();
     const access = /(?:process\.env|\benv)\s*(?:\.\s*([A-Z_][A-Z0-9_]*)|\[\s*['"]([A-Z_][A-Z0-9_]*)['"]\s*\])/g;
@@ -353,8 +358,8 @@ describe('run ledger: which environment is configuration', () => {
       for (const match of source.matchAll(access)) read.add(match[1] ?? match[2]);
       for (const match of source.matchAll(viaHelper)) read.add(match[1]);
     }
-    // The scan sees both direct reads and the helper-read flags (envFlagOn('RENOR_TEMPORAL_ASOF'), requiredEnv('MVP_...')).
-    for (const known of ['RENOR_NEWEST_FIRST', 'RENOR_TEMPORAL_RANKING', 'RENOR_TEMPORAL_ASOF', 'RENOR_VAULT_STALENESS', 'CHUNK_MAX_TOKENS', 'MVP_INSTANCE_ID', 'EMBEDDING_PROVIDER']) {
+    // The scan sees both direct reads and the helper-read flags (envFlagOn('RENOR_STATUS_LEDGER'), requiredEnv('MVP_...')).
+    for (const known of ['RENOR_NEWEST_FIRST', 'RENOR_TEMPORAL_RANKING', 'RENOR_STATUS_LEDGER', 'RENOR_VAULT_STALENESS', 'CHUNK_MAX_TOKENS', 'MVP_INSTANCE_ID', 'EMBEDDING_PROVIDER']) {
       expect(read.has(known), known).toBe(true);
     }
     const uncovered = [...read].filter(name => !PRODUCT_ENV_NAMESPACES.test(name) && !(name in notConfiguration)).sort();

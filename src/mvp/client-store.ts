@@ -72,7 +72,16 @@ function failClosed(reason: string): never {
     + 'then let clients register again; removed clients must be re-created by their owners.');
 }
 
-/** Running uid; the POSIX-only store refuses to run without one. */
+/**
+ * Native Windows has no POSIX uid and no mode bits (stat reports 0o666 whatever was asked), so the owner and owner-only
+ * checks cannot be made there; the store lives in the user's profile and is protected by its inherited ACL. Only that
+ * platform skips them. Any other platform without a uid still fails closed.
+ */
+function ownerChecksApply(): boolean {
+  return !(process.platform === 'win32' && process.getuid === undefined);
+}
+
+/** Running uid; every other platform refuses to run without one. */
 function currentUid(): number {
   const uid = process.getuid?.();
   if (uid === undefined) failClosed('process uid is unavailable on this platform');
@@ -169,6 +178,16 @@ function symlinkRefusal(dir: string): string | null {
 }
 
 function validateStoreRoot(dir: string): void {
+  if (!ownerChecksApply()) {
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(dir);
+    } catch (err) {
+      failClosed(`store directory is missing or unreadable (${(err as NodeJS.ErrnoException).code})`);
+    }
+    if (!st.isDirectory()) failClosed('store path parent is not a directory');
+    return;
+  }
   let dirStat: fs.Stats;
   try {
     dirStat = fs.lstatSync(dir);
@@ -193,6 +212,7 @@ function validateStoreRoot(dir: string): void {
 function validateStoreFile(filePath: string): void {
   const stat = fs.lstatSync(filePath); // throws if missing (handled by caller)
   if (!stat.isFile()) failClosed('store path is not a regular file (symlinks are rejected)');
+  if (!ownerChecksApply()) return;
   if (stat.uid !== currentUid()) failClosed('store file is not owned by the service user');
   if (stat.mode & 0o077) failClosed('store file must be owner-only (0600)');
 }

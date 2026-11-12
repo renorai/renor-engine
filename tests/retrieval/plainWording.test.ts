@@ -1,19 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import {
-  applyNearDupCap, contentTerms, entityLaneEnabled, jaccard, laneTermShare, queryRewriteEnabled, resolveNearDupCap,
+  applyNearDupCap, contentTerms, jaccard, laneTermShare, queryRewriteEnabled, resolveNearDupCap,
   rewriteConversationalQuery,
 } from '../../src/retrieval/plainWording';
 
 describe('the switches', () => {
   it('are off unless set to an on value; the cap is off unless it names one', () => {
-    expect(entityLaneEnabled({})).toBe(false);
     expect(queryRewriteEnabled({})).toBe(false);
     for (const value of ['1', 'true', 'yes', 'on', ' ON ']) {
-      expect(entityLaneEnabled({ RENOR_ENTITY_LANE: value })).toBe(true);
       expect(queryRewriteEnabled({ RENOR_QUERY_REWRITE: value })).toBe(true);
     }
     for (const value of ['', '0', 'off', 'false', 'junk']) {
-      expect(entityLaneEnabled({ RENOR_ENTITY_LANE: value })).toBe(false);
       expect(queryRewriteEnabled({ RENOR_QUERY_REWRITE: value })).toBe(false);
     }
     expect(resolveNearDupCap({})).toBe(0);
