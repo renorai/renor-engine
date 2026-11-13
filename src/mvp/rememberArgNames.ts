@@ -32,3 +32,17 @@ export function tolerateRememberArgs(args: unknown): { args: Record<string, unkn
   }
   return null;
 }
+
+/** The line added to a refusal when the call carried no statement under any accepted name (#1921). */
+export const REMEMBER_STATEMENT_HINT =
+  `Hint: send the text to save as "statement" (also accepted: ${REMEMBER_STATEMENT_ALIASES.map(n => `"${n}"`).join(', ')}).`;
+
+/** True when a refused remember call held no text to save: no usable statement, alias or subject/predicate/object, and the hint is on. */
+export function wantsStatementHint(args: unknown): boolean {
+  if (!rememberArgNamesEnabled()) return false;
+  if (args !== undefined && args !== null && (typeof args !== 'object' || Array.isArray(args))) return false;
+  const given = (args ?? {}) as Record<string, unknown>;
+  if (given.statement !== undefined && given.statement !== null && given.statement !== '') return false;
+  if ([given.subject, given.predicate, given.object].some(nonBlank)) return false;
+  return !REMEMBER_STATEMENT_ALIASES.some(name => nonBlank(given[name]));
+}

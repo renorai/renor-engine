@@ -103,7 +103,7 @@ Tudo o que o Renor armazena fica nessa única pasta. Portanto, você pode fazer 
 ## Mais informações
 
 - [docs/self-hosting.md](docs/self-hosting.pt-BR.md): solução de problemas, embeddings, servidor HTTP com autenticação OAuth, conexão de agentes por HTTP, listas de ferramentas, nomes dos proprietários, ferramentas multiagente (*hive*, configurando `RENOR_CONNECTION_NAME` para cada agente) e proteção do cofre.
-- [skill/SKILL.md](skill/SKILL.md): instruções para orientar seu agente a recuperar e salvar memórias sem precisar receber uma solicitação explícita. A maior parte do documento menciona as ferramentas hospedadas (`get_context`, `remember`); o servidor local `renor-local` utiliza outros nomes (`search`, `remember_fact`, `note`), listados na [seção Stdio](skill/SKILL.md#stdio-renor-engine-mcp).
+- [skill/SKILL.md](skill/SKILL.md): instruções para orientar seu agente a recuperar e salvar memórias sem precisar receber uma solicitação explícita. A maior parte do documento menciona as ferramentas hospedadas (`get_context`, `remember`); o servidor local lista por padrão os mesmos nomes (`get_context`, `remember`, `search_text`, `retrieve_memory`, `whats_new`); os nomes antigos (`search`, `remember_fact`, `note`) ficam atrás de `RENOR_MCP_LEGACY_STDIO=1`, conforme a [seção Stdio](skill/SKILL.md#stdio-renor-engine-mcp).
 
 O Renor é um mecanismo de proprietário único: as anotações de uma pessoa e um conjunto de agentes. Não é um produto multiusuário.
 

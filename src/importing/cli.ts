@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 import { assertImportNamespace, buildImportPlan } from './plan';
 import { readExistingStreams } from './existing';
@@ -96,6 +97,10 @@ Other:
   --help                           show this message
 `;
 
+function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_/.:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 export function parseArgv(argv: string[]): CliOptions | { help: true } {
   const options: Partial<CliOptions> = {
     namespace: '',
@@ -180,6 +185,14 @@ function printGuardSkips(skips: GuardSkips | undefined, labelWidth: number) {
   ];
   for (const line of lines.slice(0, 10)) console.log(`      ! ${line}`);
   if (lines.length > 10) console.log(`      ! …and ${lines.length - 10} more (--json lists them all)`);
+}
+
+function countFiles(dir: string): number {
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
+  let n = 0;
+  for (const e of entries) n += e.isDirectory() ? countFiles(path.join(dir, e.name)) : 1;
+  return n;
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -336,6 +349,11 @@ export async function run(argv: string[]): Promise<number> {
   let exitCode = 0;
   let applied: ApplyResult | undefined;
   if (options.apply) {
+    // Count what the destination folder already holds before this run touches it: the printed undo line removes
+    // the whole folder, so anything there that this run did not write (earlier imports, the user's own or
+    // conflicting notes) would be deleted with it.
+    const undoFolder = path.join(memoryDir, ...namespace.split('/'));
+    const alreadyInFolder = countFiles(undoFolder);
     const result = await applyImportPlan(plan, bundle, {
       memoryDir,
       dbPath,
@@ -348,6 +366,19 @@ export async function run(argv: string[]): Promise<number> {
       eventsAlreadyInDestination: result.eventsAlreadyPresent,
     };
     summary.after = result.destination;
+    // No journal. Removing the folder reverses the notes only: ledger events and index rows live outside it,
+    // and notes that already existed in the folder (unchanged) would be deleted too, so only offer the line
+    // when it is a full undo, and otherwise say what it would not cover.
+    const folder = path.join(memoryDir, ...namespace.split('/'));
+    const caveats: string[] = [];
+    if (result.eventsAppended > 0) caveats.push(`${result.eventsAppended} fact event(s) stay in the ledger`);
+    if (alreadyInFolder > 0) caveats.push(`${alreadyInFolder} note(s) already in the folder would be deleted too`);
+    summary.undo = {
+      folder,
+      files: result.notesWritten,
+      line: caveats.length === 0 ? `remove ${shellQuote(folder)}` : null,
+      ...(caveats.length > 0 ? { note: `removing the folder is not a full undo: ${caveats.join('; ')}` } : {}),
+    };
   } else {
     summary.after = null;
   }
@@ -389,6 +420,9 @@ export async function run(argv: string[]): Promise<number> {
       if (applied.conflicts.length > 10) {
         console.log(`      ! …and ${applied.conflicts.length - 10} more`);
       }
+      const undo = summary.undo as { folder: string; files: number; line: string | null; note?: string };
+      console.log(`  written to    : ${undo.folder} (${undo.files} file(s))`);
+      console.log(`  undo          : ${undo.line ?? undo.note}`);
       console.log(`  index rows    : ${applied.indexRows.notesInserted} notes, ${applied.indexRows.chunksInserted} chunks, ${applied.indexRows.entitiesInserted} entities inserted`);
       console.log(`  replayed      : ${applied.ledgerReplayed} ledger event(s) applied to the index`);
       console.log(`  workspace now : notes ${dest?.notes} · chunks ${dest?.chunks} · entities ${dest?.entities} · facts ${dest?.facts} (${dest?.currentFacts} current)`);

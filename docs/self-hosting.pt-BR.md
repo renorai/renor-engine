@@ -120,7 +120,7 @@ Se o navegador não abrir, execute `codex mcp login renor-local-http` no seu pr�
 
 ## Duas listas diferentes de ferramentas
 
-O servidor de linha de comando disponibiliza oito ferramentas: `search`, `evidence`, `keyword`, `entity`, `remember_fact`, `facts`, `status` e `note`. Ao nomear sua conexão, as cinco ferramentas hive também são adicionadas, conforme explicado abaixo. O servidor HTTP disponibiliza um conjunto diferente, com 24 ferramentas, incluindo `remember`, `get_context` e as cinco ferramentas hive: `whats_new`, `ask_agent`, `list_requests`, `answer_request` e `close_request`. O arquivo [skill/SKILL.md](../skill/SKILL.md) descreve as ferramentas HTTP destinadas a agentes.
+O servidor de linha de comando disponibiliza, por padrão, cinco ferramentas com os nomes do serviço hospedado: `whats_new`, `get_context`, `search_text`, `retrieve_memory` e `remember`. Com `RENOR_MCP_LEGACY_STDIO=1`, disponibiliza as oito antigas: `search`, `evidence`, `keyword`, `entity`, `remember_fact`, `facts`, `status` e `note` (os nomes antigos continuam funcionando nos dois casos). Ao nomear sua conexão, as cinco ferramentas hive também são adicionadas, conforme explicado abaixo. O servidor HTTP disponibiliza um conjunto diferente, com 24 ferramentas, incluindo `remember`, `get_context` e as cinco ferramentas hive: `whats_new`, `ask_agent`, `list_requests`, `answer_request` e `close_request`. O arquivo [skill/SKILL.md](../skill/SKILL.md) descreve as ferramentas HTTP destinadas a agentes.
 
 ## Nomes do proprietário
 

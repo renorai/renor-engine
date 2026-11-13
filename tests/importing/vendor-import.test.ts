@@ -108,3 +108,80 @@ describe('mem0 and zep sources', () => {
     expect(fs.existsSync(f.dest)).toBe(false);
   });
 });
+
+describe('import prints where it wrote and how to undo it', () => {
+  const printed = () => (console.log as unknown as ReturnType<typeof vi.fn>).mock.calls.map(c => String(c[0])).join('\n');
+  for (const [kind, data, count] of [['mem0', { results: mem0 }, 6], ['zep', zep, 3]] as const) {
+    it(`${kind}: folder, count and undo line; all files under Imported/${kind}`, async () => {
+      const f = fixture();
+      const file = f.write('export.json', data);
+      expect(await run(['--from', `${kind}:${file}`, '--to', f.dest, '--apply'])).toBe(0);
+      const folder = path.join(f.dest, 'Imported', kind);
+      expect(printed()).toContain(`written to    : ${folder} (${count} file(s))`);
+      expect(printed()).toContain(`undo          : remove ${folder}`);
+      expect(listing(path.join(f.dest, 'Imported'))).toEqual([kind]);
+      expect(listing(folder)).toHaveLength(count);
+    });
+  }
+  it('json carries the same undo block, and a dry run prints none', async () => {
+    const f = fixture();
+    const file = f.write('export.json', { results: mem0 });
+    expect(await run(['--from', `mem0:${file}`, '--to', f.dest, '--json'])).toBe(0);
+    expect(jsonOf().undo).toBeUndefined();
+    expect(await run(['--from', `mem0:${file}`, '--to', f.dest, '--apply', '--json'])).toBe(0);
+    expect(jsonOf().undo).toEqual({ folder: path.join(f.dest, 'Imported/mem0'), files: 6, line: `remove ${path.join(f.dest, 'Imported/mem0')}` });
+  });
+  it('quotes a destination with spaces so the printed line is safe to paste', async () => {
+    const f = fixture();
+    const file = f.write('export.json', { results: mem0 });
+    const spaced = path.join(f.root, 'my memory');
+    expect(await run(['--from', `mem0:${file}`, '--to', spaced, '--apply', '--json'])).toBe(0);
+    expect((jsonOf().undo as { line: string }).line).toBe(`remove '${path.join(spaced, 'Imported/mem0')}'`);
+  });
+
+  it('a second import into the same folder counts only what it wrote and offers no undo line', async () => {
+    const f = fixture();
+    const file = f.write('export.json', { results: mem0 });
+    expect(await run(['--from', `mem0:${file}`, '--to', f.dest, '--apply', '--json'])).toBe(0);
+    expect(await run(['--from', `mem0:${file}`, '--to', f.dest, '--apply', '--json'])).toBe(0);
+    const undo = jsonOf().undo as { files: number; line: string | null; note: string };
+    expect(undo.files).toBe(0);
+    expect(undo.line).toBeNull();
+    expect(undo.note).toContain('6 note(s) already in the folder would be deleted too');
+  });
+
+  it('a conflicting note the user already has is never offered for deletion', async () => {
+    const f = fixture();
+    const file = f.write('export.json', { results: mem0 });
+    const dir = path.join(f.dest, 'Imported/mem0');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'm-1.md'), 'my own edited note');
+    expect(await run(['--from', `mem0:${file}`, '--to', f.dest, '--apply', '--json'])).toBe(3);
+    const undo = jsonOf().undo as { files: number; line: string | null; note: string };
+    expect(undo.files).toBe(5);
+    expect(undo.line).toBeNull();
+    expect(undo.note).toContain('1 note(s) already in the folder would be deleted too');
+  });
+
+  it('notes from an earlier, different import in the folder withhold the undo line', async () => {
+    const f = fixture();
+    const first = f.write('first.json', { results: mem0.slice(0, 3) });
+    const second = f.write('second.json', { results: mem0.slice(3) });
+    expect(await run(['--from', `mem0:${first}`, '--to', f.dest, '--apply', '--json'])).toBe(0);
+    expect((jsonOf().undo as { line: string | null }).line).not.toBeNull();
+    expect(await run(['--from', `mem0:${second}`, '--to', f.dest, '--apply', '--json'])).toBe(0);
+    const undo = jsonOf().undo as { files: number; line: string | null; note: string };
+    expect(undo.files).toBe(3);
+    expect(undo.line).toBeNull();
+    expect(undo.note).toContain('3 note(s) already in the folder would be deleted too');
+  });
+
+  it('says so when the import also wrote ledger events, instead of calling folder removal an undo', async () => {
+    const f = fixture();
+    const file = f.write('facts.json', zep);
+    expect(await run(['--from', `zep:${file}`, '--to', f.dest, '--apply', '--json'])).toBe(0);
+    const undo = jsonOf().undo as { line: string | null; note?: string };
+    if (undo.line === null) expect(undo.note).toMatch(/fact event\(s\) stay in the ledger/);
+    else expect(undo.note).toBeUndefined();
+  });
+});

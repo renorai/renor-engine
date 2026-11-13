@@ -89,7 +89,7 @@ Renor is connected to this app and remembers across sessions.
 - Do not save secrets, or things that are already in the code.
 ```
 
-Self-hosted, the local tools are `search`, `remember_fact` and `note`; agents map the rule onto them ([tool list](skill/SKILL.md#stdio-renor-engine-mcp)).
+Self-hosted, `renor-engine mcp` lists the same names as the hosted service: `whats_new`, `get_context`, `search_text`, `retrieve_memory` and `remember` ([tool list](skill/SKILL.md#stdio-renor-engine-mcp)). The older names (`search`, `remember_fact`, `note`) are behind `RENOR_MCP_LEGACY_STDIO=1`.
 
 ## What runs on your machine
 

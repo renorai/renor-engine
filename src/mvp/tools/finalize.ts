@@ -3,7 +3,7 @@ import { DIRECTORY_HIDDEN_TOOLS, DIRECTORY_DESCRIPTIONS } from '../directorySurf
 import { checkProfileTools, LINE_TOOLS, renderLines } from '../contextProfile.js';
 import { mapInvalidParams } from '../../mcp/requestErrors.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { tolerateRememberArgs } from '../rememberArgNames.js';
+import { tolerateRememberArgs, wantsStatementHint, REMEMBER_STATEMENT_HINT } from '../rememberArgNames.js';
 import { renderToon } from '../toonResponse.js';
 import { refusalResult, CallExtra, isDashboardCall, isDirectoryCall, OWNER_ONLY_TOOLS, HIVE_TOOLS, registeredToolEntry } from './shared.js';
 
@@ -80,7 +80,15 @@ export function finishToolSurface(ctx: ToolContext): void {
     const params = (request as { params?: { name?: unknown; arguments?: unknown } }).params;
     if (params?.name !== 'remember') return callRemember(request, extra);
     const fixed = tolerateRememberArgs(params.arguments);
-    if (!fixed) return callRemember(request, extra);
+    if (!fixed) {
+      const result = await callRemember(request, extra) as CallToolResult;
+      // A refusal for a missing statement gets one hint line after the SDK's own text; the tool_rejected count is untouched.
+      const first = result?.isError && Array.isArray(result.content) ? result.content[0] : undefined;
+      if (first?.type === 'text' && first.text.includes('Input validation error') && wantsStatementHint(params.arguments)) {
+        return { ...result, content: [{ ...first, text: `${first.text}\n${REMEMBER_STATEMENT_HINT}` }, ...result.content.slice(1)] };
+      }
+      return result;
+    }
     return callRemember({ ...(request as object), params: { ...params, arguments: fixed.args } }, extra);
   });
   // The profile's reply shape: a read's text block as lines (renderLines); structuredContent, where there is one, is unchanged.
