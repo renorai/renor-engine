@@ -18,6 +18,7 @@ import { LATEST_SCHEMA_VERSION } from './db/migrations.js';
 import { parseLedgerEvents, resolveLedgerPath } from './memory/lifecycle.js';
 import { engineStatus, StatusError } from './status.js';
 import { ENGINE_VERSION } from './buildIdentity.js';
+import { latestVersionLine, lookupLatestVersion } from './latestVersion.js';
 import { effectiveLevel, sharingDirFor } from './sharing/state.js';
 
 export type DoctorStatus = 'pass' | 'fail' | 'skip';
@@ -51,6 +52,8 @@ export interface DoctorOptions {
   platform?: NodeJS.Platform;
   /** Overrides the home folder client configs are read from (tests). */
   home?: string;
+  /** Replaces fetch for the latest-version lookup (tests). */
+  fetchImpl?: typeof fetch;
 }
 
 /** Every failure code `doctor` can report; tests keep this list, the source and docs/self-hosting.md in step. */
@@ -444,7 +447,8 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
     }
     checks.push(checkWindows(config, platform));
   }
-  checks.push(pass('versions', 'Versions', `renor-engine ${ENGINE_VERSION}, node ${process.version}, ${platform} ${os.arch()}`));
+  const latest = await lookupLatestVersion({ env, offline, fetchImpl: options.fetchImpl });
+  checks.push(pass('versions', 'Versions', `${latestVersionLine(ENGINE_VERSION, latest)}, node ${process.version}, ${platform} ${os.arch()}`));
   checks.push(checkClients(env, platform, options.home ?? env.HOME ?? env.USERPROFILE ?? os.homedir()));
   return redactDeep({
     ok: checks.every(c => c.status !== 'fail'),

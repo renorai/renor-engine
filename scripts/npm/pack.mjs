@@ -27,6 +27,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readPackResult } from './pack-result.mjs';
 
 const engineRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const require = createRequire(join(engineRoot, 'package.json'));
@@ -119,6 +120,6 @@ const manifest = {
 writeFileSync(join(stage, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
 const packed = execFileSync('npm', ['pack', '--json', '--pack-destination', outDir], { cwd: stage, encoding: 'utf8' });
-const [info] = JSON.parse(packed);
+const info = readPackResult(packed);
 console.log(`${join(outDir, info.filename)}: ${info.size} bytes packed, ${info.unpackedSize} unpacked, ${info.entryCount} files; ` +
   `${bundled.size} packages bundled, depends on ${NATIVE.join(' and ')}`);

@@ -40,6 +40,8 @@ codex mcp add renor-local -- npx -y renor-engine mcp
 
 Restart the agent. The first start downloads about 12 MB, and the first Renor call works about 3 seconds after an empty start. Notes go to `~/.renor` (set `VAULT_PATH` to use another folder).
 
+**Updates.** The command above updates itself: `npx -y renor-engine mcp` fetches the newest release each time the app starts, so there is nothing to upgrade by hand. It needs the npm registry at that moment; with the registry unreachable (offline, blocked, an outage) it does not start, even with a copy on the disk. To see what you have, run `npx -y renor-engine status` (the installed version and, when the registry answers within 2 seconds, the latest; nothing is asked when sharing is off or `DO_NOT_TRACK=1`). To pin a version, write it in the command: `npx -y renor-engine@1.4.9 mcp`. A machine that must start offline can use `npx --prefer-offline -y renor-engine mcp`, which prefers the cached copy; it was measured by `scripts/npx/measure-npx-update.sh`, and what it costs (it may keep an older copy when the registry is reachable) is in that script's table.
+
 **Then add [the memory rule](#the-memory-rule)** to the agent's instructions file, so it saves on its own.
 
 **Cursor or VS Code**, one click:

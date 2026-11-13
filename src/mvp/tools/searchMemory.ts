@@ -21,6 +21,7 @@ import { searchItems } from '../readUsefulness.js';
 import { EVENTS_HITS, DIGEST_HITS, SPAN_HITS, EVIDENCE_WAIT_STATES, EVIDENCE_DAILY_CAP_STATE, markStoredHit, SearchHit, shortScore, toolError, searchResult, callOrigin } from './shared.js';
 import { layeredScopeEnabled, layeredView, layerItems } from '../layeredScope.js';
 import type { ToolContext } from './setup.js';
+import { newExplainTrace, explainReply, explainAdvertised, noteDrop, noteStage, EXPLAIN_ARG_DESCRIPTION } from '../../retrieval/explain.js';
 
 /** Registers search_memory. */
 export function registerSearchMemoryTool(ctx: ToolContext): void {
@@ -34,12 +35,15 @@ export function registerSearchMemoryTool(ctx: ToolContext): void {
       top_k: z.number().int().min(1).max(50).optional().describe('Max matches (default 50), not counting the short statements the session expansion adds to them'),
       scope: z.string().optional().describe('Memory scope: "global" (default) or scope:<slug> / project:<slug>'),
       include_history: z.boolean().optional().describe('Also return superseded (corrected) memory events, labelled as historical. Default false: only current memory.'),
+      ...(explainAdvertised(ctx.profile, ctx.toolProfile) ? { explain: z.boolean().optional().describe(EXPLAIN_ARG_DESCRIPTION) } : {}),
     },
   }, async (args, extra) => {
     try {
       const topK = args.top_k ?? defaultSearchTopK();
       const floor = searchHitFloor(engine.modelKey);
       const probe: RetrievalProbe = {};
+      const explain = newExplainTrace((args as { explain?: boolean }).explain);
+      if (explain) probe.explain = explain;
       const laidOut = readerLayoutEnabledFor(args.query);
       const semantic = await engineSearchMemory(db, engine, config.memoryDir, args.query, topK, args.scope, evidence, args.include_history === true, config.ledgerRelPath, probe, digests, undefined, floor > 0, laidOut);
       const observations = !semantic.ok && observeEnabled()
@@ -80,6 +84,14 @@ export function registerSearchMemoryTool(ctx: ToolContext): void {
         const floored = floor === 0 ? null : applyHitFloor(hits, floor, searchHitFloorKeep());
         // RENOR_LAYERED_SCOPE (off by default), with no scope passed: another project's hits are left out, or labelled when the
         // query names that project or no other hit is left (layeredScope.ts).
+        if (explain) {
+          if (floored) {
+            const kept = new Set<unknown>(floored.hits);
+            for (const hit of hits) if (!kept.has(hit)) noteDrop(explain, (hit as { chunkId?: number }).chunkId ?? hit.notePath, 'floor');
+            explain.floor = floor;
+          }
+          noteStage(explain, 'reply', floored ? floored.hits.length : hits.length);
+        }
         const unlayered = floored ? floored.hits : hits;
         const page = args.scope === undefined && layeredScopeEnabled()
           ? layerItems(layeredView(db, callOrigin(extra, config), args.query), [], unlayered, f => f, hit => hit as { notePath: string; text: string; headingPath?: string }).memories
@@ -107,6 +119,7 @@ export function registerSearchMemoryTool(ctx: ToolContext): void {
           ...(floored ? { floor: { similarity: floor, withheld: floored.withheld } } : {}),
         };
         result = await applyAnswerCheck(result, args.query, answerChecker);
+        if (explain) result = { ...result, explain: explainReply(explain) };
         // What the read served is the page the caller is shown, floor included: a hit the floor left out was not served, and
         // a page it left empty served nothing, whatever the verdict judged over every hit.
         usefulness.measure('search_memory', () => {

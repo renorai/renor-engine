@@ -9,6 +9,7 @@ import { engineSearchMemory, engineSearchText, type Engine } from './engine';
 import { leadingSummaryHits } from '../digests/digests';
 import { normalizeScope, savedScopeMatches } from './scope';
 import { contextDistinctEnabled, distinctMemories } from './contextDistinct';
+import { nameAwareRecallEnabled, nameAwareMemories, NOTHING_SAVED_NEXT } from './contextNameAware';
 import { contextNewerFirstEnabled, newerFirstMemories } from './contextNewerFirst';
 import { adaptiveDepthRules, shortPageDrops } from './contextAdaptiveDepth';
 import { claimsReservedEntrySource, eventMarker, factAuthorsByEvent } from './factMarkers';
@@ -47,6 +48,7 @@ import { hasReplacements, withReplacements, type ReplacedLabel, type Replacement
 import { markRetrieved } from '../callPhases';
 import { staleStatusOf, statusFreshnessMode } from '../memory/statusFacts';
 import { APPROVED_RULES_NOTE, loadPinnedRules, PINNED_RULES_NOTE } from './pinnedRules';
+import { noteDrop } from '../retrieval/explain.js';
 import { buildDatedOutline, replyCeiling, datedOutlineBudget, datedOutlineEnabled, datedOutlineMinSimilarity, listOutlineCandidates, withoutReplaced, withDatedOutline, MIN_OUTLINE_TOKENS, type OutlineCandidate } from './datedOutline';
 import { turnScorer, vectorsMeanSomething } from '../retrieval/readerEvents';
 import { ruleApprovalsEnabled } from './ruleApprovals';
@@ -54,6 +56,8 @@ import { observeEnabled } from './observations';
 import { layeredScopeEnabled, layeredView, layerItems } from './layeredScope';
 
 export interface AgentContextOptions {
+  /** A collector the caller asked for (`explain: true`): the read records its stage counts and dropped ids in it (retrieval/explain.ts). */
+  explainTrace?: import('../retrieval/explain.js').ExplainTrace;
   query?: string;
   scope?: string;
   /** The project scope the connection names (x-renor-scope, written by `renor connect` into a project config). Read only as the scope of an observation read (RENOR_OBSERVE). */
@@ -1528,7 +1532,7 @@ export async function buildAgentContext(
   // A search that could not run (not one that found nothing), named so an empty reply is never mistaken for an empty store.
   const degraded: string[] = [];
   let keywordFailed = false;
-  const probe: RetrievalProbe = {};
+  const probe: RetrievalProbe = options.explainTrace ? { explain: options.explainTrace } : {};
 
   if (query) {
     // Preserve the uncapped get_context default; an explicit environment cap still wins.
@@ -1604,7 +1608,11 @@ export async function buildAgentContext(
     ? inReadSnapshot(db, () => layerItems(layered, allFacts, allMemories, f => f, m => m, m => m.matched !== false && m.reason !== SESSION_EXPAND_REASON))
     : null;
   const facts = layeredPick ? layeredPick.facts : allFacts;
-  const deduplicated = layeredPick ? layeredPick.memories : allMemories;
+  const unnamed = layeredPick ? layeredPick.memories : allMemories;
+  // RENOR_NAME_AWARE_RECALL (default off until the replay and RenorBench result is attached): a note naming the requested service comes first, a note about another service is left out, and a request about a name nothing says anything on is told so.
+  const nameAware = query && nameAwareRecallEnabled(options.env) ? nameAwareMemories(query, unnamed) : null;
+  const deduplicated = nameAware ? nameAware.memories : unnamed;
+  if (nameAware?.nothingSaved) notice = `${notice ? `${notice} ` : ''}Nothing saved about ${nameAware.nothingSaved}. ${NOTHING_SAVED_NEXT}`;
   // RENOR_CONTEXT_DISTINCT (off by default): a memory that repeats the reply's facts or another memory is not listed.
   const distinct = contextDistinctEnabled(options.env) ? distinctMemories(deduplicated, facts, isLedger) : deduplicated;
   // RENOR_CONTEXT_NEWER_FIRST (off by default): of two near-identical notes, the newer is listed first and the older is tagged `earlier`.
@@ -2069,6 +2077,12 @@ export async function buildAgentContext(
   const reply = honestyLane ? withLane(kept, body) : body;
   // The budget's final decision, for the learning log (rankingTrace.ts): which of the candidates it considered it kept.
   currentRankingTrace()?.budgeted(candidateMemories, kept.memories);
+  // `explain`: a candidate memory the reply's token budget left out is itemised here, apart from the top-K cut (search floor).
+  if (options.explainTrace) {
+    for (const memory of candidateMemories) {
+      if (!kept.memories.includes(memory)) noteDrop(options.explainTrace, memory.headingPath ? `${memory.notePath}#${memory.headingPath}` : memory.notePath, 'reply-budget');
+    }
+  }
   if (rankedBy === 'session_date') {
     // Selection is finished, including the honesty lane's extra statements. Render those statements with their
     // session: appending a newest update after an older match contradicts the order the reply promises. Summary

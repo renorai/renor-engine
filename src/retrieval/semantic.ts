@@ -1,3 +1,4 @@
+import type { ExplainTrace } from './explain.js';
 import Database from '../db/sqlite';
 import { inReadSnapshot } from '../db/readCache';
 import { prepareOnce } from '../db/statements';
@@ -20,6 +21,8 @@ export interface RetrievalProbe {
   topHit?: { notePath: string; headingPath?: string; text: string };
   /** Every returned semantic hit that shows as something, as a memory lists it, with its raw cosine (set by engineSearchMemory). */
   similarities?: Array<{ notePath: string; headingPath?: string; text: string; similarity: number }>;
+  /** Set by a caller that asked for `explain`: the read records its stage counts and dropped ids here (explain.ts). */
+  explain?: ExplainTrace;
 }
 
 interface EmbeddingProviderLike {

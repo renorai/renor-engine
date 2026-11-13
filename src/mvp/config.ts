@@ -90,7 +90,7 @@ export interface MvpConfig {
    * `vertex`: Vertex AI gemini-embedding-001 (GCP credits; service-account key file).
    * Dimensions must match the sqlite-vec table; do not mix providers in one book.
    */
-  embeddingProvider: 'none' | 'local' | 'openai' | 'vertex';
+  embeddingProvider: 'none' | 'local' | 'openai' | 'vertex' | 'eval-hash';
   embeddingApiKey?: string;
   embeddingModel?: string;
   embeddingBaseURL?: string;
@@ -314,10 +314,20 @@ export function loadMvpConfig(): MvpConfig {
     throw new Error('MVP_MCP_SESSION_TTL_MS must be an integer between 1000 and 86400000');
   }
   const embeddingRaw = (process.env.MVP_EMBEDDING_PROVIDER ?? process.env.EMBEDDING_PROVIDER ?? 'none').trim().toLowerCase();
+  // The replay harness only (scripts/eval/replay-sweep): RENOR_REPLAY_HASH_EMBEDDINGS=1 replaces `none` with the offline
+  // lexical-hash stand-in so the semantic path can be replayed for structure, tokens and latency. It makes no quality
+  // claim, and a production or hosted process refuses it.
+  const replayHash = (process.env.RENOR_REPLAY_HASH_EMBEDDINGS ?? '').trim() === '1';
+  if (replayHash) {
+    if ((process.env.NODE_ENV ?? '').trim().toLowerCase() === 'production' || gatewaySecret || (process.env.MVP_INSTANCE_ID ?? '').trim()) {
+      throw new Error('RENOR_REPLAY_HASH_EMBEDDINGS is for the replay harness only; it is refused when NODE_ENV=production or a hosted setting (MVP_GATEWAY_SECRET, MVP_INSTANCE_ID) is present');
+    }
+    if (embeddingRaw !== 'none') throw new Error('RENOR_REPLAY_HASH_EMBEDDINGS=1 needs MVP_EMBEDDING_PROVIDER unset or none');
+  }
   if (embeddingRaw !== 'none' && embeddingRaw !== 'local' && embeddingRaw !== 'openai' && embeddingRaw !== 'vertex') {
     throw new Error('MVP_EMBEDDING_PROVIDER must be none, local, openai, or vertex');
   }
-  const embeddingProvider = embeddingRaw as 'none' | 'local' | 'openai' | 'vertex';
+  const embeddingProvider = (replayHash ? 'eval-hash' : embeddingRaw) as MvpConfig['embeddingProvider'];
   let embeddingApiKey: string | undefined;
   let embeddingModel: string | undefined;
   let embeddingBaseURL: string | undefined;

@@ -6,6 +6,7 @@ import { walkVault } from './indexer/walker.js';
 import { effectiveLevel, sharingDirFor } from './sharing/state.js';
 import type { SharingLevel } from './sharing/fields.js';
 import { ENGINE_VERSION } from './buildIdentity.js';
+import { latestVersionLine, type LatestVersion } from './latestVersion.js';
 
 export interface EngineStatus {
   engineVersion: string;
@@ -21,6 +22,8 @@ export interface EngineStatus {
   search: 'keyword-only' | 'semantic';
   embeddingProvider: string;
   sharing: SharingLevel;
+  /** The npm registry's answer, added by the `status` command; absent when `engineStatus` is used alone. */
+  latest?: LatestVersion;
 }
 
 /** The folder or index cannot be opened: the one reason `status` exits 1. */
@@ -93,7 +96,7 @@ export async function engineStatus(env: NodeJS.ProcessEnv = process.env): Promis
 
 export function statusLines(s: EngineStatus): string[] {
   const lines = [
-    `renor-engine ${s.engineVersion}, node ${s.nodeVersion}`,
+    s.latest ? `${latestVersionLine(s.engineVersion, s.latest)}, node ${s.nodeVersion}` : `renor-engine ${s.engineVersion}, node ${s.nodeVersion}`,
     `memory folder: ${s.memoryFolder}`,
   ];
   if (s.notes === 0 && s.staleNotes === 0) {

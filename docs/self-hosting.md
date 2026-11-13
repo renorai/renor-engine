@@ -46,6 +46,10 @@ renor-engine: Renor needs Node 22.16.0 or newer (it uses Node's built-in SQLite)
 
 **Start from a clean index.** `.semantic-memory/index.db` is derived data. `node dist/cli.js rebuild` (or deleting it and running `node dist/cli.js index`) recreates it from the folder; saved facts are replayed from `System/Memory Events Ledger.md`.
 
+## Updates and the npm registry
+
+`npx -y renor-engine mcp` fetches the newest release each time the app starts, so nothing needs upgrading by hand. It needs the npm registry at that moment: with the registry unreachable (offline, blocked, an outage) it does not start, even with a copy on the disk. `renor-engine status` and `renor-engine doctor` show the installed version and, when the registry answers within 2 seconds, the latest one; they ask nothing when sharing is off, `DO_NOT_TRACK=1` is set, or `--offline` is given. Pin a version in the command (`npx -y renor-engine@1.4.9 mcp`). A machine that must start offline can use `npx --prefer-offline -y renor-engine mcp`; `scripts/npx/measure-npx-update.sh` measures both cases in an isolated cache.
+
 ## Building from a ZIP or tarball
 
 `npm run build` first runs `scripts/ci/stamp-build.mjs`, which writes `dist/BUILD.json`; the HTTP server's `/version` reports that commit. In a git checkout it reads the commit from git. A copy without `.git` (GitHub **Download ZIP**, a tarball, `git archive`) has no commit to read, so the build stops until `RENOR_BUILD_COMMIT` is set to a 7–40 character hex revision. It only affects the stamp: the code builds and runs the same either way. Use the revision you downloaded if you know it; `0000000` passes the check, and `/version` will report it.
@@ -68,6 +72,19 @@ node scripts/smoke-self-hosted.mjs
 | `eval-hash` | Deterministic offline stand-in used by the tests. Makes no quality claim. |
 
 After you change the provider on a folder that already holds notes, run `node dist/cli.js rebuild` so they are embedded again; a plain `index` skips notes that have not changed. [ENVIRONMENT-VARIABLES.md](ENVIRONMENT-VARIABLES.md) lists the settings you may want and their defaults; [the reference](ENVIRONMENT-VARIABLES-REFERENCE.md) lists every other variable.
+
+## Backup, verify and restore
+
+Three commands keep a memory folder safe without touching the index, which `rebuild` makes again:
+
+```
+node dist/cli.js backup --out my-memory.tar.gz     # notes and ledger plus MANIFEST.json (SHA-256 of every file)
+node dist/cli.js verify my-memory.tar.gz           # checks every checksum, replays the ledger into a temporary index
+node dist/cli.js restore my-memory.tar.gz --to ~/memory-restored   # only into an empty folder
+VAULT_PATH=~/memory-restored node dist/cli.js rebuild
+```
+
+`--out` defaults to `renor-backup-<date>.tar.gz`. `verify` exits 1 and names the file on a mismatch; `restore` verifies first and refuses a non-empty target or an archive path that would leave the target. The archive is not encrypted. `RENOR_ENGINE_BACKUP=0` removes the three commands.
 
 ## Checking a folder
 

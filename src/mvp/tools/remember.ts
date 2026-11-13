@@ -12,6 +12,26 @@ import { blankStatementFilled, statementSchema, omittedWhenBlank, TIMEZONE_ARG, 
 import { layeredScopeEnabled, recordSaveOrigin } from '../layeredScope.js';
 import type { ToolContext } from './setup.js';
 
+const RECEIPT_ECHO_CHARS = 80;
+/** The off switch: RENOR_FULL_SAVE_RECEIPT=1 (or on, true, yes) echoes the whole statement in the receipt, as before. */
+export const FULL_SAVE_RECEIPT_FLAG = 'RENOR_FULL_SAVE_RECEIPT';
+
+/**
+ * What a save receipt says about the statement. A statement of 80 characters or fewer, or the flag set, is echoed unchanged
+ * (today's reply byte for byte). A longer one is cut to its first 80 characters plus an ellipsis, with its full length and a
+ * plain note that the whole text was stored; the stored text and read_memory are untouched.
+ */
+export function echoedStatement(statement: string, env: NodeJS.ProcessEnv = process.env): { statement: string; statementChars?: number; statementStored?: string } {
+  if (/^(1|true|yes|on)$/i.test((env[FULL_SAVE_RECEIPT_FLAG] ?? '').trim())) return { statement };
+  const chars = Array.from(statement);
+  if (chars.length <= RECEIPT_ECHO_CHARS) return { statement };
+  return {
+    statement: `${chars.slice(0, RECEIPT_ECHO_CHARS).join('')}…`,
+    statementChars: chars.length,
+    statementStored: 'Stored whole, word for word; read_memory with the receipt id returns all of it.',
+  };
+}
+
 /** Registers remember: save one statement (or a subject, predicate, object) to memory. */
 export function registerRememberTool(ctx: ToolContext): void {
   const { db, config, engine, digests, usefulness, dreamer, jsonResult, readerOf, saveMoment, statusLedger, server, recordNoteSave, mapContext, replacementReceipt, inferReplacesFor } = ctx;
@@ -140,7 +160,7 @@ export function registerRememberTool(ctx: ToolContext): void {
         return jsonResult({
           ok: receipt.ok,
           mode: 'fact',
-          statement: args.statement,
+          ...echoedStatement(args.statement),
           action: receipt.action,
           eventId: receipt.eventId,
           subject: receipt.subject,
@@ -158,7 +178,8 @@ export function registerRememberTool(ctx: ToolContext): void {
       }
 
       const source = sourceOf(args.source, extra, config);
-      const inferred = replaces === undefined ? await inferReplacesFor(args.statement, args.scope, source ?? 'mcp:remember') : undefined;
+      const inference = replaces === undefined ? await inferReplacesFor(args.statement, args.scope, source ?? 'mcp:remember') : {};
+      const inferred = inference.id;
       const note = await engineRememberNote(config, args.statement, undefined, source ?? 'mcp:remember', args.scope, args.timezone);
       recordNoteSave(note.file, args.statement, source, note.scope);
       if (layeredScopeEnabled() && note.id) {
@@ -172,12 +193,13 @@ export function registerRememberTool(ctx: ToolContext): void {
       return jsonResult({
         ok: true,
         mode: 'note',
-        statement: args.statement,
+        ...echoedStatement(args.statement),
         file: note.file,
         scope: note.scope,
         ...(note.id ? { id: note.id } : {}),
         ...adjusted,
         ...replaced,
+        ...(inference.possibly && inferred === undefined ? { possiblyReplaces: inference.possibly } : {}),
         ...(await indexSavedNote(db, config, engine, digests, note.file)),
       });
     } catch (err) {

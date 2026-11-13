@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { openReadOnlyDb } from '../db/client';
 import { BUNDLE_FORMAT, ImportBundle, ImportChunk, ImportEntity, ImportFact, ImportNote } from './types';
+import { isVendorKind, readVendorSource, vendorSourcesEnabled } from './sources/vendor';
 
 /**
  * Source adapters.
@@ -545,6 +546,9 @@ export function readSource(
       exclude: filter.exclude,
       limit: filter.limit,
     });
+  }
+  if (isVendorKind(kind) && vendorSourcesEnabled()) {
+    return readVendorSource(kind, target, { include: filter.include, exclude: filter.exclude, limit: filter.limit });
   }
   throw new Error(`unknown source kind ${JSON.stringify(kind)}; expected renor-index or bundle`);
 }

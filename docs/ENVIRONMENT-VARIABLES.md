@@ -16,6 +16,7 @@ Everything else is in [ENVIRONMENT-VARIABLES-REFERENCE.md](ENVIRONMENT-VARIABLES
 | `PRIORITY_PATHS` | empty | Comma-separated path fragments, for example `Projects/,Areas/Work/`. A hit from a note whose path matches gets a score bonus of 0.1. |
 | `RENOR_OWNER_NAMES` | unset | Comma-separated names. The first is canonical and the others are aliases of it; "I", "me", "my" and these names then resolve to your own facts. Unset, only case and Unicode form are folded. |
 | `RENOR_CONNECTION_NAME` | unset | Names this connection of the command-line server. With a name that does not render empty (not blank, not `unnamed`) it also publishes the five hive tools, 13 tools instead of 8. Read once at start. One live process may hold a name in a notes folder. |
+| `RENOR_IMPORT_VENDOR_SOURCES` | on | `0`, `false`, `off` or `no` makes `renor-import` refuse the `mem0:` and `zep:` source names as unknown sources, as before they existed. |
 
 ## Search by meaning (embeddings)
 

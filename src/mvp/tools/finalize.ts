@@ -3,6 +3,7 @@ import { DIRECTORY_HIDDEN_TOOLS, DIRECTORY_DESCRIPTIONS } from '../directorySurf
 import { checkProfileTools, LINE_TOOLS, renderLines } from '../contextProfile.js';
 import { mapInvalidParams } from '../../mcp/requestErrors.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { tolerateRememberArgs } from '../rememberArgNames.js';
 import { renderToon } from '../toonResponse.js';
 import { refusalResult, CallExtra, isDashboardCall, isDirectoryCall, OWNER_ONLY_TOOLS, HIVE_TOOLS, registeredToolEntry } from './shared.js';
 
@@ -70,6 +71,17 @@ export function finishToolSurface(ctx: ToolContext): void {
           })
           : tools,
     };
+  });
+  // RENOR_REMEMBER_ARG_NAMES (default ON, rememberArgNames.ts): a remember call whose text came under another argument name is
+  // rewritten before the schema checks it; off leaves every call as sent.
+  const callRemember = listHandlers.get('tools/call');
+  if (!callRemember) throw new Error('tools/call handler missing');
+  listHandlers.set('tools/call', async (request, extra) => {
+    const params = (request as { params?: { name?: unknown; arguments?: unknown } }).params;
+    if (params?.name !== 'remember') return callRemember(request, extra);
+    const fixed = tolerateRememberArgs(params.arguments);
+    if (!fixed) return callRemember(request, extra);
+    return callRemember({ ...(request as object), params: { ...params, arguments: fixed.args } }, extra);
   });
   // The profile's reply shape: a read's text block as lines (renderLines); structuredContent, where there is one, is unchanged.
   if (profile.response === 'lines') {

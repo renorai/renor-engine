@@ -3,6 +3,9 @@ import { spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { removeTempDirsAfterAll } from '../helpers/tmpCleanup';
+
+removeTempDirsAfterAll();
 
 // #1280: an old Node must get one plain message, not a raw syntax or module error.
 // eslint-disable-next-line @typescript-eslint/no-require-imports

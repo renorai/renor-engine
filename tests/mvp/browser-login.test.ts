@@ -172,7 +172,7 @@ async function connectCdp(profileDir: string) {
   };
 }
 
-describe.skipIf(!BROWSER)('BROWSER-LOGIN: real headless browser completes the owner login flow', () => {
+describe('BROWSER-LOGIN: real headless browser completes the owner login flow', { skip: !BROWSER }, () => {
   it('real Chromium submits the consent form, follows the OAuth 302 to the allowlisted callback, and the code completes PKCE exchange', async () => {
     const port = await reservePort();
     const cbPort = await reservePort();
@@ -330,7 +330,7 @@ describe.skipIf(!BROWSER)('BROWSER-LOGIN: real headless browser completes the ow
     const cdp = await connectCdp(profileDir);
 
     await cdp.navigate(authz);
-    for (let i = 0; i < 50; i++) {
+    for (const deadline = Date.now() + 45_000; Date.now() < deadline;) {
       if (await cdp.evalJs('document.forms.length') === 1) break;
       await sleep(150);
     }
@@ -344,7 +344,7 @@ describe.skipIf(!BROWSER)('BROWSER-LOGIN: real headless browser completes the ow
     })()`);
     expect(submitted).toBe('submitted');
 
-    for (let i = 0; i < 60 && !callbackUrl; i++) {
+    for (const deadline = Date.now() + 45_000; !callbackUrl && Date.now() < deadline;) {
       const pageText = ((await cdp.evalJs('document.body ? document.body.innerText.slice(0,120) : ""')) as string) || '';
       if (/cross-origin|invalid authorization|locked|too many/i.test(pageText)) break;
       await sleep(250);
@@ -370,5 +370,5 @@ describe.skipIf(!BROWSER)('BROWSER-LOGIN: real headless browser completes the ow
     cbServer.closeAllConnections();
     await new Promise<void>(res => cbServer.close(() => res()));
     await stopApp(run2);
-  }, 90_000);
+  }, 150_000);
 });

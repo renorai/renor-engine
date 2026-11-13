@@ -9,10 +9,11 @@ import { engineStatus } from '../engine.js';
 import { identityLine } from '../identity.js';
 import { envFlagOn, captureFlagsOn, toolError } from './shared.js';
 import type { ToolContext } from './setup.js';
+import { inferredReplacements } from '../../memorymap/replacements.js';
 
 /** Registers memory_status. */
 export function registerMemoryStatusTool(ctx: ToolContext): void {
-  const { db, config, engine, digests, toolProfile, jsonResult, server } = ctx;
+  const { db, config, engine, digests, toolProfile, jsonResult, server, mapContext } = ctx;
   // The capture_features field is in the advertised schema only where a server capture feature is on when the server is built,
   // so the tool list of a workspace without them is what it always was (the same rule as pending_rule_notes above).
   const captureSchemaOn = saveMomentMode() !== 'off' || envFlagOn('RENOR_STATUS_LEDGER') || pinnedRulesEnabled();
@@ -64,10 +65,13 @@ export function registerMemoryStatusTool(ctx: ToolContext): void {
         capture_server: captureServerOn(),
       };
       const captureOn = captureFlagsOn();
+      // Audit of links the engine inferred (RENOR_INFER_REPLACES): ids and dates only. Present only when there is at least one, so a workspace without any reports what it always did.
+      const inferredLinks = await inferredReplacements(mapContext()).catch(() => []);
       const body = {
         ...engineStatus(db, engine, config),
         // Present only where a server capture feature is switched on, so a workspace without them reports what it always did (the same rule as digests below).
         ...(captureOn ? { capture_features: captureFeatures } : {}),
+        ...(inferredLinks.length > 0 ? { inferred_replacements: { count: inferredLinks.length, links: inferredLinks.slice(-50) } } : {}),
         renor: identityLine(extra?.requestInfo?.headers),
         // Named only on a connection that chose the coding profile (?tools=coding): the full set reports what it always did.
         ...(toolProfile === 'coding' ? { tool_profile: 'coding' } : {}),

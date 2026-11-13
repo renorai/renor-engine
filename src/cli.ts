@@ -39,6 +39,8 @@ import { DIGEST_HIT_PATH, attachDigest, digestIndexedNotes, resolveDigestOptions
 import { ENGINE_VERSION } from "./buildIdentity";
 import { engineStatus, statusLines, StatusError } from "./status.js";
 import { runDoctor, doctorMarkdown } from "./doctor.js";
+import { lookupLatestVersion } from "./latestVersion.js";
+import { backupEnabled, BackupError, createBackup, defaultBackupName, restoreBackup, verifyBackup } from "./backup.js";
 import { APPS, isApp, installRule, removeRule, mcpEntry, rulePath } from "./connect.js";
 
 /**
@@ -507,11 +509,13 @@ program
 
 program
   .command("status")
-  .description("Show in a few lines whether the setup works: folder, notes, index, search, sharing. Makes no network call.")
+  .description("Show in a few lines whether the setup works: folder, notes, index, search, sharing. One request, capped at 2 seconds, asks the npm registry for the latest version; none when sharing is off, DO_NOT_TRACK=1 or --offline.")
   .option("--json", "print the same fields as one JSON object")
-  .action(async (opts: { json?: boolean }) => {
+  .option("--offline", "make no network call (do not look up the latest version)")
+  .action(async (opts: { json?: boolean; offline?: boolean }) => {
     try {
       const status = await engineStatus(process.env);
+      status.latest = await lookupLatestVersion({ env: process.env, offline: opts.offline });
       if (opts.json) process.stdout.write(`${JSON.stringify(status)}\n`);
       else statusLines(status).forEach((l) => process.stdout.write(`${l}\n`));
     } catch (err) {
@@ -521,6 +525,44 @@ program
       process.exit(1);
     }
   });
+
+if (backupEnabled()) {
+  const backupFail = (name: string, err: unknown): never => {
+    if (!(err instanceof BackupError)) throw err;
+    process.stderr.write(`renor-engine ${name}: ${err.message}\n`);
+    process.exit(1);
+  };
+  program
+    .command("backup")
+    .description("Archive the memory folder (Markdown notes and the ledger, not the index) with a checksum manifest")
+    .option("--out <file>", "archive to write (default: renor-backup-<date>.tar.gz)")
+    .action((opts: { out?: string }) => {
+      try {
+        const r = createBackup(loadConfig().vaultPath, opts.out ?? defaultBackupName());
+        console.log(`Backed up ${r.files} file(s), ${r.bytes} bytes, to ${r.out}`);
+      } catch (err) { backupFail("backup", err); }
+    });
+  program
+    .command("verify <archive>")
+    .description("Check every checksum of a backup and replay its ledger into a temporary index")
+    .action(async (archive: string) => {
+      try {
+        const r = await verifyBackup(archive);
+        console.log(`OK: ${r.notes} notes, ${r.facts} facts`);
+      } catch (err) { backupFail("verify", err); }
+    });
+  program
+    .command("restore <archive>")
+    .description("Verify a backup, then extract it into an empty folder")
+    .requiredOption("--to <folder>", "empty folder to restore into")
+    .action(async (archive: string, opts: { to: string }) => {
+      try {
+        const r = await restoreBackup(archive, opts.to);
+        console.log(`Restored ${r.notes} notes, ${r.facts} facts, to ${r.target}`);
+        console.log(`Next: VAULT_PATH=${r.target} renor-engine rebuild`);
+      } catch (err) { backupFail("restore", err); }
+    });
+}
 
 program
   .command("doctor")

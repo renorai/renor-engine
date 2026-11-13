@@ -49,6 +49,7 @@ import { observeEnabled, searchObservations } from './observations';
 import type { IdleMonitor } from './idle';
 import type { EvidenceExtractor } from '../evidence/secondPass';
 import { embeddingModelKey } from './contextRelevance';
+import { EvalHashEmbeddingProvider } from '../eval/hashEmbedding';
 import { sanitizeErrorMessage } from './sanitize';
 import { digestItemsToHit, digestTable, leadingSummaryHits, resolveDigestOptions, type DigestOptions } from '../digests/digests';
 import { DigestWorker } from '../digests/worker';
@@ -182,6 +183,7 @@ export function createEmbeddingProvider(
   pooled = false,
 ): EmbeddingProvider | null {
   if (config.embeddingProvider === 'none') return null;
+  if (config.embeddingProvider === 'eval-hash') return new EvalHashEmbeddingProvider();
   if (config.embeddingProvider === 'local') {
     return new LocalEmbeddingProvider(config.embeddingModel);
   }

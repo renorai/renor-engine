@@ -39,7 +39,7 @@ export const HOSTED_STDIO_TOOLS = [
   },
   {
     name: 'search_text',
-    description: 'Keyword search (BM25) over indexed notes: the query is one exact phrase, and OR, AND, NEAR and * are plain words. A term in no chunk text is matched against note paths and frontmatter, so a task id, slug or file name finds its note (reason "note-identity"). Every hit carries session_date: read it before trusting an old hit.',
+    description: 'Keyword search (BM25) over indexed notes: the query is one exact phrase, and OR, AND, NEAR and * are plain words. When no embeddings are set and the phrase finds nothing, the words of a sentence are searched too (the reply then carries fallback "any-word"). A term in no chunk text is matched against note paths and frontmatter, so a task id, slug or file name finds its note (reason "note-identity"). Every hit carries session_date: read it before trusting an old hit.',
     inputSchema: obj({
       query: { type: 'string', description: 'Words to find, matched as one exact phrase' },
       top_k: { type: 'number', description: 'Max hits (1-50, default 20)' },

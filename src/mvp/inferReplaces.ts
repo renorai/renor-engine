@@ -42,28 +42,50 @@ const MIN_OVERLAP = 0.4;
 const CROSS_MIN_SHARED = 3;
 const CROSS_MIN_OVERLAP = 0.6;
 
+/** A new note this many times longer (in content words) than the older one is a different kind of note, not its correction. */
+const MAX_LENGTH_RATIO = 4;
+/** Minimum share of the NEW note's content words that the older note also holds (the overlap read the other way round). */
+const MIN_BACK_OVERLAP = 0.2;
+
+export interface ReplaceInference { hit: ReplaceCandidate | null; possiblyReplaces: ReplaceCandidate | null }
+
+/** The cue must stand in a sentence that itself shares a content word with the older note: a cue elsewhere in a long note says nothing about it. */
+function cueSentenceShares(text: string, theirs: Set<string>): boolean {
+  for (const sentence of text.split(/[.!?;\n]+/)) {
+    if (!CUE.test(sentence)) continue;
+    for (const w of tokens(sentence, true)) if (theirs.has(w)) return true;
+  }
+  return false;
+}
+
 /**
  * The earlier note this save most likely corrects, or null. Same scope only (never across workspaces or scopes); a note from another client needs a stricter match; the newest of the
- * best-overlapping candidates wins, and a tie between different notes at the top score is left unlinked.
+ * best-overlapping candidates wins, and a tie between different notes at the top score is left unlinked. The overlap is counted both ways, the cue must share content words
+ * in its own sentence, a named subject on either side must appear in the other note, and a new note far longer than the older one is never linked. Where the evidence is
+ * weak but not absent, `possiblyReplaces` names the closest candidate and nothing is linked.
  */
-export function inferReplaced(
+export function inferReplacedDetail(
   text: string,
   scope: NormalizedScope,
   source: string | undefined,
   candidates: ReplaceCandidate[],
-): ReplaceCandidate | null {
-  if (!readsAsCorrection(text)) return null;
+): ReplaceInference {
+  const none: ReplaceInference = { hit: null, possiblyReplaces: null };
+  if (!readsAsCorrection(text)) return none;
   const mine = tokens(text, true);
   const saver = sourceKey(source);
   const mySubject = subjectOf(text);
   const lowerText = text.toLocaleLowerCase();
   let best: { c: ReplaceCandidate; score: number } | null = null;
   let tie = false;
+  let weak: { c: ReplaceCandidate; score: number } | null = null;
   for (const c of candidates) {
     if (!notePathMatchesScope(c.path, scope)) continue;
     const theirs0 = c.excerpt.toLocaleLowerCase();
     const theirSubject = subjectOf(c.excerpt);
     if (mySubject && theirSubject && !theirs0.includes(mySubject) && !lowerText.includes(theirSubject)) continue;
+    // A named subject in the new note must appear in the older one (the older note's own hyphenated words, a command name, say nothing about its subject).
+    if (mySubject && !theirSubject && !theirs0.includes(mySubject)) continue;
     const theirs = tokens(c.excerpt, true);
     if (theirs.size === 0) continue;
     let shared = 0;
@@ -72,8 +94,22 @@ export function inferReplaced(
     // A note from another client (the usual case: Codex corrects what Claude saved) needs a stricter match than the same client's own.
     const cross = sourceKey(c.source) !== saver;
     if (shared < (cross ? CROSS_MIN_SHARED : MIN_SHARED) || score < (cross ? CROSS_MIN_OVERLAP : MIN_OVERLAP)) continue;
+    if (!weak || score > weak.score) weak = { c, score };
+    if (mine.size > MAX_LENGTH_RATIO * theirs.size) continue;
+    if (shared / mine.size < MIN_BACK_OVERLAP) continue;
+    if (!cueSentenceShares(text, theirs)) continue;
     if (!best || score > best.score || (score === best.score && c.at > best.c.at)) { best = { c, score }; tie = false; }
     else if (score === best.score && c.at === best.c.at) tie = true;
   }
-  return best && !tie ? best.c : null;
+  if (best && !tie) return { hit: best.c, possiblyReplaces: null };
+  return { hit: null, possiblyReplaces: tie || !weak ? null : weak.c };
+}
+
+export function inferReplaced(
+  text: string,
+  scope: NormalizedScope,
+  source: string | undefined,
+  candidates: ReplaceCandidate[],
+): ReplaceCandidate | null {
+  return inferReplacedDetail(text, scope, source, candidates).hit;
 }

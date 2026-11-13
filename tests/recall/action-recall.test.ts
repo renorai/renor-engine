@@ -8,6 +8,9 @@ import type { GetContextCaller } from '../../src/recall/autoRecall';
 import {
   actionRecall, classifyAction, gateFirstTime, loadActionConfig, runActionHook, selectRules, type ActionRecallConfig,
 } from '../../src/recall/actionRecall';
+import { removeTempDirsAfterAll } from '../helpers/tmpCleanup';
+
+removeTempDirsAfterAll();
 
 /**
  * Pre-action recall (src/recall/actionRecall.ts): off does nothing, only gated actions are looked up, superseded rules

@@ -9,6 +9,9 @@ import { openExtractorClient, resolveExtractorClientConfig } from '../../src/ext
 import { buildWritePathExtractors } from '../../src/cli-extractors';
 import { FACTS_MODEL } from '../../src/extraction/typedFacts';
 import { removeTestDir } from '../helpers/removeDb';
+import { removeTempDirsAfterAll } from '../helpers/tmpCleanup';
+
+removeTempDirsAfterAll();
 
 /**
  * An armed structured-row flag with no extractor provider must fail the

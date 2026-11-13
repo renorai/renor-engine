@@ -7,6 +7,7 @@ import { writeBundle } from './bundle-write';
 import { ImportBundle } from './types';
 import { readMarkdownSource } from './markdown';
 import type { GuardSkips } from './secretScreen';
+import { isVendorKind, vendorSourcesEnabled } from './sources/vendor';
 
 /**
  * `renor-import` — bring existing memory into a workspace.
@@ -50,6 +51,11 @@ Source spec:
                                    brain). Opened READ-ONLY. Combine with --source-root.
   bundle:<path-to.jsonl>           a renor-memory-export/v1 bundle, so any provider can
                                    produce the input for this command.
+  mem0:<file.json>                 a mem0 export (JSON array or {results:[...]} of memory records).
+  zep:<file.json>                  a Zep fact export (JSON array or {facts:[...]}); a fact with invalid_at
+                                   is imported as a dated, retired line. Files only; no vendor API is called.
+                                   Both go through the same preview, secret screen and apply.
+                                   RENOR_IMPORT_VENDOR_SOURCES=0 turns the two names off.
 
 Destination:
   --source-root <dir>              directory the index's stored absolute paths live under
@@ -145,6 +151,8 @@ function sourceKindAndLabel(from: string): { kind: string; label: string } {
   const separator = from.indexOf(':');
   const kind = separator < 0 ? from : from.slice(0, separator);
   const target = separator < 0 ? '' : from.slice(separator + 1);
+  // A vendor export is labelled by its product (Imported/mem0), not by whatever the file is called.
+  if (isVendorKind(kind) && vendorSourcesEnabled()) return { kind, label: kind };
   const base = path.basename(target || kind).replace(/\.(db|jsonl|json)$/i, '');
   return { kind, label: base || kind };
 }

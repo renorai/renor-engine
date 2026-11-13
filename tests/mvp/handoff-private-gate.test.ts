@@ -15,6 +15,9 @@ import os from 'os';
 import path from 'path';
 import { named, restoreEnv, startWorkspace } from '../helpers/hiveHarness';
 import { INSIDE, NOTE, REPO, everyReadReply } from '../helpers/handoffReads';
+import { removeTempDirsAfterAll } from '../helpers/tmpCleanup';
+
+removeTempDirsAfterAll();
 
 afterAll(restoreEnv);
 const SOURCE = process.env.RENOR_HANDOFF_PRIVATE_DIR;

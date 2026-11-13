@@ -15,6 +15,7 @@ import { CALIBRATED_BARS, embeddingModelKey } from '../mvp/contextRelevance';
 import { keywordOrAll, keywordOrMatch, keywordSearch } from './keyword';
 import { quoteFtsQuery, shownPage } from './queryHelpers';
 import { keywordLedgerHits } from './ledgerPresentation';
+import { noteStage, noteDrop } from './explain.js';
 import {
   NEAR_DUP_POOL, contentTerms, factBoostMatches, applyNearDupCap, queryRewriteEnabled, rerankTopN, resolveNearDupCap, resolveRerankTopN, rewriteConversationalQuery,
 } from './plainWording';
@@ -862,6 +863,16 @@ export async function retrieveContext(
   contentfulHeld.clear(); // what another read worked out is not this read's
   const factHits = factsFirstHits(db, query, Math.min(3, topK), opts.scope?.shows);
   const queryProbe: RetrievalProbe = opts.probe ?? {}; // the query vector, for the expansion's ranking
+  // `explain`: a chunk the scope refuses is seen and counted here, before any cut. Absent, the scope is used as it is.
+  const explain = queryProbe.explain;
+  if (explain && opts.scope) {
+    const inner = opts.scope;
+    opts = { ...opts, scope: { ...inner, shows: hit => {
+      const shown = inner.shows(hit);
+      if (!shown) noteDrop(explain, hit.chunkId, 'scope');
+      return shown;
+    } } };
+  }
   // RENOR_NEAR_DUP_CAP (default off): the pool is read deeper, so the places near-copies leave are taken (plainWording.ts).
   const nearDupCap = resolveNearDupCap();
   const candidateLimit = nearDupCap > 0 ? Math.min(NEAR_DUP_POOL.max, topK * NEAR_DUP_POOL.perTopK) : Math.min(40, topK * 4);
@@ -1137,12 +1148,30 @@ function rankWindow(read: {
     [...datedFactHits, ...contentful.filter(h => !seen.has(h.text))],
     closedLedgerEvents(db), opts.includeHistory === true,
   ), opts.isLedgerNote);
+  const explain = opts.probe?.explain;
+  if (explain) {
+    explain.lanes.push(semanticHits.length > 0 ? 'semantic-or-keyword' : 'none');
+    if (factHits.length > 0) explain.lanes.push('facts');
+    noteStage(explain, 'candidates', semanticHits.length + factHits.length);
+    noteStage(explain, 'ranked-pool', ranked.length);
+    const liveIds = new Set(mixed.map(h => h.chunkId));
+    for (const h of contentful) if (!liveIds.has(h.chunkId)) noteDrop(explain, h.chunkId, 'retired');
+    noteStage(explain, 'live', mixed.length);
+  }
   const diversityCap = resolveSessionDiversityCap(process.env, opts.noteCapWhenUnset);
   // RENOR_NEAR_DUP_CAP (default off): near-copies are capped before the per-note cap, on the visible text.
   // RENOR_RERANK_TOP_N (default off): the first n of that ranking are reranked by the query words they carry, then cut to topK.
   const rerankN = resolveRerankTopN();
   const diversified = applySessionDiversity(applyNearDupCap(mixed, nearDupCap, contentfulText), diversityCap, topK);
   const windowed = (rerankN > topK ? rerankTopN(diversified, query, rerankN) : diversified).slice(0, topK);
+  if (explain) {
+    const afterDiversity = new Set(diversified.map(h => h.chunkId));
+    const inWindow = new Set(windowed.map(h => h.chunkId));
+    for (const h of mixed) if (!afterDiversity.has(h.chunkId)) noteDrop(explain, h.chunkId, 'per-note-cap');
+    noteStage(explain, 'after-per-note-cap', diversified.length);
+    for (const h of diversified) if (!inWindow.has(h.chunkId)) noteDrop(explain, h.chunkId, 'budget');
+    noteStage(explain, 'window', windowed.length);
+  }
   // The window's candidates are recorded before they are copied into the plain hits below, which carry no terms.
   if (trace) for (const hit of windowed) trace.touch(hit);
   let hits = windowed.map(h => ({

@@ -4,6 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { CachingEmbeddingProvider, resolveEmbeddingCachePath } from '../../src/embeddings/caching';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
+import { removeTempDirsAfterAll } from '../helpers/tmpCleanup';
+
+removeTempDirsAfterAll();
 
 function tmpPath(name: string): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'renor-cache-test-')), name);

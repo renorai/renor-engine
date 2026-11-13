@@ -6,6 +6,9 @@ import { spawnSync } from 'node:child_process';
 import { countTextTokens } from '../../src/eval/textTokens';
 import type { GetContextCaller } from '../../src/recall/autoRecall';
 import { loadSearchConfig, runSearchHook, searchQuery, searchRecall, type SearchRecallConfig } from '../../src/recall/searchRecall';
+import { removeTempDirsAfterAll } from '../helpers/tmpCleanup';
+
+removeTempDirsAfterAll();
 
 /**
  * Search recall (src/recall/searchRecall.ts): off does nothing, only Grep, Glob and Read are looked up, the query is the

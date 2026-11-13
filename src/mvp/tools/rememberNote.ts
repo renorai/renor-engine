@@ -40,7 +40,8 @@ export function registerRememberNoteTool(ctx: ToolContext): void {
     try {
       const source = sourceOf(args.source, extra, config);
       if (args.replaces !== undefined) await assertReplaceable(mapContext(), args.replaces, normalizeScope(args.scope));
-      const inferred = args.replaces === undefined ? await inferReplacesFor(args.text, args.scope, source ?? 'mcp') : undefined;
+      const inference = args.replaces === undefined ? await inferReplacesFor(args.text, args.scope, source ?? 'mcp') : {};
+      const inferred = inference.id;
       const body = await engineRememberNote(config, args.text, args.date, source, args.scope, args.timezone);
       recordNoteSave(body.file, args.text, source, body.scope);
       if (layeredScopeEnabled() && body.id) {
@@ -52,7 +53,7 @@ export function registerRememberNoteTool(ctx: ToolContext): void {
         // The source the entry was written with (engineRememberNote's default when none), so the link names the same one.
         ? await replacementReceipt(replaces, body.id, source ?? 'mcp', inferred !== undefined)
         : {};
-      return jsonResult({ ...body, ...replaced, ...(await indexSavedNote(db, config, engine, digests, body.file)) });
+      return jsonResult({ ...body, ...replaced, ...(inference.possibly && inferred === undefined ? { possiblyReplaces: inference.possibly } : {}), ...(await indexSavedNote(db, config, engine, digests, body.file)) });
     } catch (err) {
       return toolError(err);
     }

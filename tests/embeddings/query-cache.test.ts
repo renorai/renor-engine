@@ -5,6 +5,9 @@ import path from 'node:path';
 import Database from '../../src/db/sqlite';
 import { CachingEmbeddingProvider } from '../../src/embeddings/caching';
 import type { EmbeddingIdentity, EmbeddingProvider } from '../../src/embeddings/types';
+import { removeTempDirsAfterAll } from '../helpers/tmpCleanup';
+
+removeTempDirsAfterAll();
 
 /**
  * The bounded, serving-mode query cache. Synthetic fake providers only: nothing here reaches an embedding

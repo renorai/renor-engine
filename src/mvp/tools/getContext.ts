@@ -10,6 +10,7 @@ import { applyAnswerCheck } from '../answerCheck.js';
 import { workspaceIsEmpty, EMPTY_WORKSPACE_NOTE } from '../../memory/whatsNew.js';
 import { callOrigin, headerText, toolError } from './shared.js';
 import type { ToolContext } from './setup.js';
+import { newExplainTrace, explainReply, explainAdvertised, noteStage, EXPLAIN_ARG_DESCRIPTION } from '../../retrieval/explain.js';
 
 /** Registers get_context: the facts and saved memories that match a request. */
 export function registerGetContextTool(ctx: ToolContext): void {
@@ -24,9 +25,11 @@ export function registerGetContextTool(ctx: ToolContext): void {
       scope: z.string().optional().describe('Optional memory scope to restrict context'),
       max_tokens: z.number().int().min(128).max(replyCeiling()).optional().describe('Token budget for the whole reply (o200k tokenizer), default ' + (deepSearchEnabled() ? defaultContextMaxTokens() + ' (deep search; RENOR_DEEP_SEARCH=0 makes it 800)' : '800')),
       include_history: z.boolean().optional().describe('Also return superseded (corrected) memory events, labelled as historical. Default false: only current memory.'),
+      ...(explainAdvertised(ctx.profile, ctx.toolProfile) ? { explain: z.boolean().optional().describe(EXPLAIN_ARG_DESCRIPTION) } : {}),
     },
   }, async (args, extra) => {
     try {
+      const explain = newExplainTrace((args as { explain?: boolean }).explain);
       const semantic = engine.provider !== null && Boolean(args.query?.trim());
       const body = await buildAgentContext(db, engine, config.memoryDir, {
         query: args.query,
@@ -35,6 +38,7 @@ export function registerGetContextTool(ctx: ToolContext): void {
         origin: callOrigin(extra, config),
         maxTokens: args.max_tokens,
         includeHistory: args.include_history,
+        explainTrace: explain,
         reader: readerOf(extra),
         evidence,
         ledgerRelPath: config.ledgerRelPath,
@@ -45,7 +49,10 @@ export function registerGetContextTool(ctx: ToolContext): void {
       const checked = await applyAnswerCheck(body as unknown as Record<string, unknown>, args.query, answerChecker, (body as { maxTokens?: number }).maxTokens);
       usefulness.measure('get_context', () => contextItems(checked));
       const hasObservations = observeEnabled() && Array.isArray(checked.memories) && checked.memories.some(memory => memory?.source === 'observation');
-      return jsonResult(workspaceIsEmpty(db) && !hasObservations ? { ...checked, notice: [checked.notice, EMPTY_WORKSPACE_NOTE].filter(Boolean).join(' ') } : checked);
+      const withNotice = workspaceIsEmpty(db) && !hasObservations ? { ...checked, notice: [checked.notice, EMPTY_WORKSPACE_NOTE].filter(Boolean).join(' ') } : checked;
+      if (!explain) return jsonResult(withNotice);
+      noteStage(explain, 'reply', Array.isArray(checked.memories) ? checked.memories.length : 0);
+      return jsonResult({ ...withNotice, explain: explainReply(explain) });
     } catch (err) {
       return toolError(err);
     }

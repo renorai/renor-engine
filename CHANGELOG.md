@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 1.4.9 - 2026-11-13
+
+1.4.9 is 1.4.8 plus the stdio `search_text` word fallback (#1903). 1.4.8 was withdrawn from npm `latest` after a stdio recall regression (#1902).
+
+### Fixed
+
+- The stdio `search_text` falls back to searching the words when the exact phrase finds nothing (#1903).
+
 ## 1.4.8 - 2026-11-12
 
 ### Added

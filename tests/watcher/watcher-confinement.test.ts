@@ -9,6 +9,9 @@ import { runMigrations } from '../../src/db/schema';
 import { indexFile } from '../../src/indexer/pipeline';
 import { startWatcher } from '../../src/watcher/watcher';
 import { removeTestDir } from '../helpers/removeDb';
+import { removeTempDirsAfterAll } from '../helpers/tmpCleanup';
+
+removeTempDirsAfterAll();
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 

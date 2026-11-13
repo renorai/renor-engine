@@ -30,7 +30,7 @@ import { labelsOf, usageRecorder, type UsageRecorder } from '../../sharing/usage
 import { resolveRerankTopN } from '../../retrieval/plainWording.js';
 import path from 'path';
 import { recordReplacement, replacementIndex } from '../../memorymap/replacements.js';
-import { inferReplacesEnabled, readsAsCorrection, inferReplaced } from '../inferReplaces.js';
+import { inferReplacesEnabled, readsAsCorrection, inferReplacedDetail } from '../inferReplaces.js';
 import { normalizeScope } from '../scope.js';
 import { factQueryTerms } from '../agentMemory.js';
 import { findMemories } from '../../memorymap/memoryMap.js';
@@ -263,7 +263,7 @@ export function createToolContext(db: Database.Database, config: MvpConfig, engi
   });
   // The part of a save's receipt that says what `replaces` did: the link, or why none was made (a loop is never recorded).
   const replacementReceipt = async (old: string, by: string, source?: string, inferred = false): Promise<Record<string, unknown>> => {
-    const record = await recordReplacement(mapContext(), old, by, source);
+    const record = await recordReplacement(mapContext(), old, by, source, inferred);
     // An inferred link says so (RENOR_INFER_REPLACES); retire_memory on the save undoes it like any other. A loop is simply not linked.
     if (record && inferred) return { replaced: { id: record.old, by: record.by }, replacesInferred: true };
     if (!record && inferred) return {};
@@ -273,19 +273,19 @@ export function createToolContext(db: Database.Database, config: MvpConfig, engi
   };
   // RENOR_INFER_REPLACES (default on; 0 switches it off): the earlier note in the same scope (any client; inferReplaced holds a different client to a stricter match) that this plain-words save
   // reads as a correction of. Advisory: a failed lookup leaves the save unlinked, never failed.
-  const inferReplacesFor = async (text: string, scope: string | undefined, source: string | undefined): Promise<string | undefined> => {
-    if (!inferReplacesEnabled() || !readsAsCorrection(text)) return undefined;
+  const inferReplacesFor = async (text: string, scope: string | undefined, source: string | undefined): Promise<{ id?: string; possibly?: string }> => {
+    if (!inferReplacesEnabled() || !readsAsCorrection(text)) return {};
     try {
       const normalized = normalizeScope(scope);
       const terms = factQueryTerms(text);
-      if (terms.length === 0) return undefined;
+      if (terms.length === 0) return {};
       const found = await findMemories(mapContext(), { query: text, terms, limit: 20, scope: normalized });
       const already = await replacementIndex(mapContext());
       const live = found.memories.filter(m => !already.replacedBy(m.id));
-      const hit = inferReplaced(text, normalized, source, live.map(m => ({ id: m.id, path: m.path, excerpt: m.excerpt, source: m.source, at: m.at })));
-      return hit?.id;
+      const found2 = inferReplacedDetail(text, normalized, source, live.map(m => ({ id: m.id, path: m.path, excerpt: m.excerpt, source: m.source, at: m.at })));
+      return { ...(found2.hit ? { id: found2.hit.id } : {}), ...(found2.possiblyReplaces ? { possibly: found2.possiblyReplaces.id } : {}) };
     } catch {
-      return undefined;
+      return {};
     }
   };
   const memoryIdSchema = z.string().min(1).max(1024).describe('A memory id (note:<path> or entry:<path>#<hash>) from memory_map; memory_map with a query finds one by its words without loading the whole map');

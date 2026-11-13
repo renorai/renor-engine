@@ -51,6 +51,8 @@ export interface ReplacementRecord {
    * written before this field existed: its label then names the correction's source and says nothing about the other side.
    */
   oldSource?: string | null;
+  /** True when the caller did not pass `replaces` and the engine inferred the link (RENOR_INFER_REPLACES); the audit list reads it. */
+  inferred?: boolean;
 }
 
 /** What a read labels a replaced memory with. */
@@ -208,6 +210,11 @@ export async function allReplacementRecords(ctx: MemoryMapContext): Promise<Repl
   return readRecords(ctx);
 }
 
+/** The links the engine inferred (not passed by the caller), newest last: ids and dates only, no memory text. For the operator's audit. */
+export async function inferredReplacements(ctx: MemoryMapContext): Promise<Array<{ old: string; by: string; at: string }>> {
+  return (await readRecords(ctx)).filter(r => r.inferred === true).map(r => ({ old: r.old, by: r.by, at: r.at }));
+}
+
 /**
  * Refuse a replacement that cannot hold, before anything is saved: the memory must exist and be live, be a note or a
  * daily-log entry (a fact is corrected by saving it again with the same subject, predicate and scope), and be in the scope the
@@ -241,7 +248,7 @@ async function sourceOfMemory(ctx: MemoryMapContext, id: string): Promise<string
  * (an identical line saved again in the same second is the same memory, since an id is the hash of the line), or is already
  * replaced by it, directly or down a chain.
  */
-export async function recordReplacement(ctx: MemoryMapContext, old: string, by: string, source?: string): Promise<ReplacementRecord | null> {
+export async function recordReplacement(ctx: MemoryMapContext, old: string, by: string, source?: string, inferred = false): Promise<ReplacementRecord | null> {
   const existing = (await readRecords(ctx)).find(r => r.old === old && r.by === by);
   if (existing) return existing;
   if (old === by || (await replacementIndex(ctx)).reaches(by, old)) return null;
@@ -250,6 +257,7 @@ export async function recordReplacement(ctx: MemoryMapContext, old: string, by: 
   const record: ReplacementRecord = {
     rid: `replaced:${crypto.randomBytes(8).toString('hex')}`, old, by, at: new Date().toISOString(), ...(saver ? { source: saver } : {}),
     ...(oldSource !== undefined ? { oldSource } : {}),
+    ...(inferred ? { inferred: true } : {}),
   };
   const dir = await ensureRealDir(await fs.realpath(ctx.memoryDir), RETIRED_DIR);
   // O_NONBLOCK and the single-name check: the same rules as the retirement journal (appendJournal), so neither a FIFO nor a

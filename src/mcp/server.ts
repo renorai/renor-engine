@@ -12,6 +12,7 @@ import { remember, factsFor, resolveLedgerPath, DEFAULT_LEDGER_REL } from '../me
 import { indexFile } from '../indexer/pipeline';
 import { pickEntityName, pickTopK, quoteFtsQuery, shownPage } from '../retrieval/queryHelpers';
 import { keywordSearch } from '../retrieval/keyword';
+import { searchTextFallbackEnabled } from '../mvp/agentMemory.js';
 import { clientPath } from '../mvp/engine';
 import { selectNoteIdentityHits, NOTE_IDENTITY_EXTRA } from '../retrieval/noteIdentity';
 import { isLedgerPreamble, keywordLedgerHits, ledgerNoteMatcher, presentLedgerEvents } from '../retrieval/ledgerPresentation';
@@ -134,6 +135,17 @@ export function createMcpTools(
     },
     async search_text(args: { query: string; top_k?: number }) {
       const results = await call('keyword', { query: args.query, topK: args.top_k });
+      // A sentence is almost never one exact phrase in a note (#1902). With no embeddings and nothing found, search its words, as the
+      // old `search` tool did: any-word over the stemmed index, a correction listed before the value it replaces. RENOR_SEARCH_TEXT_FALLBACK=0
+      // (or RENOR_KEYWORD_DEFAULTS=0) restores the exact-phrase reply.
+      if (Array.isArray(results) && results.length === 0 && !provider && searchTextFallbackEnabled()) {
+        // Held to search_text's own bounds: at most 50 hits and 200 characters of query, as the exact search.
+        const limit = Math.min(args.top_k ?? 20, 50);
+        const found = await call('search', { query: args.query.slice(0, 200), topK: limit });
+        // An evidence pass may add a hit to the page: the reply is cut to the limit, as the exact search's is.
+        const hits = ((Array.isArray(found) ? found : (found as { hits?: unknown[] }).hits ?? []) as unknown[]).slice(0, limit);
+        if (hits.length > 0) return { ok: true, results: hits, fallback: 'any-word' };
+      }
       return Array.isArray(results) ? { ok: true, results } : results;
     },
     async retrieve_memory(args: { subject?: string; predicate?: string; include_history?: boolean; as_of?: string }) {
