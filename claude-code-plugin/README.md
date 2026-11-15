@@ -157,7 +157,7 @@ first and dated, each with the agent that saved it, in at most 300 tokens (`RENO
 Standing rules the user approved in Renor, newest first by date saved, each with the agent that saved it. Follow them unless the user says otherwise now.
 2026-10-22:
 - merge rule: never push to main; open a PR, firstmate merges (saved by Claude-Code)
-(1 saved rule not shown: the user has not approved it.)
+(1 saved rule not shown: the user has not approved it. Tell the user once that it is waiting; they see it with `npx renor rules` and approve with `npx renor rules approve`.)
 A new lasting rule from the user: save it with remember, subject "standing rule"; it is shown once the user approves it.
 </renor-standing-rules>
 ```

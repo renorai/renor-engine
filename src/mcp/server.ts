@@ -155,15 +155,15 @@ export function createMcpTools(
       if (args.predicate) facts = facts.filter(f => f.predicate === args.predicate);
       return { subject, known: facts.length > 0 || lookupEntity(db, subject) !== null, facts: facts.map(f => ({ subject, predicate: f.predicate, object: f.object_text, current: f.valid_to == null, scope: f.scope, valid_from: f.valid_from, valid_to: f.valid_to, ...(f.author ? { author: f.author } : {}) })) };
     },
-    /** statement alone is a note in the day's log; with subject, predicate and object together it is the structured fact. */
+    /** statement alone is a note in the day's log; with a triple it is kept whole with the structured fact. */
     async remember(args: { statement?: string; subject?: string; predicate?: string; object?: string; source?: string; text?: string }) {
       const { subject, predicate, object } = args ?? {};
       const statement = (args?.statement ?? args?.text)?.trim();
       const some = [subject, predicate, object].filter(v => v !== undefined && v !== '').length;
-      if (some === 3) return call('remember_fact', { subject, predicate, object });
+      if (some === 3) return call('remember_fact', { subject, predicate, object, statement, source: args.source });
       if (some > 0) throw new Error('remember: pass subject, predicate and object together, or only statement');
       if (!statement) throw new Error('remember needs statement: the thing to remember, in plain words');
-      return call('note', { text: statement });
+      return call('note', { text: statement, source: args.source });
     },
   };
 
@@ -276,7 +276,7 @@ export function createMcpTools(
     },
 
     /** The principal durable-memory verb: ledger-first, supersedes the current fact for the same subject+predicate. Returns a receipt. */
-    async remember_fact(args: { subject: string; predicate: string; object: string; source?: string }) {
+    async remember_fact(args: { subject: string; predicate: string; object: string; source?: string; statement?: string }) {
       const ledgerRel = config.memoryLedger ?? DEFAULT_LEDGER_REL;
       const receipt = await remember(db, config.vaultPath, ledgerRel, { ...args, source: identity ?? undefined });
       // Nothing was written when the fact was already current, as the hosted save skips its refresh.
@@ -380,6 +380,7 @@ export const TOOLS = [
         subject: { type: 'string', description: 'Who or what the fact is about, e.g. "Renor". A single string, not a nested object.' },
         predicate: { type: 'string', description: 'The relation or attribute being asserted, e.g. "works_at". A short single-line string.' },
         object: { type: 'string', description: 'The current value, e.g. "Memory Company". A single string: pass a list or a struct as ONE joined string, never as JSON or an array.' },
+        statement: { type: 'string', description: 'Optional full sentence, including the reason. Stored whole with the fact and indexed for recall.' },
         source: { type: 'string', description: 'Ignored. The author is this connection\'s header-form name. When the connection has no usable name, the engine default (agent) is stored. Never a file path or document name.' },
       },
       required: ['subject', 'predicate', 'object'],

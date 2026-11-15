@@ -5,6 +5,7 @@ import { escapeInvisibleControls } from './sanitize';
 import { labelMemoryText } from './hiddenSpans';
 import { currentRankingTrace } from '../retrieval/rankingTrace';
 import { FTS_STOP_WORDS, keywordDefaultsOff, keywordOrAll, keywordOrMatch } from '../retrieval/keyword';
+import { withHitDates } from './hitDates';
 import { engineSearchMemory, engineSearchText, type Engine } from './engine';
 import { leadingSummaryHits } from '../digests/digests';
 import { normalizeScope, savedScopeMatches } from './scope';
@@ -977,7 +978,7 @@ interface Budgeted {
  * passed over. The list is laid out newest first, and a budget that kept the longest run of the layout cut the oldest matches
  * first however close they were: retrieval ablations, 2026-10-06 (docs/evals/results/CUT-BY-SCORE-20261007.md, which also reads what the cut by score trades away).
  */
-export function matchBudgetOrder(memories: ReadonlyArray<AgentContextMemory>, serviceQuery?: string): number[] {
+export function matchBudgetOrder(memories: ReadonlyArray<AgentContextMemory>, serviceQuery?: string, fuse: boolean = contextRankFusionEnabled()): number[] {
   const leading = leadingSummaryHits(memories);
   const lead: number[] = [];
   const scored: number[] = [];
@@ -991,6 +992,9 @@ export function matchBudgetOrder(memories: ReadonlyArray<AgentContextMemory>, se
   // A score that is not a number ranks last among the scored matches, never first: it cannot displace a match.
   const score = (i: number): number => (Number.isFinite(memories[i].score) ? memories[i].score! : Number.NEGATIVE_INFINITY);
   scored.sort((a, b) => score(b) - score(a) || a - b);
+  // RENOR_CONTEXT_RANK_FUSION (opt-in): the keyword matches and the scored ones are merged by reciprocal rank
+  // fusion, so a memory either search ranks near the top is spent on early; off, every keyword match follows every scored one.
+  const fused = fuse && found.length > 0 ? fuseByRank(scored, found) : undefined;
   // RENOR_SERVICE_NOTE_FIRST: a match that names the service or project the question names (a "Decision for <service>" note)
   // goes before the generic matches; the order inside each group is the score order above.
   if (serviceQuery !== undefined) {
@@ -1000,10 +1004,36 @@ export function matchBudgetOrder(memories: ReadonlyArray<AgentContextMemory>, se
         const head = `${memories[i].headingPath ?? ''}\n${String(memories[i].text).slice(0, 200)}`.toLowerCase();
         return names.some(name => head.includes(name));
       };
+      if (fused) return [...lead, ...fused.filter(named), ...fused.filter(i => !named(i))];
       return [...lead, ...scored.filter(named), ...scored.filter(i => !named(i)), ...found];
     }
   }
-  return [...lead, ...scored, ...found];
+  return fused ? [...lead, ...fused] : [...lead, ...scored, ...found];
+}
+
+export const CONTEXT_RANK_FUSION_FLAG = 'RENOR_CONTEXT_RANK_FUSION';
+
+/**
+ * get_context's rank fusion of keyword and scored matches (RENOR_CONTEXT_RANK_FUSION): off until RenorBench and the agent-tasks
+ * lab are measured on it (issue #1964: "measure before asking for the default"); unset restores the former order, fetch size
+ * and undated keyword matches, byte for byte.
+ */
+export function contextRankFusionEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env[CONTEXT_RANK_FUSION_FLAG] ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+/** How many keyword hits get_context fetches per query variant: 6 before rank fusion, enough to reach a rank-20 match with it. */
+const KEYWORD_FETCH = 6;
+const KEYWORD_FETCH_FUSED = 25;
+const RRF_K = 60;
+
+/** Reciprocal rank fusion of two ranked lists of positions: best fused score first; on a tie the scored match goes first, then list order. */
+function fuseByRank(scored: number[], found: number[]): number[] {
+  const entries: Array<{ i: number; fusedScore: number; lane: number }> = [];
+  scored.forEach((i, r) => entries.push({ i, fusedScore: 1 / (RRF_K + r + 1), lane: 0 }));
+  found.forEach((i, r) => entries.push({ i, fusedScore: 1 / (RRF_K + r + 1), lane: 1 }));
+  return entries.sort((a, b) => b.fusedScore - a.fusedScore || a.lane - b.lane).map(e => e.i);
 }
 
 export const SERVICE_NOTE_FIRST_FLAG = 'RENOR_SERVICE_NOTE_FIRST';
@@ -1567,18 +1597,25 @@ export async function buildAgentContext(
 
     // The variants find the same chunks of the ledger: each chunk is parsed once for this read.
     const ledgerRecords: LedgerRecordCache = new Map();
+    const keywordAdded: AgentContextMemory[] = [];
     inReadSnapshot(db, () => {
       const orAll = keywordOrAll();
+      const fetch = contextRankFusionEnabled() ? KEYWORD_FETCH_FUSED : KEYWORD_FETCH;
       for (const variant of orAll ? [query.trim()] : keywordVariants(query)) {
-        const keyword = engineSearchText(db, memoryDir, variant, 6, scopeNorm, options.includeHistory === true, options.ledgerRelPath, ledgerRecords, orAll ? keywordOrMatch(query) : undefined, false, observationScope);
+        const keyword = engineSearchText(db, memoryDir, variant, fetch, scopeNorm, options.includeHistory === true, options.ledgerRelPath, ledgerRecords, orAll ? keywordOrMatch(query) : undefined, false, observationScope);
         keywordAvailable = keywordAvailable || keyword.ok;
         if (!keyword.ok) { keywordFailed = true; continue; }
         for (const hit of keyword.results) {
           const normalized = normalizeMemory(hit, 'fts', options.reader);
-          if (normalized) memories.push(normalized);
+          if (normalized) { memories.push(normalized); keywordAdded.push(normalized); }
         }
       }
     });
+    // A keyword match carries its date like a semantic one (search_text does): the day its entry or note was written.
+    if (contextRankFusionEnabled() && keywordAdded.length > 0) {
+      const dated = await withHitDates(db, memoryDir, keywordAdded);
+      dated.forEach((item, k) => { if (item.session_date !== keywordAdded[k].session_date) keywordAdded[k].session_date = item.session_date; });
+    }
     if (keywordFailed && !keywordAvailable) {
       degraded.push('keyword');
       const semanticNotice = KEYWORD_STILL_ANSWERS.reduce((text, [claim, instead]) => text.replace(claim, instead), notice ?? '');

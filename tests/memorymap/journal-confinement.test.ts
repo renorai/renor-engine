@@ -49,7 +49,8 @@ describe('the retired-memory journal', () => {
     }
   });
 
-  it('does not wait on a FIFO planted as the retired-memory journal', async () => {
+  // Windows has no FIFOs (mkfifo does not exist), so there is nothing to plant (#1563).
+  it.skipIf(process.platform === 'win32')('does not wait on a FIFO planted as the retired-memory journal', async () => {
     fs.mkdirSync(path.join(vault, '.trash/renor-retired'), { recursive: true });
     execFileSync('mkfifo', [path.join(vault, '.trash/renor-retired/retired.jsonl')]);
     const outcome = await Promise.race([

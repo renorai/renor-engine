@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 1.4.10 - 2026-11-15
+
+### Fixed
+
+- `remember` with a statement and subject, predicate, object now keeps the sentence searchable (reported by an outside user).
+- Self-hosted stdio `remember` now keeps the full statement, including its reason, when subject, predicate and object are also supplied (#1977). The statement is stored with the fact and findable by `search_text` and `get_context`. Source is forwarded to the writer; connection-controlled author attribution is unchanged. Thanks to the outside user who reported and helped confirm the loss.
+
 ## 1.4.9 - 2026-11-13
 
 1.4.9 is 1.4.8 plus the stdio `search_text` word fallback (#1903). 1.4.8 was withdrawn from npm `latest` after a stdio recall regression (#1902).

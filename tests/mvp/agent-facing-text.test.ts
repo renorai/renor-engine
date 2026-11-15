@@ -11,6 +11,8 @@ import { loadMvpConfig, type MvpConfig } from '../../src/mvp/config';
 import { startMvpService, MVP_MCP_PATH } from '../../src/mvp/server';
 import { productEvidenceReport, type ProductEvidenceAttachment } from '../../src/evidence/attach';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
+// These tests pin the full tool list including the two unlisted save tools: RENOR_MCP_SINGLE_SAVE=0 restores it (the default lists only remember; see tests/mvp/single-save-tool.test.ts).
+process.env.RENOR_MCP_SINGLE_SAVE = '0';
 
 /**
  * What every stranger's agent reads from a workspace: the tool list, the errors and the save

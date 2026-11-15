@@ -7,6 +7,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { loadMvpConfig } from '../../src/mvp/config';
 import { createMvpApp } from '../../src/mvp/server';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
+// These tests pin the full tool list including the two unlisted save tools: RENOR_MCP_SINGLE_SAVE=0 restores it (the default lists only remember; see tests/mvp/single-save-tool.test.ts).
+process.env.RENOR_MCP_SINGLE_SAVE = '0';
 
 // The hint is advisory, so a test can make its read fail. Off, the real function runs.
 const hint = vi.hoisted(() => ({ fail: false }));

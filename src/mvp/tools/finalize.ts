@@ -1,6 +1,6 @@
 import type { ToolContext } from './setup.js';
 import { DIRECTORY_HIDDEN_TOOLS, DIRECTORY_DESCRIPTIONS } from '../directorySurface.js';
-import { checkProfileTools, LINE_TOOLS, renderLines } from '../contextProfile.js';
+import { checkProfileTools, LINE_TOOLS, renderLines, singleSaveEnabled, UNLISTED_SAVE_TOOLS } from '../contextProfile.js';
 import { mapInvalidParams } from '../../mcp/requestErrors.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { tolerateRememberArgs, wantsStatementHint, REMEMBER_STATEMENT_HINT } from '../rememberArgNames.js';
@@ -39,6 +39,8 @@ export function finishToolSurface(ctx: ToolContext): void {
     const forDirectory = directory || isDirectoryCall(headers, config);
     const hidden = new Set<unknown>();
     if (!isDashboardCall(headers, config)) for (const name of OWNER_ONLY_TOOLS) hidden.add(name);
+    // RENOR_MCP_SINGLE_SAVE: save_memory and remember_note stay callable, only unlisted (an explicit tool list that names them keeps them).
+    if (singleSaveEnabled()) for (const name of UNLISTED_SAVE_TOOLS) if (!profile.tools?.has(name)) hidden.add(name);
     if (forDirectory) for (const name of [...HIVE_TOOLS, ...DIRECTORY_HIDDEN_TOOLS]) hidden.add(name);
     if (hidden.size === 0 && !forDirectory && !profile.descriptions) return answer;
     // An answer this cannot read is not passed on unfiltered.

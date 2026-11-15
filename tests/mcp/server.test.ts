@@ -204,7 +204,7 @@ describe('remember_fact over the MCP tool path', () => {
   it('publishes every argument with a description, so a model does not guess object is a value of any type', async () => {
     const published = TOOLS.find((t) => t.name === 'remember_fact')!;
     const properties = (published.inputSchema as any).properties;
-    expect(Object.keys(properties).sort()).toEqual(['object', 'predicate', 'source', 'subject']);
+    expect(Object.keys(properties).sort()).toEqual(['object', 'predicate', 'source', 'statement', 'subject']);
     // Every property is documented. This is the trap: `object` reads as "the value", so a model
     // sends a list or a struct and the write dies with an opaque type error. The description is
     // the only thing standing between the model and that dead end.

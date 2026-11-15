@@ -13,6 +13,8 @@ import { EvalHashEmbeddingProvider } from '../../src/eval/hashEmbedding';
 import { ReadUsefulness, contextItems, factItem, noteItem } from '../../src/mvp/readUsefulness';
 import { emitTelemetry, flushTelemetry, type TelemetryEvent } from '../../src/mvp/telemetry';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
+// These tests pin the full tool list including the two unlisted save tools: RENOR_MCP_SINGLE_SAVE=0 restores it (the default lists only remember; see tests/mvp/single-save-tool.test.ts).
+process.env.RENOR_MCP_SINGLE_SAVE = '0';
 
 /**
  * Whether a read helped, measured by the engine alone (readUsefulness.ts): metadata-only events, a use inferred inside

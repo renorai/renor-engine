@@ -12,6 +12,8 @@ import { startMvpService, MVP_MCP_PATH, type MvpApp } from '../../src/mvp/server
 import { searchHistory } from '../../src/mvp/history';
 import type { Express } from 'express';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
+// These tests pin the full tool list including the two unlisted save tools: RENOR_MCP_SINGLE_SAVE=0 restores it (the default lists only remember; see tests/mvp/single-save-tool.test.ts).
+process.env.RENOR_MCP_SINGLE_SAVE = '0';
 
 /**
  * search_history — local history retrieval through the authenticated MVP MCP.

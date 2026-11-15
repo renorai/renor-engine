@@ -7,6 +7,8 @@
  * Opt-in and off by default (RENOR_AUTO_RECALL=1 turns it on). It never blocks a prompt: every failure (no token, a
  * timeout, a refused or malformed reply) yields no context and exit 0. Trivial prompts are not looked up, and a reply the
  * product judges unrelated (relevance.relevant false, or a similarity under the configured minimum) is not injected.
+ * Within a reply that is injected, the per-line gate (RENOR_AUTO_RECALL_GATE, on) keeps a current fact only when the
+ * prompt's words name it and closes the block with one line when anything was left out; off, the block is what it was.
  *
  * This file imports Node built-ins and the shared inert encoder (claude-code-plugin/hooks/inert.cjs), so a Claude Code plugin
  * can ship the compiled file as its UserPromptSubmit hook (node starts in ~30 ms; dist/cli.js loads the whole engine in
@@ -39,6 +41,8 @@ export const DEFAULT_MIN_WORDS = 3;
  */
 export const DEFAULT_MIN_SIMILARITY = hookRelevanceBar(HOSTED_RECALL_MODEL_KEY);
 export const FLOOR_ENV = 'RENOR_AUTO_RECALL_MIN_SIMILARITY';
+/** The per-line gate's off switch (issue #1933): on by default, `0`/`off`/`false`/`no` restores the older whole-reply behaviour. */
+export const GATE_ENV = 'RENOR_AUTO_RECALL_GATE';
 /** get_context's own limits (src/mvp/server.ts inputSchema): query at most 1000 characters, max_tokens 128 to 4000. */
 const QUERY_MAX_CHARS = 1000;
 const TOKENS_MIN = 128;
@@ -66,6 +70,12 @@ export interface RecallConfig {
    * (no verdict) is dropped too. Unset (RENOR_AUTO_RECALL_MIN_SIMILARITY=none), there is no floor.
    */
   minSimilarity?: number;
+  /**
+   * The per-line gate (RENOR_AUTO_RECALL_GATE, on by default). On, and only where the reply carries a relevance verdict,
+   * a current fact is injected because the prompt's own words name it, not because it is recent, its date is shown, and a
+   * closing line says something was left out. Off, the reply is presented exactly as it was before the gate existed.
+   */
+  gate: boolean;
   /** A memory scope (`project:<slug>`); unset, the whole workspace, as for an agent that passes none. */
   scope?: string;
   /**
@@ -148,6 +158,7 @@ export function loadRecallConfig(env: NodeJS.ProcessEnv = process.env, cwd?: str
   return {
     enabled: on,
     url,
+    gate: !/^(0|off|false|no)$/i.test(env[GATE_ENV]?.trim() ?? ''),
     ...(token ? { token } : {}),
     maxTokens: clampInt(env.RENOR_AUTO_RECALL_MAX_TOKENS, DEFAULT_MAX_TOKENS, TOKENS_MIN, TOKENS_MAX),
     timeoutMs: clampInt(env.RENOR_AUTO_RECALL_TIMEOUT_MS, url === DEFAULT_URL ? HOSTED_TIMEOUT_MS : DEFAULT_TIMEOUT_MS, 100, 10_000),
@@ -190,7 +201,7 @@ export function recallRequest(prompt: string, config: RecallConfig): { args: Get
 
 interface Reply {
   ok?: boolean;
-  facts?: Array<{ subject?: string; predicate?: string; object?: string; scope?: string; untrusted?: boolean; authority?: unknown; otherProject?: boolean }>;
+  facts?: Array<{ subject?: string; predicate?: string; object?: string; validFrom?: string; scope?: string; untrusted?: boolean; authority?: unknown; otherProject?: boolean }>;
   memories?: Array<{ text?: string; session_date?: string; matched?: boolean; untrusted?: boolean; replaced?: unknown; authority?: unknown; otherProject?: boolean }>;
   relevance?: { relevant?: boolean; similarity?: number | null };
   dated_outline?: { note?: string; lines?: unknown[] };
@@ -218,6 +229,48 @@ const authorityTag = (authority: unknown): string => typeof authority === 'strin
 /** Most characters one memory line may take; a longer one is cut, so no single note fills the block. */
 export const MAX_ITEM_CHARS = 500;
 
+/**
+ * The closing line of a gated block: something the reply carried is not here, so an agent that needs more knows there is
+ * more and how to ask for it. Static text, inside the boundary, never stored text.
+ */
+export const OMITTED_NOTE = 'Some of this reply was left out (the prompt\'s words did not name it, or the budget was full): call get_context yourself if you need more.';
+
+/** Words that say nothing about what a prompt is about, so matching a fact on one of them would match everything. */
+const QUERY_STOP = new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'than', 'that', 'this', 'these', 'those', 'is', 'are', 'was',
+  'were', 'be', 'been', 'being', 'am', 'do', 'does', 'did', 'doing', 'have', 'has', 'had', 'having', 'can', 'could',
+  'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'for', 'with', 'from', 'into', 'onto', 'about', 'over',
+  'under', 'out', 'in', 'on', 'at', 'to', 'of', 'by', 'as', 'it', 'its', 'we', 'our', 'you', 'your', 'they', 'them',
+  'their', 'he', 'she', 'his', 'her', 'me', 'my', 'mine', 'i', 'what', 'which', 'who', 'whom', 'whose', 'when', 'where',
+  'why', 'how', 'all', 'any', 'some', 'no', 'not', 'any', 'each', 'other', 'more', 'most', 'much', 'many', 'now', 'get',
+  'got', 'let', 'make', 'made', 'use', 'used', 'please', 'also', 'just', 'like', 'want', 'need', 'tell', 'say', 'said',
+]);
+
+/**
+ * The words a line is matched on: letters and digits only, lowercased, three characters or more, a trailing plural `s`
+ * dropped (`notes` matches `note`), without the words above. Deliberately plain: the hook runs before every prompt and
+ * may not load the engine, so this is word overlap, not the server's ranking.
+ */
+export function matchTerms(text: string): Set<string> {
+  const terms = new Set<string>();
+  for (const raw of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+    const word = raw.length > 3 && raw.endsWith('s') && !raw.endsWith('ss') ? raw.slice(0, -1) : raw;
+    if (word.length >= 3 && !QUERY_STOP.has(word)) terms.add(word);
+  }
+  return terms;
+}
+
+/**
+ * Whether the prompt's words name this fact: one shared word between the prompt and the fact's subject, predicate or
+ * value. With no prompt words left to match on (a prompt of nothing but the words above), every fact is let through,
+ * because a gate that matches nothing would silence recall for that prompt.
+ */
+export function factMatchesQuery(factText: string, queryTerms: ReadonlySet<string>): boolean {
+  if (queryTerms.size === 0) return true;
+  for (const term of matchTerms(factText)) if (queryTerms.has(term)) return true;
+  return false;
+}
+
 /** The one inert encoder, shared with the SessionStart hook (claude-code-plugin/hooks/inert.cjs). */
 export { inert };
 
@@ -236,10 +289,15 @@ function capped(line: string): string {
  * The memory lines of a get_context reply (facts first, then matched memories, each made inert and cut to
  * MAX_ITEM_CHARS), or why there are none: the reply is malformed, not ok, judged unrelated, or under the floor.
  */
-export function replyLines(replyText: string, config: Pick<RecallConfig, 'minSimilarity'>, seenPinned: ReadonlySet<string> = new Set()): { lines: string[]; kinds: Recalled[]; reason: string } {
+export function replyLines(
+  replyText: string,
+  config: Pick<RecallConfig, 'minSimilarity'> & Partial<Pick<RecallConfig, 'gate'>>,
+  seenPinned: ReadonlySet<string> = new Set(),
+  query?: string,
+): { lines: string[]; kinds: Recalled[]; reason: string; omitted: number; gated: boolean } {
   let body: Reply;
-  try { body = JSON.parse(replyText) as Reply; } catch { return { lines: [], kinds: [], reason: 'malformed' }; }
-  if (!body || typeof body !== 'object' || body.ok === false) return { lines: [], kinds: [], reason: 'not-ok' };
+  try { body = JSON.parse(replyText) as Reply; } catch { return { lines: [], kinds: [], reason: 'malformed', omitted: 0, gated: false }; }
+  if (!body || typeof body !== 'object' || body.ok === false) return { lines: [], kinds: [], reason: 'not-ok', omitted: 0, gated: false };
   const lines: string[] = [];
   const kinds: Recalled[] = [];
   let framed = false;
@@ -260,11 +318,21 @@ export function replyLines(replyText: string, config: Pick<RecallConfig, 'minSim
     if (typeof relevance?.similarity !== 'number') relevanceReason = 'no-similarity';
     else if (relevance.similarity < config.minSimilarity) relevanceReason = 'below-min-similarity';
   }
+  // The per-line gate applies only where the server judged the reply (a similarity number): a reply with no verdict —
+  // every self-hosted provider whose embedding model has no calibrated bar — is presented exactly as it was before.
+  const gated = config.gate !== false && query !== undefined && typeof relevance?.similarity === 'number';
+  const queryTerms = gated ? matchTerms(query) : new Set<string>();
+  let omitted = 0;
   for (const f of relevanceReason ? [] : body.facts ?? []) {
     if (!f.subject || !f.predicate || f.object === undefined) continue;
     // Another project's memory (RENOR_LAYERED_SCOPE labels it) is shown to an agent that asks, never injected unasked.
     if (f.otherProject) continue;
-    lines.push(capped(`${authorityTag(f.authority)}${f.untrusted ? '[untrusted] ' : ''}current fact: ${inert(`${f.subject} ${f.predicate}: ${f.object}`)}${f.scope ? ` (${inert(f.scope)})` : ''}`));
+    const text = `${f.subject} ${f.predicate}: ${f.object}`;
+    // One good match used to let every current fact ride along, recent rather than asked for (issue #1933): a fact now
+    // takes room only when the prompt's own words name it, and carries the day it was saved so an agent can discount it.
+    if (gated && !factMatchesQuery(text, queryTerms)) { omitted += 1; continue; }
+    const date = gated && typeof f.validFrom === 'string' ? `${inert(f.validFrom.slice(0, 10))} ` : '';
+    lines.push(capped(`${authorityTag(f.authority)}${f.untrusted ? '[untrusted] ' : ''}${date}current fact: ${inert(text)}${f.scope ? ` (${inert(f.scope)})` : ''}`));
     kinds.push({ kind: 'fact' });
   }
   // The dated outline (RENOR_DATED_OUTLINE on the server): rendered, or the hook would ask for room it never shows. Dated
@@ -277,13 +345,14 @@ export function replyLines(replyText: string, config: Pick<RecallConfig, 'minSim
   }
   for (const m of relevanceReason ? [] : body.memories ?? []) {
     // A memory the query did not match is the reply's filler: discounted by get_context's own description.
+    if (m.text && m.matched === false && gated) omitted += 1;
     if (!m.text || m.matched === false) continue;
     if (m.otherProject) continue;
     const date = typeof m.session_date === 'string' ? `${inert(m.session_date.slice(0, 10))} ` : '';
     lines.push(capped(`${authorityTag(m.authority)}${m.untrusted ? '[untrusted] ' : ''}${m.replaced ? '[replaced by a later correction] ' : ''}${date}${inert(m.text)}`));
     kinds.push({ kind: 'memory', ...(typeof m.session_date === 'string' ? { date: m.session_date } : {}) });
   }
-  return { lines, kinds, reason: lines.length === 0 ? (relevanceReason || 'empty') : 'lines' };
+  return { lines, kinds, reason: lines.length === 0 ? (relevanceReason || 'empty') : 'lines', omitted, gated };
 }
 
 /**
@@ -291,9 +360,9 @@ export function replyLines(replyText: string, config: Pick<RecallConfig, 'minSim
  * in order. `indices` says which of the given lines were kept (a line that did not fit is skipped; the first is cut to
  * fit rather than lost, so one long note must not leave the prompt with nothing). Null when none fits.
  */
-export function fitBlock(lines: string[], maxTokens: number): { context: string; items: string[]; indices: number[] } | null {
+export function fitBlock(lines: string[], maxTokens: number, note?: string): { context: string; items: string[]; indices: number[] } | null {
   const cap = maxTokens * CHARS_PER_TOKEN_FLOOR;
-  let used = LABEL_OPEN.length + LABEL_CLOSE.length;
+  let used = LABEL_OPEN.length + LABEL_CLOSE.length + (note ? note.length + 3 : 0);
   const kept: string[] = [];
   const indices: number[] = [];
   lines.forEach((line, i) => {
@@ -305,15 +374,26 @@ export function fitBlock(lines: string[], maxTokens: number): { context: string;
     used += fitted.length + 3;
   });
   if (kept.length === 0) return null;
-  return { context: `${LABEL_OPEN}${kept.map(l => `- ${l}`).join('\n')}\n${LABEL_CLOSE}`, items: kept, indices };
+  const body = kept.map(l => `- ${l}`).concat(note ? [`- ${note}`] : []).join('\n');
+  return { context: `${LABEL_OPEN}${body}\n${LABEL_CLOSE}`, items: kept, indices };
 }
 
 /** The text to inject for a get_context reply, or why there is none. */
-export function presentRecall(replyText: string, config: Pick<RecallConfig, 'maxTokens' | 'minSimilarity'>, seenPinned: ReadonlySet<string> = new Set()): { context: string | null; reason: string; items: string[]; recalled: Recalled[] } {
-  const { lines, kinds, reason } = replyLines(replyText, config, seenPinned);
+export function presentRecall(
+  replyText: string,
+  config: Pick<RecallConfig, 'maxTokens' | 'minSimilarity'> & Partial<Pick<RecallConfig, 'gate'>>,
+  seenPinned: ReadonlySet<string> = new Set(),
+  query?: string,
+): { context: string | null; reason: string; items: string[]; recalled: Recalled[] } {
+  const { lines, kinds, reason, omitted, gated } = replyLines(replyText, config, seenPinned, query);
   if (lines.length === 0) return { context: null, reason, items: [], recalled: [] };
-  const block = fitBlock(lines, config.maxTokens);
+  let block = fitBlock(lines, config.maxTokens);
   if (!block) return { context: null, reason: 'over-budget', items: [], recalled: [] };
+  // The closing line is added only when something the reply carried is not in the block — left out by the gate above or
+  // by the budget — and the block is then fitted again with room for it, which can only leave more out, never less.
+  if (gated && (omitted > 0 || block.indices.length < lines.length)) {
+    block = fitBlock(lines, config.maxTokens, OMITTED_NOTE) ?? block;
+  }
   return { context: block.context, reason: 'injected', items: block.items, recalled: block.indices.map(i => kinds[i]) };
 }
 
@@ -329,7 +409,7 @@ export async function autoRecall(prompt: string, config: RecallConfig, call: Get
   try {
     const reply = await Promise.race([call(request.args, controller.signal, config.origin), timeout]);
     if (reply === 'timeout') return done({ context: null, reason: 'timeout', args: request.args });
-    return done({ ...presentRecall(reply, config), args: request.args });
+    return done({ ...presentRecall(reply, config, new Set(), request.args.query), args: request.args });
   } catch {
     return done({ context: null, reason: 'error', args: request.args });
   } finally {

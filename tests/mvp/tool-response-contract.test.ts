@@ -14,6 +14,8 @@ import { OLLAMA_KEY_ENV_NAMES } from '../../src/evidence/keyPool';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import type { Express } from 'express';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
+// These tests pin the full tool list including the two unlisted save tools: RENOR_MCP_SINGLE_SAVE=0 restores it (the default lists only remember; see tests/mvp/single-save-tool.test.ts).
+process.env.RENOR_MCP_SINGLE_SAVE = '0';
 
 /**
  * The shape an agent actually reads, over the REAL remote MCP surface.

@@ -17,6 +17,8 @@ import { runMigrations } from '../../src/db/schema';
 import type { EmbeddingProvider } from '../../src/embeddings/types';
 import type { Express } from 'express';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
+// These tests pin the full tool list including the two unlisted save tools: RENOR_MCP_SINGLE_SAVE=0 restores it (the default lists only remember; see tests/mvp/single-save-tool.test.ts).
+process.env.RENOR_MCP_SINGLE_SAVE = '0';
 
 const OWNER_EMAIL = 'owner@example.test';
 const OWNER_PASSWORD = 'synthetic-owner-secret-123';

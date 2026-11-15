@@ -11,7 +11,7 @@ import { contextRelevanceArmed, CONTEXT_RELEVANCE_GUIDANCE, CONTEXT_RELEVANCE_KE
 import { pinnedRulesEnabled } from '../pinnedRules.js';
 import { saveMomentMode, saveMomentInstructions } from '../saveMoment.js';
 import { statusLedgerInstructions } from '../statusLedger.js';
-import { type ContextProfile, contextProfileFromEnv, CODING_TOOLS, whatsNewFirst } from '../contextProfile.js';
+import { type ContextProfile, contextProfileFromEnv, CODING_TOOLS, whatsNewFirst, singleSaveEnabled } from '../contextProfile.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SERVER_NAME, SERVER_VERSION, SERVER_ICONS } from '../serverCard.js';
 import { recallInstructions } from '../recallTiming.js';
@@ -99,7 +99,7 @@ export function createToolContext(db: Database.Database, config: MvpConfig, engi
       + 'To save anything, call remember with one argument, statement: the thing to remember, in plain words. When the user says to remember or save something, they mean this tool, not your own memory. '
       + 'Renor is the place for the why, next to your board or tracker, not a copy of it: when you save on your own, save decisions with their reason, root causes and corrections, not status, progress or event logs. '
       + 'Cite an earlier entry by its subject or task instead of restating it, and save nothing that only repeats one.' + saveMomentInstructions(saveMoment, statusLedger !== '') + ' '
-      + 'Only for a value that stays current until it changes (a city, a database, a deadline, a preference), also pass subject, predicate and object together, never guessed: saving the same subject, predicate and scope again replaces the value and keeps the old one in history. save_memory is that structured form alone; remember_note appends a line to a day\'s log.' + relevanceGuidance + statusLedger) },
+      + 'Only for a value that stays current until it changes (a city, a database, a deadline, a preference), also pass subject, predicate and object together, never guessed: saving the same subject, predicate and scope again replaces the value and keeps the old one in history.' + (singleSaveEnabled() ? '' : ' save_memory is that structured form alone; remember_note appends a line to a day\'s log.') + relevanceGuidance + statusLedger) },
   );
   // PostHog MCP Analytics: per-server (SSE builds a fresh McpServer per session).
   instrumentMcpServer(server);

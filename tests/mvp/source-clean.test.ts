@@ -11,6 +11,8 @@ import { MVP_MCP_PATH } from '../../src/mvp/server';
 import { hiveNameHeader } from '../../src/memory/hiveNameHeader.cjs';
 import { startMvpServiceOnFreePort } from '../helpers/mvpPort';
 import { HTTP_SERVER_UNSUPPORTED } from '../helpers/httpServerPlatform';
+// These tests pin the full tool list including the two unlisted save tools: RENOR_MCP_SINGLE_SAVE=0 restores it (the default lists only remember; see tests/mvp/single-save-tool.test.ts).
+process.env.RENOR_MCP_SINGLE_SAVE = '0';
 
 /**
  * The origin of an entry over the real hosted tools. A Renor user found entries saved with file-path garbage in their

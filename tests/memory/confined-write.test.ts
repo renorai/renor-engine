@@ -81,7 +81,8 @@ describe('a daily log', () => {
     expect(fs.readFileSync(path.join(outside, 'h.md'), 'utf8')).toBe(CANARY);
   });
 
-  it('does not block on a FIFO planted under its name', async () => {
+  // Windows has no FIFOs (mkfifo does not exist), so there is nothing to plant (#1563).
+  it.skipIf(process.platform === 'win32')('does not block on a FIFO planted under its name', async () => {
     fs.mkdirSync(path.join(vault, 'Memory/Daily'), { recursive: true });
     execFileSync('mkfifo', [path.join(vault, `Memory/Daily/${TODAY}.md`)]);
     const outcome = await Promise.race([

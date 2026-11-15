@@ -70,9 +70,16 @@ describe('recall receipt: the line', () => {
   });
 
   it('never shows text from a memory or a fact (the PIN repro)', async () => {
+    // The per-line gate (issue #1933) leaves the bank_pin fact out: this prompt's words do not name it. With the gate
+    // off the fact is injected and counted as before, and either way the line holds no word of what either one says.
     const line = parse(await runHook(hookInput(PROMPT), ON, async () => SENSITIVE)).systemMessage!;
-    expect(line).toBe('Renor recalled 3: 2 notes (Oct 11, Oct 12), 1 fact');
-    for (const w of ['PIN', '1234', 'bank', 'asthma', 'Rowan', 'bank_pin']) expect(line).not.toContain(w);
+    expect(line).toBe('Renor recalled 2: 2 notes (Oct 11, Oct 12)');
+    const ungated = parse(await runHook(hookInput(PROMPT), { ...ON, RENOR_AUTO_RECALL_GATE: '0' }, async () => SENSITIVE)).systemMessage!;
+    expect(ungated).toBe('Renor recalled 3: 2 notes (Oct 11, Oct 12), 1 fact');
+    for (const w of ['PIN', '1234', 'bank', 'asthma', 'Rowan', 'bank_pin']) {
+      expect(line).not.toContain(w);
+      expect(ungated).not.toContain(w);
+    }
   });
 
   it('is built only from counts and dates, whatever the stored text holds', async () => {

@@ -7,6 +7,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { loadMvpConfig } from '../../src/mvp/config';
 import { createMvpApp } from '../../src/mvp/server';
+// These tests pin the full tool list including the two unlisted save tools: RENOR_MCP_SINGLE_SAVE=0 restores it (the default lists only remember; see tests/mvp/single-save-tool.test.ts).
+process.env.RENOR_MCP_SINGLE_SAVE = '0';
 
 // Clients ask before running any tool not marked read-only, so each hosted tool is classified here as reading or writing.
 const READING_TOOLS = [

@@ -39,6 +39,17 @@ export const LEAN_TOOLS = ['whats_new', 'get_context', 'search_text', 'read_memo
  * out, so the server instructions stop telling the agent to call it first (see whatsNewFirst). Add it back with an explicit
  * list, e.g. RENOR_MCP_TOOLS=get_context,search_text,retrieve_memory,remember,whats_new.
  */
+/**
+ * RENOR_MCP_SINGLE_SAVE (default ON): `remember` is the one save tool the full tool list shows. save_memory and remember_note
+ * stay registered and callable (an old client's call answers exactly as before) but are not listed, and the server
+ * instructions and the remember description stop naming them. RENOR_MCP_SINGLE_SAVE=0 restores the previous list and text.
+ * An explicit RENOR_MCP_TOOLS list that names them still lists them.
+ */
+export const UNLISTED_SAVE_TOOLS = ['save_memory', 'remember_note'] as const;
+export function singleSaveEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.RENOR_MCP_SINGLE_SAVE?.trim() !== '0';
+}
+
 export const CODING_TOOLS = ['get_context', 'search_text', 'retrieve_memory', 'remember'];
 
 /**

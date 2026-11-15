@@ -48,7 +48,7 @@ renor-engine: Renor needs Node 22.16.0 or newer (it uses Node's built-in SQLite)
 
 ## Updates and the npm registry
 
-`npx -y renor-engine mcp` fetches the newest release each time the app starts, so nothing needs upgrading by hand. It needs the npm registry at that moment: with the registry unreachable (offline, blocked, an outage) it does not start, even with a copy on the disk. `renor-engine status` and `renor-engine doctor` show the installed version and, when the registry answers within 2 seconds, the latest one; they ask nothing when sharing is off, `DO_NOT_TRACK=1` is set, or `--offline` is given. Pin a version in the command (`npx -y renor-engine@1.4.9 mcp`). A machine that must start offline can use `npx --prefer-offline -y renor-engine mcp`; `scripts/npx/measure-npx-update.sh` measures both cases in an isolated cache.
+`npx -y renor-engine mcp` fetches the newest release each time the app starts, so nothing needs upgrading by hand. It needs the npm registry at that moment: with the registry unreachable (offline, blocked, an outage) it does not start, even with a copy on the disk. `renor-engine status` and `renor-engine doctor` show the installed version and, when the registry answers within 2 seconds, the latest one; they ask nothing when sharing is off, `DO_NOT_TRACK=1` is set, or `--offline` is given. Pin a version in the command (`npx -y renor-engine@1.4.10 mcp`). A machine that must start offline can use `npx --prefer-offline -y renor-engine mcp`; `scripts/npx/measure-npx-update.sh` measures both cases in an isolated cache.
 
 ## Building from a ZIP or tarball
 

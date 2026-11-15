@@ -859,7 +859,8 @@ describe('import safety — a line span that cannot be a citation is dropped', (
 /* ------------------------------- D4/D5: the residual and the post-commit outcome */
 
 describe('import safety — the failure text reports the residual, and only the residual', () => {
-  it.skipIf(IS_ROOT)('reports an unverified ledger when the append and its restore both fail', async () => {
+  // chmod read-only/000 is not enforced on Windows (no POSIX file modes), so these two cannot fail the write there (#1563).
+  it.skipIf(IS_ROOT || process.platform === 'win32')('reports an unverified ledger when the append and its restore both fail', async () => {
     const file = writeBundle([
       noteRecord('Projects/Gamma/gamma.md'),
       ledgerFactRecord('primary_goal', 'durable memory', '2026-01-05T00:00:00.000Z'),
@@ -899,7 +900,7 @@ describe('import safety — the failure text reports the residual, and only the 
     expect(listImportedMarkdown(destination.memoryDir)).toEqual(['Imported/src/Projects/Gamma/gamma.md']);
   });
 
-  it.skipIf(IS_ROOT)('preserves an unreadable existing ledger and reports the read failure', async () => {
+  it.skipIf(IS_ROOT || process.platform === 'win32')('preserves an unreadable existing ledger and reports the read failure', async () => {
     const destination = buildEmptyWorkspace();
     await seedLedgerFact(destination, {
       id: 'mem_seed0001', subject: 'Renor', predicate: 'zz_existing', object: 'keep this ledger',
