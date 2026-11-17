@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import { Command } from "commander";
 import { loadConfig } from "./config";
 import { openIndexDb } from "./db/client";
@@ -206,6 +207,16 @@ program
   .command("index")
   .description("Index full vault")
   .action(async () => {
+    // A typo in VAULT_PATH used to be silently created by openIndexDb's
+    // mkdirSync of the db parent, then reported as a healthy empty index. Check
+    // the folder before setup() opens the db so the mistake is loud, not a
+    // "Done. 0/0" that a person or a script could trust. An existing empty
+    // folder is still a valid (empty) vault, so only a missing one is refused.
+    const vaultPath = loadConfig().vaultPath;
+    if (!fs.existsSync(vaultPath)) {
+      console.error(`Memory folder does not exist: ${vaultPath} (check VAULT_PATH). Nothing to index.`);
+      process.exit(1);
+    }
     const { config, db, provider, vectorIndex, factExtractor, numericFactExtractor, eventExtractor, preferenceExtractor } = await setup();
     refuseArmedWithoutProvider(db, armedWithoutProvider({
       numericFactExtractor, eventExtractor, preferenceExtractor,
