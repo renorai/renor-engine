@@ -361,8 +361,15 @@ program
         console.log(composed.text);
         console.log("");
       }
+      if (hits.length === 0) {
+        // #14: zero hits used to print nothing and exit 0, so a person could not tell "no match" from "broken".
+        console.log(`No notes matched "${query}"`);
+      }
       hits.forEach((h) => {
-        console.log(`\n[${h.score.toFixed(3)}] ${clientPath(config.vaultPath, h.notePath)} (${h.reason})`);
+        // With no embedding provider the hits came from the keyword lane, so the reason's `semantic` base would lie
+        // about how they were found (#14). The stored reason is untouched: `--json` is a frozen contract.
+        const reason = provider ? h.reason : h.reason.replace(/^semantic/, 'keyword');
+        console.log(`\n[${h.score.toFixed(3)}] ${clientPath(config.vaultPath, h.notePath)} (${reason})`);
         console.log(h.text.substring(0, 200));
       });
     }
