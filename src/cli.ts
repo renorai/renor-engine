@@ -540,6 +540,7 @@ if (backupEnabled()) {
       try {
         const r = createBackup(loadConfig().vaultPath, opts.out ?? defaultBackupName());
         console.log(`Backed up ${r.files} file(s), ${r.bytes} bytes, to ${r.out}`);
+        console.log(`Next: renor-engine restore ${r.out} --to <folder>`);
       } catch (err) { backupFail("backup", err); }
     });
   program
@@ -555,6 +556,7 @@ if (backupEnabled()) {
     .command("restore <archive>")
     .description("Verify a backup, then extract it into an empty folder")
     .requiredOption("--to <folder>", "empty folder to restore into")
+    .addHelpText("after", "\nExamples:\n  $ renor-engine restore my-memory.tar.gz --to ~/memory-restored\n")
     .action(async (archive: string, opts: { to: string }) => {
       try {
         const r = await restoreBackup(archive, opts.to);
